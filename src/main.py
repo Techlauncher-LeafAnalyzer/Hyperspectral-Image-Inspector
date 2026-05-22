@@ -6,6 +6,7 @@ import cv2
 from spectral import *
 import spectral.io.envi as envi
 import HSIHelper
+from pathlib import Path
 
 
 from PyQt6 import QtWidgets, uic
@@ -13,6 +14,8 @@ from PyQt6.QtGui import QIcon,QPixmap,QImage, QActionGroup
 from PyQt6.QtWidgets import QFileDialog,QGraphicsView,QGraphicsScene, QMessageBox
 
 from MainWindow import Ui_MainWindow
+
+BASE_DIR = Path(__file__).resolve().parent
 
 def numpy_to_qpixmap(image):
     if image.dtype == np.uint8:
@@ -38,7 +41,9 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         # self.viewer_index_menu.addAction("EVI", lambda:self.showMeanIndex("EVI"))
         # self.viewer.setMenu(self.viewer_index_menu)
 
-        view_widget = uic.loadUi("qt/Visualization.ui")
+        view_widget = uic.loadUi(
+            str(BASE_DIR / "qt" / "Visualization.ui")
+        )
         self.verticalLayoutBottomRight.addWidget(view_widget)
 
         self.visualizationButton.clicked.connect(lambda:self.selectFunctionality("Visualization"))
@@ -57,16 +62,24 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         third_widget.deleteLater()
 
         if functionality == "Visualization":
-            view_widget = uic.loadUi("qt/Visualization.ui")
+            view_widget = uic.loadUi(
+            str(BASE_DIR / "qt" / "Visualization.ui")
+        )
             self.verticalLayoutBottomRight.addWidget(view_widget)
         elif functionality == "Super-resolution":
-            view_widget = uic.loadUi("qt/Super-esolution.ui")
+            view_widget = uic.loadUi(
+            str(BASE_DIR / "qt" / "Super-resolution.ui")
+        )
             self.verticalLayoutBottomRight.addWidget(view_widget)
         elif functionality == "Calibration":
-            view_widget = uic.loadUi("qt/Calibration.ui")
+            view_widget = uic.loadUi(
+            str(BASE_DIR / "qt" / "Calibration.ui")
+        )
             self.verticalLayoutBottomRight.addWidget(view_widget)
         elif functionality == "Classification":
-            view_widget = uic.loadUi("qt/Classification.ui")
+            view_widget = uic.loadUi(
+            str(BASE_DIR / "qt" / "Classification.ui")
+        )
             self.verticalLayoutBottomRight.addWidget(view_widget)        
 
     def spectrumPlot(self):
