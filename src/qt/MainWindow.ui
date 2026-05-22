@@ -124,6 +124,15 @@
               </property>
              </widget>
             </item>
+            <item>
+             <widget class="QWidget" name="panelContainer" native="true">
+              <layout class="QVBoxLayout" name="panelContainerLayout">
+               <property name="margin">
+                <number>0</number>
+               </property>
+              </layout>
+             </widget>
+            </item>
            </layout>
           </item>
          </layout>
@@ -176,7 +185,7 @@
   <customwidget>
    <class>HSIViewer</class>
    <extends>QGraphicsView</extends>
-   <header>HSIViewer</header>
+   <header>ui.viewer</header>
   </customwidget>
  </customwidgets>
  <resources>
