@@ -14,8 +14,8 @@ QWidget#centralwidget {
 }
 
 QWidget#navigationPanel {
-    background: #132225;
-    border-right: 1px solid #25373a;
+    background: #102124;
+    border-right: 1px solid #203437;
 }
 
 QFrame#frame {
@@ -72,26 +72,31 @@ QPushButton:disabled {
 }
 
 QPushButton[navButton="true"] {
-    background: transparent;
-    color: #b7c7c4;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 10px 14px;
-    text-align: left;
+    background: #102124;
+    color: #d4e1de;
+    border: 0;
+    border-bottom: 1px solid #1d3336;
+    border-radius: 0;
+    padding: 0;
+    text-align: center;
     font-size: 13px;
     font-weight: 650;
 }
 
 QPushButton[navButton="true"]:hover {
-    background: #1d3235;
-    color: #ecf5f2;
-    border-color: #2c474a;
+    background: #173034;
+    color: #f2fbf8;
 }
 
 QPushButton[navButton="true"]:checked {
-    background: #e2fbf4;
-    color: #0f3733;
-    border-color: #8ee0d0;
+    background: #168b7b;
+    color: #ffffff;
+    border-bottom: 1px solid #168b7b;
+}
+
+QPushButton[navButton="true"]:checked:hover {
+    background: #117d70;
+    color: #ffffff;
 }
 
 QPushButton[primaryButton="true"] {

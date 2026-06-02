@@ -59,11 +59,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.centralwidget.layout().setSpacing(12)
 
         self.widget.setObjectName("navigationPanel")
-        self.widget.setMinimumWidth(184)
-        self.widget.setMaximumWidth(220)
         self._refresh_widget_style(self.widget)
-        self.verticalLayout.setContentsMargins(12, 16, 12, 16)
-        self.verticalLayout.setSpacing(8)
+        self.verticalLayout.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout.setSpacing(0)
 
         self._nav_buttons = {
             Functionality.VISUALIZATION: self.visualizationButton,
@@ -74,7 +72,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         nav_labels = {
             Functionality.VISUALIZATION: "Visualization",
-            Functionality.SUPER_RESOLUTION: "Super Resolution",
+            Functionality.SUPER_RESOLUTION: "Super-resolution",
             Functionality.CALIBRATION: "Calibration",
             Functionality.CLASSIFICATION: "Classification",
         }
@@ -84,13 +82,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             button.setCheckable(True)
             button.setProperty("navButton", True)
             button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-            button.setMinimumHeight(42)
             button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Minimum,
                 QtWidgets.QSizePolicy.Policy.Expanding,
-                QtWidgets.QSizePolicy.Policy.Fixed,
             )
             self._refresh_widget_style(button)
-        self.verticalLayout.addStretch(1)
 
         self.frame.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self.verticalLayout_4.setContentsMargins(16, 14, 16, 16)

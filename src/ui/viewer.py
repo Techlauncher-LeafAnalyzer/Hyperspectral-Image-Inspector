@@ -67,16 +67,17 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.setResizeAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setBackgroundBrush(QtGui.QBrush(QtGui.QColor("#e8eeee")))
+        self.setBackgroundBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
         self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
 
-        self.text_item = QGraphicsTextItem("Load hyperspectral image")
+        self.text_item = QGraphicsTextItem("APPN-Tech")
         font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
-        font.setPointSize(28)
+        font.setPointSize(45)
         font.setBold(True)
+        font.setItalic(True)
         self.text_item.setFont(font)
-        self.text_item.setDefaultTextColor(QColor("#a6b5b2"))
-        self.text_item.setTextWidth(520)
+        self.text_item.setDefaultTextColor(QColor("#eaecee"))
+        self.text_item.setTextWidth(400)
         self.text_item.setPos(
             -self.text_item.boundingRect().width() / 2,
             -self.text_item.boundingRect().height() / 2,
