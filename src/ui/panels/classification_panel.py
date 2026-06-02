@@ -25,11 +25,18 @@ class ClassificationPanel(FeaturePanel):
     # Supervised tab:
     lineEdit:    QLineEdit
     comboBox:    QComboBox
+    pushButton:  QPushButton
     pushButton_2: QPushButton
 
     def __init__(self, hsi_data: "HSIData", parent: Optional[QWidget] = None) -> None:
         super().__init__(hsi_data, parent)
         uic.loadUi(_UI_PATH, self)
+        self.numOfClassesEdit.setPlaceholderText("e.g. 5")
+        self.maxIterationsEdit.setPlaceholderText("e.g. 20")
+        self.lineEdit.setPlaceholderText("Select groundtruth file")
+        self.polish_controls(
+            primary_buttons={"unsupervisedClassifyButton", "pushButton_2"}
+        )
         self.setEnabled(False)
 
     def on_image_loaded(self) -> None:
