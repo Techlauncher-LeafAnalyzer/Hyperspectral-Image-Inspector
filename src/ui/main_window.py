@@ -40,12 +40,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     # Private: signal wiring                                               #
     # ------------------------------------------------------------------ #
 
+    def _connect_signals(self) -> None:
         self.actionLoadImage.triggered.connect(self._load_image)
         self.actionSaveImage.triggered.connect(self._save_image)
         self.darkFileButton.clicked.connect(self._select_dark_file)
         self.referenceFileButton.clicked.connect(self._select_reference_file)
         self.calibrateButton.setEnabled(False)
         self.calibrateButton.setToolTip("Calibration is not implemented yet")
+
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
     # ------------------------------------------------------------------ #
