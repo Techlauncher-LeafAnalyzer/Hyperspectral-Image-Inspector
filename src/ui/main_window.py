@@ -34,6 +34,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         self._hsi_data = HSIData()
+        self._connect_signals()
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
@@ -122,7 +123,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data.rgb_array    = rgb_array
         self._hsi_data.mask_array   = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
 
-        self.imageFilePath.setText(str(image_path))
+        loaded_file_text = f"File Loaded: {image_path}"
+        self.imageFilePath.setText(loaded_file_text)
+        self.imageFilePath.setToolTip(str(image_path))
+        self.superResFilePath.setText(loaded_file_text)
+        self.superResFilePath.setToolTip(str(image_path))
         self.statusbar.showMessage(f"Loaded {image_path.name}")
         pixmap = hsi_utils.numpy_to_qpixmap(rgb_array)
 
@@ -133,6 +138,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.calibrationViewer.rgb        = rgb_array
         self.calibrationViewer.mask_array = self._hsi_data.mask_array
         self.calibrationViewer.set_photo(pixmap)
+
+        self.superResViewer.rgb        = rgb_array
+        self.superResViewer.mask_array = self._hsi_data.mask_array
+        self.superResViewer.set_photo(pixmap)
 
     def _save_image(self) -> None:
         pass

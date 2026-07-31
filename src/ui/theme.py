@@ -190,7 +190,9 @@ QProgressBar::chunk {
     border-radius: 5px;
 }
 
-QGraphicsView#viewer {
+QGraphicsView#viewer,
+QGraphicsView#superResViewer,
+QGraphicsView#calibrationViewer {
     background: #e8eeee;
     border: 1px solid #d1dcda;
     border-radius: 8px;
