@@ -58,8 +58,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.centralwidget.layout().setContentsMargins(14, 14, 14, 12)
         self.centralwidget.layout().setSpacing(12)
 
-        self.widget.setObjectName("navigationPanel")
-        self._refresh_widget_style(self.widget)
+        # self.widget.setObjectName("navigationPanel")
+        # self._refresh_widget_style(self.widget)
         self.verticalLayout.setContentsMargins(0, 0, 0, 0)
         self.verticalLayout.setSpacing(0)
 
