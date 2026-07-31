@@ -27,6 +27,9 @@ class CalibrationPanel(FeaturePanel):
     def __init__(self, hsi_data: "HSIData", parent: Optional[QWidget] = None) -> None:
         super().__init__(hsi_data, parent)
         uic.loadUi(_UI_PATH, self)
+        self.darkFileEdit.setPlaceholderText("Select dark reference file")
+        self.referenceFileEdit.setPlaceholderText("Select white reference file")
+        self.polish_controls(primary_buttons={"calibrateButton"})
         self.setEnabled(False)
 
     def on_image_loaded(self) -> None:

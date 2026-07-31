@@ -6,7 +6,7 @@ from typing import Optional
 import numpy as np
 import spectral.io.envi as envi
 from spectral import get_rgb
-from PyQt6 import QtWidgets
+from PyQt6 import QtCore, QtWidgets
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
@@ -42,8 +42,76 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             Functionality.CLASSIFICATION:   ClassificationPanel,
         }
 
+        self._configure_window()
         self._connect_signals()
         self._select_functionality(Functionality.VISUALIZATION)
+
+    # ------------------------------------------------------------------ #
+    # Private: visual setup                                                #
+    # ------------------------------------------------------------------ #
+
+    def _configure_window(self) -> None:
+        self.setWindowTitle("Hyperspectral Image Inspector")
+        self.resize(1180, 760)
+        self.setMinimumSize(960, 620)
+
+        self.centralwidget.layout().setContentsMargins(14, 14, 14, 12)
+        self.centralwidget.layout().setSpacing(12)
+
+        self.widget.setObjectName("navigationPanel")
+        self._refresh_widget_style(self.widget)
+        self.verticalLayout.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout.setSpacing(0)
+
+        self._nav_buttons = {
+            Functionality.VISUALIZATION: self.visualizationButton,
+            Functionality.SUPER_RESOLUTION: self.superResolutionButton,
+            Functionality.CALIBRATION: self.calibrationButton,
+            Functionality.CLASSIFICATION: self.classificationButton,
+        }
+
+        nav_labels = {
+            Functionality.VISUALIZATION: "Visualization",
+            Functionality.SUPER_RESOLUTION: "Super-resolution",
+            Functionality.CALIBRATION: "Calibration",
+            Functionality.CLASSIFICATION: "Classification",
+        }
+
+        for func, button in self._nav_buttons.items():
+            button.setText(nav_labels[func])
+            button.setCheckable(True)
+            button.setProperty("navButton", True)
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Minimum,
+                QtWidgets.QSizePolicy.Policy.Expanding,
+            )
+            self._refresh_widget_style(button)
+
+        self.frame.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.verticalLayout_4.setContentsMargins(16, 14, 16, 16)
+        self.verticalLayout_4.setSpacing(10)
+        self.verticalLayoutBottomRight.setSpacing(10)
+        self.panelContainerLayout.setSpacing(10)
+
+        self.label.setText("Image")
+        self.label_2.setText("No image loaded")
+        self.label_2.setWordWrap(False)
+        self.label_2.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.line.setFixedHeight(1)
+
+        self.splitter_3.setSizes([200, 980])
+        self.splitter_2.setSizes([520, 220])
+        self.splitter.setSizes([220])
+
+        self.statusbar.showMessage("Ready. Load a hyperspectral image to begin.")
+
+    def _refresh_widget_style(self, widget: QtWidgets.QWidget) -> None:
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
@@ -88,6 +156,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._hsi_data.is_loaded():
             self._current_panel.on_image_loaded()
 
+        for button_func, button in self._nav_buttons.items():
+            button.setChecked(button_func == func)
+
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
     # ------------------------------------------------------------------ #
@@ -130,6 +201,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data.mask_array   = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
 
         self.label_2.setText(str(image_path))
+        self.statusbar.showMessage(f"Loaded {image_path.name}")
         self.viewer.rgb        = rgb_array
         self.viewer.mask_array = self._hsi_data.mask_array
         self.viewer.set_photo(hsi_utils.numpy_to_qpixmap(rgb_array))

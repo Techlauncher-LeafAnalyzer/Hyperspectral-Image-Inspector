@@ -7,7 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QPointF, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QImage, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QMenu
 
 
@@ -71,7 +71,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
 
         self.text_item = QGraphicsTextItem("APPN-Tech")
-        font = self.text_item.font()
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
         font.setPointSize(45)
         font.setBold(True)
         font.setItalic(True)
