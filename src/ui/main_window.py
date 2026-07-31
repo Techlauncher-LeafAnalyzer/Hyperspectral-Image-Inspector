@@ -34,6 +34,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         self._hsi_data = HSIData()
+        self.viewer.set_hsi_data(self._hsi_data)
+        self.calibrationViewer.set_hsi_data(self._hsi_data)
         self._connect_signals()
 
     # ------------------------------------------------------------------ #
@@ -87,9 +89,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         self.imageFilePath.setText(str(image_path))
         self.statusbar.showMessage(f"Loaded {image_path.name}")
-        self.viewer.rgb        = rgb_array
-        self.viewer.mask_array = self._hsi_data.mask_array
-        self.viewer.set_photo(hsi_utils.numpy_to_qpixmap(rgb_array))
+        self.viewer.refresh()
+        self.calibrationViewer.refresh()
 
 
     def _save_image(self) -> None:

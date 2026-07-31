@@ -10,6 +10,9 @@ from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QMenu
 
+import core.hsi_utils as hsi_utils
+from core.hsi_data import HSIData
+
 
 class PromptMode(Enum):
     POINTS = auto()
@@ -48,8 +51,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         # --- image data ---
         self._zoom: int = 0
         self._empty: bool = True
-        self.rgb: Optional[NDArray[np.uint8]] = None
-        self.mask_array: Optional[NDArray[np.uint8]] = None
+        self.hsi_data: Optional[HSIData] = None
         self.avatarArray: Optional[NDArray[np.uint8]] = None
 
         # --- scene items ---
@@ -92,6 +94,37 @@ class HSIViewer(QtWidgets.QGraphicsView):
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
+
+    @property
+    def rgb(self) -> Optional[NDArray[np.uint8]]:
+        return self.hsi_data.rgb_array if self.hsi_data is not None else None
+
+    @rgb.setter
+    def rgb(self, value: Optional[NDArray[np.uint8]]) -> None:
+        if self.hsi_data is not None:
+            self.hsi_data.rgb_array = value
+
+    @property
+    def mask_array(self) -> Optional[NDArray[np.uint8]]:
+        return self.hsi_data.mask_array if self.hsi_data is not None else None
+
+    @mask_array.setter
+    def mask_array(self, value: Optional[NDArray[np.uint8]]) -> None:
+        if self.hsi_data is not None:
+            self.hsi_data.mask_array = value
+
+    def set_hsi_data(self, hsi_data: HSIData) -> None:
+        """Attach the shared dataset all viewer instances read/write through."""
+        self.hsi_data = hsi_data
+        if hsi_data.is_loaded():
+            self.refresh()
+
+    def refresh(self) -> None:
+        """Sync this viewer's display to the current state of ``hsi_data``."""
+        if self.hsi_data is None or self.hsi_data.rgb_array is None:
+            return
+        self.set_photo(hsi_utils.numpy_to_qpixmap(self.hsi_data.rgb_array))
+        self._render_mask()
 
     def has_photo(self) -> bool:
         return not self._empty
