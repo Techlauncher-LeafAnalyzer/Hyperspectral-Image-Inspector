@@ -40,13 +40,49 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     # Private: signal wiring                                               #
     # ------------------------------------------------------------------ #
 
-    def _connect_signals(self) -> None:
         self.actionLoadImage.triggered.connect(self._load_image)
         self.actionSaveImage.triggered.connect(self._save_image)
-
+        self.darkFileButton.clicked.connect(self._select_dark_file)
+        self.referenceFileButton.clicked.connect(self._select_reference_file)
+        self.calibrateButton.setEnabled(False)
+        self.calibrateButton.setToolTip("Calibration is not implemented yet")
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
     # ------------------------------------------------------------------ #
+
+    def _select_dark_file(self) -> None:
+        self._select_calibration_file(
+            self.darkFileEdit,
+            "Open Dark File",
+        )
+
+    def _select_reference_file(self) -> None:
+        self._select_calibration_file(
+            self.referenceFileEdit,
+            "Open Reference File",
+        )
+
+    def _select_calibration_file(
+        self,
+        target_edit: QtWidgets.QLineEdit,
+        dialog_title: str,
+    ) -> None:
+        file_path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            dialog_title,
+            "",
+            (
+                "Supported Images (*.bil *.bip *.bsq *.png *.jpg *.jpeg "
+                "*.tif *.tiff);;All Files (*)"
+            ),
+        )
+        if not file_path_str:
+            return
+
+        file_path = Path(file_path_str)
+        target_edit.setText(str(file_path))
+        target_edit.setToolTip(str(file_path))
+        self.statusbar.showMessage(f"Selected {file_path.name}")
 
     def _load_image(self) -> None:
         image_path_str, _ = QFileDialog.getOpenFileName(
@@ -87,10 +123,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         self.imageFilePath.setText(str(image_path))
         self.statusbar.showMessage(f"Loaded {image_path.name}")
+        pixmap = hsi_utils.numpy_to_qpixmap(rgb_array)
+
         self.viewer.rgb        = rgb_array
         self.viewer.mask_array = self._hsi_data.mask_array
-        self.viewer.set_photo(hsi_utils.numpy_to_qpixmap(rgb_array))
+        self.viewer.set_photo(pixmap)
 
+        self.calibrationViewer.rgb        = rgb_array
+        self.calibrationViewer.mask_array = self._hsi_data.mask_array
+        self.calibrationViewer.set_photo(pixmap)
 
     def _save_image(self) -> None:
         pass
