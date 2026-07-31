@@ -109,7 +109,7 @@ class Ui_MainWindow(object):
         self.Visualization.setAccessibleName(_translate("MainWindow", "Vizualization"))
         self.label.setText(_translate("MainWindow", "File path:"))
         self.label_2.setText(_translate("MainWindow", "Path/to/actual/image"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.Visualization), _translate("MainWindow", "Vizualization"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.Visualization), _translate("MainWindow", "Visualization"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.SuperResolution), _translate("MainWindow", "Super-Resolution"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.Calibration), _translate("MainWindow", "Calibration"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.Classification), _translate("MainWindow", "Classification"))

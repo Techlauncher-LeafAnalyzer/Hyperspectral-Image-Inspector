@@ -28,7 +28,7 @@
         <string>Vizualization</string>
        </property>
        <attribute name="title">
-        <string>Vizualization</string>
+        <string>Visualization</string>
        </attribute>
        <widget class="QSplitter" name="splitter_3">
         <property name="geometry">
