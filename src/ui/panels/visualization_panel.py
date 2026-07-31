@@ -18,14 +18,14 @@ class VisualizationPanel(FeaturePanel):
     """Panel for spectral-index visualization (RGB, NDVI, EVI, etc.)."""
 
     # Attributes injected by uic.loadUi at runtime:
-    radioButton:   QRadioButton   # RGB
-    radioButton_2: QRadioButton   # NDVI
-    radioButton_3: QRadioButton   # EVI
-    radioButton_4: QRadioButton   # MCARI
-    radioButton_5: QRadioButton   # MTVI
-    radioButton_6: QRadioButton   # OSAVI
-    radioButton_7: QRadioButton   # PRI
-    radioButton_8: QRadioButton   # Hypercube
+    modeRGB:   QRadioButton   # RGB
+    modeNDVI: QRadioButton   # NDVI
+    modeEVI: QRadioButton   # EVI
+    modeMCARI: QRadioButton   # MCARI
+    modeMTVI: QRadioButton   # MTVI
+    modeOSAVI: QRadioButton   # OSAVI
+    modePRI: QRadioButton   # PRI
+    modeHyperCube: QRadioButton   # Hypercube
 
     def __init__(self, hsi_data: "HSIData", parent: Optional[QWidget] = None) -> None:
         super().__init__(hsi_data, parent)

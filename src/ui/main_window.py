@@ -34,16 +34,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         self._hsi_data = HSIData()
-        self._current_panel: Optional[FeaturePanel] = None
-        self._panels: dict[Functionality, type[FeaturePanel]] = {
-            Functionality.VISUALIZATION:    VisualizationPanel,
-            Functionality.SUPER_RESOLUTION: SuperResolutionPanel,
-            Functionality.CALIBRATION:      CalibrationPanel,
-            Functionality.CLASSIFICATION:   ClassificationPanel,
-        }
-
         self._connect_signals()
-        self._select_functionality(Functionality.VISUALIZATION)
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
@@ -52,28 +43,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _connect_signals(self) -> None:
         self.actionLoadImage.triggered.connect(self._load_image)
         self.actionSaveImage.triggered.connect(self._save_image)
-
-        # Viewer outbound signals — eliminates the viewer.mainui back-reference.
-        self.viewer.historyChanged.connect(self._on_history_changed)
-        self.viewer.spectrumPlotRequested.connect(self._on_spectrum_plot)
-        self.viewer.meanIndexRequested.connect(self._on_mean_index)
-
-    # ------------------------------------------------------------------ #
-    # Private: panel management                                            #
-    # ------------------------------------------------------------------ #
-
-    def _select_functionality(self, func: Functionality) -> None:
-        """Swap the bottom-right feature panel using the named panelContainer."""
-        if self._current_panel is not None:
-            self.panelContainer.layout().removeWidget(self._current_panel)
-            self._current_panel.deleteLater()
-
-        panel = self._panels[func](self._hsi_data, self.panelContainer)
-        self.panelContainer.layout().addWidget(panel)
-        self._current_panel = panel
-
-        if self._hsi_data.is_loaded():
-            self._current_panel.on_image_loaded()
 
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
@@ -116,14 +85,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data.rgb_array    = rgb_array
         self._hsi_data.mask_array   = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
 
-        self.label_2.setText(str(image_path))
+        self.imageFilePath.setText(str(image_path))
         self.statusbar.showMessage(f"Loaded {image_path.name}")
         self.viewer.rgb        = rgb_array
         self.viewer.mask_array = self._hsi_data.mask_array
         self.viewer.set_photo(hsi_utils.numpy_to_qpixmap(rgb_array))
 
-        if self._current_panel is not None:
-            self._current_panel.on_image_loaded()
 
     def _save_image(self) -> None:
         pass
@@ -131,10 +98,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     # ------------------------------------------------------------------ #
     # Private: viewer signal handlers                                      #
     # ------------------------------------------------------------------ #
-
-    def _on_history_changed(self, can_undo: bool, can_redo: bool) -> None:
-        """Respond to viewer annotation history changes."""
-        pass  # actionUndo/actionRedo/actionClear to be added to MainWindow.ui
 
     def _on_spectrum_plot(self, pos: QPointF) -> None:
         pass
