@@ -34,7 +34,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         self._hsi_data = HSIData()
-        self._connect_signals()
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
