@@ -82,7 +82,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         file_path = Path(file_path_str)
         target_edit.setText(str(file_path))
         target_edit.setToolTip(str(file_path))
-        self.statusbar.showMessage(f"Loaded {file_path.name}")
+        self.statusbar.showMessage(f"Selected {file_path.name}")
 
     def _load_image(self) -> None:
         image_path_str, _ = QFileDialog.getOpenFileName(
