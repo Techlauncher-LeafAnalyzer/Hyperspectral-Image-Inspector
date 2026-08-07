@@ -6,7 +6,7 @@ from typing import Optional
 import numpy as np
 import spectral.io.envi as envi
 from spectral import get_rgb
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
@@ -160,24 +160,68 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _configure_file_menu(self) -> None:
         """Fold the File menu into the main tab row as a ribbon-style dropdown."""
-        file_menu = QtWidgets.QMenu(self)
-        file_menu.addAction(self.actionLoadImage)
-        file_menu.addAction(self.actionSaveImage)
+        assets_dir = Path(__file__).parent / "assets"
+        self.actionLoadImage.setIcon(
+            QtGui.QIcon(str(assets_dir / "folder_open.svg"))
+        )
+        self.actionLoadImage.setShortcut(
+            QtGui.QKeySequence.StandardKey.Open
+        )
+        self.actionLoadImage.setStatusTip("Open a hyperspectral image")
+        self.actionSaveImage.setIcon(
+            QtGui.QIcon(str(assets_dir / "save_image.svg"))
+        )
+        self.actionSaveImage.setShortcut(
+            QtGui.QKeySequence.StandardKey.Save
+        )
+        self.actionSaveImage.setStatusTip("Save the current image")
 
-        file_button = QtWidgets.QToolButton(self.tabWidget)
-        file_button.setObjectName("fileMenuButton")
-        file_button.setText("File")
-        file_button.setMenu(file_menu)
-        file_button.setPopupMode(
+        self._file_menu = QtWidgets.QMenu(self)
+        self._file_menu.setObjectName("fileMenu")
+        self._file_menu.setAccessibleName("File actions")
+        self._file_menu.setToolTipsVisible(True)
+        self._file_menu.setMinimumWidth(220)
+        self._file_menu.addAction(self.actionLoadImage)
+        self._file_menu.addAction(self.actionSaveImage)
+
+        self._file_menu_button = QtWidgets.QToolButton(self.tabWidget)
+        self._file_menu_button.setObjectName("fileMenuButton")
+        self._file_menu_button.setText("File")
+        self._file_menu_button.setAccessibleName("File menu")
+        self._file_menu_button.setAccessibleDescription(
+            "Open the menu for loading and saving images"
+        )
+        self._file_menu_button.setToolTip("File actions")
+        self._file_menu_button.setMenu(self._file_menu)
+        self._file_menu_button.setPopupMode(
             QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
         )
-        file_button.setToolButtonStyle(
+        self._file_menu_button.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly
         )
-        file_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.tabWidget.setCornerWidget(
-            file_button, QtCore.Qt.Corner.TopLeftCorner
+        self._file_menu_button.setCursor(
+            QtCore.Qt.CursorShape.PointingHandCursor
         )
+        self._file_menu_button.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.StrongFocus
+        )
+        self._file_menu.aboutToShow.connect(
+            lambda: self._set_file_menu_open(True)
+        )
+        self._file_menu.aboutToHide.connect(
+            lambda: self._set_file_menu_open(False)
+        )
+        self.tabWidget.setCornerWidget(
+            self._file_menu_button, QtCore.Qt.Corner.TopLeftCorner
+        )
+
+    def _set_file_menu_open(self, is_open: bool) -> None:
+        """Keep the File trigger visually active while its menu is open."""
+        self._file_menu_button.setProperty("menuOpen", is_open)
+        style = self._file_menu_button.style()
+        style.unpolish(self._file_menu_button)
+        style.polish(self._file_menu_button)
+        self._file_menu_button.update()
 
     def _connect_signals(self) -> None:
         self.actionLoadImage.triggered.connect(self._load_image)

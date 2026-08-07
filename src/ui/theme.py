@@ -178,6 +178,12 @@ QTabBar#mainTabBar {
     background: transparent;
 }
 
+QTabBar#mainTabBar::tab,
+QToolButton#fileMenuButton {
+    font-size: 13px;
+    font-weight: 600;
+}
+
 QTabBar#mainTabBar::tab {
     min-width: 108px;
     min-height: 20px;
@@ -189,7 +195,6 @@ QTabBar#mainTabBar::tab {
     margin-right: 4px;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
-    font-weight: 600;
 }
 
 QTabBar#mainTabBar::tab:hover {
@@ -216,17 +221,15 @@ QFrame#tabIndicator {
 }
 
 QToolButton#fileMenuButton {
-    min-width: 76px;
+    min-width: 82px;
     min-height: 20px;
     background: transparent;
     color: #536663;
     border: 1px solid transparent;
-    border-bottom: 1px solid #cbdad6;
-    padding: 9px 14px 10px 14px;
-    margin-right: 8px;
+    padding: 9px 16px 10px 14px;
+    margin-right: 4px;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
-    font-weight: 600;
 }
 
 QToolButton#fileMenuButton::menu-indicator {
@@ -235,7 +238,7 @@ QToolButton#fileMenuButton::menu-indicator {
     height: 6px;
     subcontrol-origin: padding;
     subcontrol-position: right center;
-    right: 4px;
+    right: 8px;
 }
 
 QToolButton#fileMenuButton:hover {
@@ -244,9 +247,14 @@ QToolButton#fileMenuButton:hover {
 }
 
 QToolButton#fileMenuButton:pressed,
-QToolButton#fileMenuButton::menu-button:pressed {
+QToolButton#fileMenuButton[menuOpen="true"] {
     background: #dcefeb;
     color: #173532;
+}
+
+QToolButton#fileMenuButton:disabled {
+    background: transparent;
+    color: #9ba9a6;
 }
 
 QTabWidget#classificationModeTabs::pane {
@@ -341,6 +349,41 @@ QMenu::item {
 
 QMenu::item:selected {
     background: #e5f5f1;
+}
+
+QMenu#fileMenu {
+    background: #fbfdfc;
+    color: #263735;
+    border: 1px solid #bdcec9;
+    border-radius: 8px;
+    padding: 6px;
+}
+
+QMenu#fileMenu::item {
+    min-height: 20px;
+    padding: 9px 38px 9px 36px;
+    margin: 1px 0;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    font-weight: 550;
+}
+
+QMenu#fileMenu::item:selected {
+    background: #e3f1ee;
+    color: #173f39;
+    border-color: #cfe3de;
+}
+
+QMenu#fileMenu::item:disabled {
+    background: transparent;
+    color: #9ba9a6;
+    border-color: transparent;
+}
+
+QMenu#fileMenu::icon {
+    left: 10px;
+    width: 18px;
+    height: 18px;
 }
 
 QStatusBar {
