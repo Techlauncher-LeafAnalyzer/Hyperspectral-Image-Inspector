@@ -45,6 +45,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.actionSaveImage.triggered.connect(self._save_image)
         self.darkFileButton.clicked.connect(self._select_dark_file)
         self.referenceFileButton.clicked.connect(self._select_reference_file)
+        self.pushButton.clicked.connect(self._select_groundtruth_file)
         self.calibrateButton.setEnabled(False)
         self.calibrateButton.setToolTip("Calibration is not implemented yet")
 
@@ -53,18 +54,24 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     # ------------------------------------------------------------------ #
 
     def _select_dark_file(self) -> None:
-        self._select_calibration_file(
+        self._select_supporting_file(
             self.darkFileEdit,
             "Open Dark File",
         )
 
     def _select_reference_file(self) -> None:
-        self._select_calibration_file(
+        self._select_supporting_file(
             self.referenceFileEdit,
             "Open Reference File",
         )
 
-    def _select_calibration_file(
+    def _select_groundtruth_file(self) -> None:
+        self._select_supporting_file(
+            self.lineEdit,
+            "Open Groundtruth File",
+        )
+
+    def _select_supporting_file(
         self,
         target_edit: QtWidgets.QLineEdit,
         dialog_title: str,
@@ -128,6 +135,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.imageFilePath.setToolTip(str(image_path))
         self.superResFilePath.setText(loaded_file_text)
         self.superResFilePath.setToolTip(str(image_path))
+        self.classificationFilePath.setText(loaded_file_text)
+        self.classificationFilePath.setToolTip(str(image_path))
+        self.unsupervisedClassifyButton.setEnabled(True)
+        self.pushButton_2.setEnabled(True)
         self.statusbar.showMessage(f"Loaded {image_path.name}")
         pixmap = hsi_utils.numpy_to_qpixmap(rgb_array)
 
@@ -142,6 +153,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.superResViewer.rgb        = rgb_array
         self.superResViewer.mask_array = self._hsi_data.mask_array
         self.superResViewer.set_photo(pixmap)
+
+        self.classificationViewer.rgb        = rgb_array
+        self.classificationViewer.mask_array = self._hsi_data.mask_array
+        self.classificationViewer.set_photo(pixmap)
 
     def _save_image(self) -> None:
         pass

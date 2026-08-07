@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import QApplication
 
@@ -110,6 +112,13 @@ QPushButton[primaryButton="true"]:hover {
     border-color: #117b6d;
 }
 
+QPushButton#unsupervisedClassifyButton:disabled,
+QPushButton#pushButton_2:disabled {
+    color: #9ba9a6;
+    background: #f0f3f2;
+    border-color: #dde5e2;
+}
+
 QLineEdit, QComboBox {
     background: #ffffff;
     color: #223331;
@@ -127,6 +136,12 @@ QLineEdit:focus, QComboBox:focus {
 QComboBox::drop-down {
     width: 28px;
     border: 0;
+}
+
+QComboBox::down-arrow {
+    image: url(__COMBOBOX_ARROW__);
+    width: 10px;
+    height: 6px;
 }
 
 QRadioButton {
@@ -176,6 +191,48 @@ QTabBar::tab:selected {
     border-color: #cbdad6;
 }
 
+QTabWidget#classificationModeTabs::pane {
+    border: 1px solid #cbdad6;
+    border-radius: 6px;
+    top: -1px;
+    background: #ffffff;
+}
+
+QTabWidget#classificationModeTabs QTabBar::tab {
+    min-width: 112px;
+    background: #e9f0ee;
+    color: #536663;
+    border: 1px solid #d2dfdc;
+    border-bottom: 0;
+    padding: 7px 16px;
+    margin-right: 3px;
+    font-weight: 600;
+}
+
+QTabWidget#classificationModeTabs QTabBar::tab:hover {
+    background: #dcebe7;
+    color: #264b46;
+    border-color: #b9d1cb;
+}
+
+QTabWidget#classificationModeTabs QTabBar::tab:selected {
+    background: #168b7b;
+    color: #ffffff;
+    border-color: #168b7b;
+}
+
+QTabWidget#classificationModeTabs QTabBar::tab:selected:hover {
+    background: #117b6d;
+    color: #ffffff;
+    border-color: #117b6d;
+}
+
+QTabWidget#classificationModeTabs QTabBar::tab:disabled {
+    background: #f0f3f2;
+    color: #9ba9a6;
+    border-color: #dde5e2;
+}
+
 QProgressBar {
     background: #e4ece9;
     border: 1px solid #d1dedb;
@@ -192,7 +249,8 @@ QProgressBar::chunk {
 
 QGraphicsView#viewer,
 QGraphicsView#superResViewer,
-QGraphicsView#calibrationViewer {
+QGraphicsView#calibrationViewer,
+QGraphicsView#classificationViewer {
     background: #e8eeee;
     border: 1px solid #d1dcda;
     border-radius: 8px;
@@ -258,4 +316,7 @@ QScrollBar:vertical, QScrollBar:horizontal {
 def apply_theme(app: QApplication) -> None:
     app.setStyle("Fusion")
     app.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
-    app.setStyleSheet(APP_QSS)
+    combo_box_arrow = Path(__file__).parent / "assets" / "chevron_down.svg"
+    app.setStyleSheet(
+        APP_QSS.replace("__COMBOBOX_ARROW__", combo_box_arrow.as_posix())
+    )
