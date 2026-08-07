@@ -292,6 +292,226 @@
        <attribute name="title">
         <string>Classification</string>
        </attribute>
+       <layout class="QVBoxLayout" name="classificationLayout">
+        <item>
+         <widget class="HSIViewer" name="classificationViewer">
+          <property name="layoutDirection">
+           <enum>Qt::LayoutDirection::LeftToRight</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="classificationFilePath">
+          <property name="text">
+           <string>File Loaded: </string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="classificationControls">
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>89</height>
+           </size>
+          </property>
+          <property name="title">
+           <string/>
+          </property>
+          <layout class="QVBoxLayout" name="classificationControlsLayout">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QTabWidget" name="classificationModeTabs">
+             <property name="currentIndex">
+              <number>1</number>
+             </property>
+             <widget class="QWidget" name="unsupervisedClassificationTab">
+              <attribute name="title">
+               <string>Unsupervised</string>
+              </attribute>
+              <layout class="QGridLayout" name="classificationGridLayout">
+               <property name="leftMargin">
+                <number>9</number>
+               </property>
+               <property name="topMargin">
+                <number>6</number>
+               </property>
+               <property name="rightMargin">
+                <number>9</number>
+               </property>
+               <property name="bottomMargin">
+                <number>6</number>
+               </property>
+               <property name="verticalSpacing">
+                <number>4</number>
+               </property>
+               <item row="0" column="0">
+                <widget class="QLabel" name="numOfClassesLabel">
+                 <property name="text">
+                  <string>Num of Classes:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QLineEdit" name="numOfClassesEdit">
+                 <property name="placeholderText">
+                  <string>e.g. 5</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="2">
+                <widget class="QLabel" name="maxIterationsLabel">
+                 <property name="text">
+                  <string>Max Iterations:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="3">
+                <widget class="QLineEdit" name="maxIterationsEdit">
+                 <property name="placeholderText">
+                  <string>e.g. 20</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="4">
+                <widget class="QPushButton" name="unsupervisedClassifyButton">
+                 <property name="enabled">
+                  <bool>false</bool>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>110</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Classify</string>
+                 </property>
+                 <property name="primaryButton" stdset="0">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+             <widget class="QWidget" name="supervisedClassificationTab">
+              <attribute name="title">
+               <string>Supervised</string>
+              </attribute>
+              <layout class="QGridLayout" name="supervisedClassificationGridLayout">
+               <property name="leftMargin">
+                <number>9</number>
+               </property>
+               <property name="topMargin">
+                <number>6</number>
+               </property>
+               <property name="rightMargin">
+                <number>9</number>
+               </property>
+               <property name="bottomMargin">
+                <number>6</number>
+               </property>
+               <property name="verticalSpacing">
+                <number>4</number>
+               </property>
+               <item row="0" column="0">
+                <widget class="QPushButton" name="pushButton">
+                 <property name="text">
+                  <string>Groundtruth File</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QLineEdit" name="lineEdit">
+                 <property name="readOnly">
+                  <bool>true</bool>
+                 </property>
+                 <property name="placeholderText">
+                  <string>Select groundtruth file</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="2">
+                <widget class="QLabel" name="classifierLabel">
+                 <property name="text">
+                  <string>Classifier:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="3">
+                <widget class="QComboBox" name="comboBox">
+                 <property name="toolTip">
+                  <string>Select a classifier</string>
+                 </property>
+                 <property name="accessibleName">
+                  <string>Classifier</string>
+                 </property>
+                 <property name="sizeAdjustPolicy">
+                  <enum>QComboBox::SizeAdjustPolicy::AdjustToMinimumContentsLengthWithIcon</enum>
+                 </property>
+                 <property name="minimumContentsLength">
+                  <number>25</number>
+                 </property>
+                 <item>
+                  <property name="text">
+                   <string>GaussianClassifier</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>MahalanobisDistanceClassifier</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>PerceptronClassifier</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>TBD</string>
+                  </property>
+                 </item>
+                </widget>
+               </item>
+               <item row="0" column="4">
+                <widget class="QPushButton" name="pushButton_2">
+                 <property name="enabled">
+                  <bool>false</bool>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>110</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Classify</string>
+                 </property>
+                 <property name="primaryButton" stdset="0">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
       </widget>
      </widget>
     </item>
