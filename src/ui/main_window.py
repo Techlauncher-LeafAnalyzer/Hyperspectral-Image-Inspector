@@ -11,13 +11,8 @@ from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
-from core.hsi_data import Functionality, HSIData
+from core.hsi_data import HSIData
 from ui.generated.MainWindow import Ui_MainWindow
-from ui.panels.base_panel import FeaturePanel
-from ui.panels.calibration_panel import CalibrationPanel
-from ui.panels.classification_panel import ClassificationPanel
-from ui.panels.super_resolution_panel import SuperResolutionPanel
-from ui.panels.visualization_panel import VisualizationPanel
 
 
 class _TabTransitionController(QtCore.QObject):
