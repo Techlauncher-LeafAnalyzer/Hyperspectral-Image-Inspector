@@ -1,27 +1,27 @@
 # Hyperspectral Image Inspector — Architecture Reference
 
+> **2026-08 update:** the UI pivoted from a sidebar + swappable-panel design to a
+> static `QTabWidget` layout (PRs #5–#11). The now-unused `src/ui/panels/*.py`
+> classes and their per-panel `.ui` files have since been deleted — see
+> "Sidebar + swappable panels → static tabs" under Design Decisions.
+
 ## Package Structure
 
 ```
 src/
-├── main.py                        Entry point (12 lines)
+├── main.py                        Entry point — builds QApplication, applies theme, shows window
 ├── core/                          Pure Python — zero Qt imports
 │   ├── hsi_data.py                HSIData dataclass + enums
 │   └── hsi_utils.py               Stateless utility functions
 └── ui/                            All Qt-touching code
+    ├── theme.py                   App-wide QSS stylesheet + font loading
     ├── viewer.py                  HSIViewer custom QGraphicsView
-    ├── main_window.py             MainWindowController
-    ├── generated/
-    │   └── MainWindow.py          Build artifact — never hand-edited
-    └── panels/
-        ├── base_panel.py          FeaturePanel abstract base
-        ├── visualization_panel.py
-        ├── calibration_panel.py
-        ├── classification_panel.py
-        └── super_resolution_panel.py
+    ├── main_window.py             MainWindowController (tab-based)
+    └── generated/
+        └── MainWindow.py          Build artifact — never hand-edited
 ```
 
-UI files live in `src/qt/`. Regenerate `ui/generated/MainWindow.py` after editing `MainWindow.ui`:
+UI files live in `src/qt/` (just `MainWindow.ui` now — it defines every tab's controls directly). Regenerate `ui/generated/MainWindow.py` after editing it:
 
 ```bash
 python -m PyQt6.uic.pyuic src/qt/MainWindow.ui -o src/ui/generated/MainWindow.py
@@ -33,16 +33,18 @@ python -m PyQt6.uic.pyuic src/qt/MainWindow.ui -o src/ui/generated/MainWindow.py
 
 ```
 main.py
+  ├─ ui.theme.apply_theme                     (global QSS + fonts)
   └─ ui.main_window.MainWindowController
-       ├─ ui.generated.MainWindow.Ui_MainWindow   (layout)
-       │    └─ ui.viewer.HSIViewer                (custom widget)
-       ├─ core.hsi_data.HSIData                   (shared state)
-       ├─ core.hsi_utils                          (I/O helpers)
-       └─ ui.panels.*Panel                        (swappable feature UIs)
-            └─ core.hsi_data.HSIData              (read-only, injected)
+       ├─ ui.generated.MainWindow.Ui_MainWindow   (tab layout, all controls)
+       │    ├─ ui.viewer.HSIViewer  × 4            (one per tab: viewer,
+       │    │                                       calibrationViewer, superResViewer,
+       │    │                                       classificationViewer)
+       │    └─ _TabTransitionController            (tab-switch animation, private to main_window.py)
+       ├─ core.hsi_data.HSIData                    (shared state)
+       └─ core.hsi_utils                           (I/O helpers)
 ```
 
-`HSIViewer` has **no import from `ui.main_window`**. Communication flows upward through Qt signals only.
+`HSIViewer` has **no import from `ui.main_window`**. Communication flows upward through Qt signals only — though as of this writing, `MainWindowController` does not connect to any of them (see "Known gaps" below).
 
 ---
 
@@ -70,7 +72,7 @@ class Functionality(Enum):
     CLASSIFICATION   = auto()
 ```
 
-Used as the key in `MainWindowController._panels` to select which `FeaturePanel` subclass to instantiate. Replaces the previous string-literal dispatch.
+Defined for the old swappable-panel dispatch. `MainWindowController` no longer references it — tab selection is handled entirely by `QTabWidget`. Now that `ui/panels/` has been deleted, nothing in the codebase references `Functionality` either; it's safe to remove.
 
 ---
 
@@ -91,13 +93,13 @@ class HSIData:
     def clear(self) -> None: ...
 ```
 
-Single source of truth for all loaded image state. Created once in `MainWindowController.__init__` and passed by reference to every `FeaturePanel`. Only `MainWindowController._load_image` writes to it; panels read from it via `self._hsi_data`.
+Single source of truth for all loaded image state. Created once in `MainWindowController.__init__` and held on `self._hsi_data`. Only `_load_image` writes to it. Nothing currently reads `image_format`, `header_path`, or `is_loaded()`/`clear()` — no panel or handler consumes `HSIData` at all right now, since the four viewers are populated directly from `_load_image`'s local variables rather than by reading back through `self._hsi_data`.
 
 ---
 
 ## `core/hsi_utils.py`
 
-Stateless, pure functions with no Qt dependency. Safe to call from tests without a display.
+Unchanged. Stateless, pure functions with no Qt dependency. Safe to call from tests without a display.
 
 ```python
 def find_rgb_bands(wavelengths: list[float]) -> Optional[tuple[int, int, int]]:
@@ -129,6 +131,8 @@ def numpy_to_qpixmap(image: NDArray[uint8]) -> QPixmap:
     """
 ```
 
+Note: `find_red_nir_bands` (for NDVI-family indices) has no caller anywhere in `src/` yet — the Visualization tab's index radio buttons (see the old `visualization_panel.py`) were never wired up in the current tab-based controller. This lines up with Jira `LEAF-113`/`LEAF-114` (vegetation index formulas + wiring) being unstarted sprint-1 work.
+
 ---
 
 ## `ui/viewer.py`
@@ -141,13 +145,13 @@ class PromptMode(Enum):
     BOXES  = auto()
 ```
 
-Controls the annotation interaction mode. Replaces the previous untyped `self.prompt: int` attribute.
+Controls the annotation interaction mode.
 
 ---
 
 ### `HSIViewer(QtWidgets.QGraphicsView)`
 
-Custom interactive view for displaying and annotating hyperspectral images. Decoupled from `MainWindowController` via outbound signals.
+Custom interactive view for displaying and annotating hyperspectral images. Decoupled from `MainWindowController` via outbound signals. **Four independent instances now exist** — `viewer`, `calibrationViewer`, `superResViewer`, `classificationViewer` — one per tab, each loaded with the same `rgb_array`/`mask_array`/pixmap on image load. They are not kept in sync with each other after that (e.g. annotating in one does not reflect in another).
 
 #### Signals
 
@@ -212,197 +216,74 @@ def redo(self) -> None:
 | Shift release | Flush batch, trigger segmentation |
 | Right-click | Context menu (Spectrum Plot, Clear Selection, Index Mean) |
 
+All of the above still works standalone inside each `HSIViewer`, but `historyChanged`, `spectrumPlotRequested`, and `meanIndexRequested` are emitted into the void — no slot is connected to any of them (see "Known gaps" below). There is also no `actionUndo`/`actionRedo`/`actionClear` in `MainWindow.ui` anymore for `historyChanged` to eventually drive.
+
 ---
 
 ## `ui/main_window.py`
 
 ### `MainWindowController(QMainWindow, Ui_MainWindow)`
 
-Application controller. Owns `HSIData`, manages panel lifecycle, and connects all signals. Inherits the widget layout from `Ui_MainWindow` via `setupUi(self)`.
+Application controller. Owns `HSIData` and wires the static tab UI. Inherits the widget layout from `Ui_MainWindow` via `setupUi(self)`.
 
 ```python
 def __init__(self, *args, **kwargs) -> None:
-    """Sets up UI, creates HSIData, wires all signals, loads default panel."""
+    """setupUi, create HSIData, configure tab transitions, wire signals."""
 ```
 
-#### Private methods
+#### Private methods (current)
 
 ```python
-def _connect_signals(self) -> None:
-    """Wire sidebar buttons → _select_functionality,
-    menu actions → _load_image/_save_image,
-    viewer signals → handler slots."""
+def _configure_tabs(self) -> None:
+    """Name/style the two QTabWidgets (tabWidget = top-level sections,
+    classificationModeTabs = Unsupervised/Supervised) and attach a
+    _TabTransitionController to each for the slide/fade animation."""
 
-def _select_functionality(self, func: Functionality) -> None:
-    """Swap the feature panel in panelContainer.
-    Removes and deletes the old panel, constructs the new one,
-    calls on_image_loaded() if an image is already loaded."""
+def _connect_signals(self) -> None:
+    """Wires: actionLoadImage -> _load_image, actionSaveImage -> _save_image,
+    darkFileButton/referenceFileButton/pushButton -> file pickers.
+    Unconditionally disables calibrateButton with a "not implemented yet"
+    tooltip — it is never re-enabled, including after image load."""
+
+def _select_dark_file(self) -> None: ...
+def _select_reference_file(self) -> None: ...
+def _select_groundtruth_file(self) -> None: ...
+    # Thin wrappers around _select_supporting_file for each file-picker button.
+
+def _select_supporting_file(self, target_edit: QLineEdit, dialog_title: str) -> None:
+    """Open a file dialog, write the chosen path into target_edit."""
 
 def _load_image(self) -> None:
     """Open file dialog, detect PSI vs ENVI format, convert header if needed,
-    open via spectral, extract RGB, populate HSIData, update viewer."""
+    open via spectral, extract RGB, populate self._hsi_data, then push the
+    same pixmap/rgb/mask into all four HSIViewer instances directly and
+    enable unsupervisedClassifyButton + pushButton_2 (Supervised Classify)."""
 
 def _save_image(self) -> None:
     """(stub)"""
 
-def _on_history_changed(self, can_undo: bool, can_redo: bool) -> None:
-    """Respond to viewer annotation history changes.
-    Connect to actionUndo/actionRedo/actionClear once added to MainWindow.ui."""
-
 def _on_spectrum_plot(self, pos: QPointF) -> None:
-    """(stub)"""
+    """(stub, and currently unreachable — not connected to any signal)"""
 
 def _on_mean_index(self, index_name: str) -> None:
-    """(stub)"""
+    """(stub, and currently unreachable — not connected to any signal)"""
 ```
 
-#### Panel registry
+#### `_TabTransitionController(QtCore.QObject)`
 
-```python
-_panels: dict[Functionality, type[FeaturePanel]] = {
-    Functionality.VISUALIZATION:    VisualizationPanel,
-    Functionality.SUPER_RESOLUTION: SuperResolutionPanel,
-    Functionality.CALIBRATION:      CalibrationPanel,
-    Functionality.CLASSIFICATION:   ClassificationPanel,
-}
-```
-
-To add a new feature: create a `FeaturePanel` subclass, add a `.ui` file, and register the pair here.
+New private helper class (not present in the previous design). Gives a `QTabWidget` a sliding underline indicator plus a cross-fade on the incoming page (180ms, `OutCubic` easing). One instance is created per tab widget in `_configure_tabs`; purely cosmetic, holds no application state.
 
 ---
 
-## `ui/panels/base_panel.py`
+## Removed: `ui/panels/` (historical)
 
-### `FeaturePanel(QWidget)`
-
-Abstract base for all swappable feature panels.
-
-```python
-class FeaturePanel(QWidget):
-
-    def __init__(self, hsi_data: HSIData, parent: Optional[QWidget] = None) -> None:
-        """Stores hsi_data reference. Subclasses must call super().__init__ then
-        uic.loadUi(self._UI_PATH, self) to inflate their layout onto self."""
-
-    def on_image_loaded(self) -> None:
-        """Called by MainWindowController after _load_image() succeeds.
-        Minimal implementation: self.setEnabled(True).
-        Raises NotImplementedError if not overridden."""
-
-    def reset(self) -> None:
-        """Return to default (no-image) state.
-        Minimal implementation: self.setEnabled(False).
-        Raises NotImplementedError if not overridden."""
-```
-
-#### Contract for subclasses
-
-```python
-class MyPanel(FeaturePanel):
-    # Declare widget attributes for IDE type-checking
-    # (uic.loadUi sets them as instance attrs at runtime):
-    someButton: QPushButton
-    someEdit:   QLineEdit
-
-    _UI_PATH = Path(__file__).parents[2] / "qt" / "MyPanel.ui"
-
-    def __init__(self, hsi_data: HSIData, parent=None) -> None:
-        super().__init__(hsi_data, parent)
-        uic.loadUi(self._UI_PATH, self)
-        # connect internal signals here
-        self.setEnabled(False)
-
-    def on_image_loaded(self) -> None:
-        self.setEnabled(True)
-
-    def reset(self) -> None:
-        self.setEnabled(False)
-```
+The original design swapped a single `FeaturePanel` subclass (`base_panel.py`, plus `calibration_panel.py`/`classification_panel.py`/`super_resolution_panel.py`/`visualization_panel.py`) in and out of a named `panelContainer`, selected via a sidebar + `Functionality` dispatch. After the pivot to the static `QTabWidget` layout (PRs #5–#11), none of these classes were instantiated anywhere — `main_window.py` kept only their imports. That dead code, along with the four per-panel `.ui` files (`src/qt/Visualization.ui`, `Calibration.ui`, `Classification.ui`, `Super-resolution.ui`), has since been deleted; `src/qt/` now contains only `MainWindow.ui`.
 
 ---
 
-## `ui/panels/visualization_panel.py`
+## `ui/theme.py`
 
-### `VisualizationPanel(FeaturePanel)`
-
-Loaded from `qt/Visualization.ui`.
-
-```python
-# Widget attributes (injected by uic.loadUi):
-radioButton:   QRadioButton   # RGB (default checked)
-radioButton_2: QRadioButton   # NDVI
-radioButton_3: QRadioButton   # EVI
-radioButton_4: QRadioButton   # MCARI
-radioButton_5: QRadioButton   # MTVI
-radioButton_6: QRadioButton   # OSAVI
-radioButton_7: QRadioButton   # PRI
-radioButton_8: QRadioButton   # Hypercube
-
-def on_image_loaded(self) -> None: ...   # enables panel
-def reset(self) -> None: ...             # checks RGB, disables panel
-```
-
----
-
-## `ui/panels/calibration_panel.py`
-
-### `CalibrationPanel(FeaturePanel)`
-
-Loaded from `qt/Calibration.ui`.
-
-```python
-# Widget attributes:
-darkFileButton:      QPushButton
-darkFileEdit:        QLineEdit
-referenceFileButton: QPushButton
-referenceFileEdit:   QLineEdit
-calibrateButton:     QPushButton
-
-def on_image_loaded(self) -> None: ...   # enables panel
-def reset(self) -> None: ...             # clears file edits, disables panel
-```
-
----
-
-## `ui/panels/classification_panel.py`
-
-### `ClassificationPanel(FeaturePanel)`
-
-Loaded from `qt/Classification.ui`. Two-tab layout: Unsupervised and Supervised.
-
-```python
-# Unsupervised tab widget attributes:
-numOfClassesEdit:           QLineEdit
-maxIterationsEdit:          QLineEdit
-unsupervisedClassifyButton: QPushButton
-
-# Supervised tab widget attributes:
-lineEdit:     QLineEdit    # groundtruth file path
-comboBox:     QComboBox    # GaussianClassifier / MahalanobisDistanceClassifier / PerceptronClassifier
-pushButton_2: QPushButton  # Classify
-
-def on_image_loaded(self) -> None: ...   # enables panel
-def reset(self) -> None: ...             # clears inputs, disables panel
-```
-
----
-
-## `ui/panels/super_resolution_panel.py`
-
-### `SuperResolutionPanel(FeaturePanel)`
-
-Loaded from `qt/Super-resolution.ui`.
-
-```python
-# Widget attributes:
-superResolutionButton: QPushButton
-lowResRadioButton:     QRadioButton
-highResRadioButton:    QRadioButton
-progressBar:           QProgressBar
-
-def on_image_loaded(self) -> None: ...   # enables panel
-def reset(self) -> None: ...             # resets progress bar to 0, disables panel
-```
+New module, applied once from `main.py` via `apply_theme(app: QApplication) -> None`. Loads bundled fonts through `QFontDatabase` and applies a single global QSS stylesheet (`APP_QSS`) covering the main window background, the (now-removed) `#navigationPanel`/`#panelContainer` selectors left over from the sidebar design, tab bars, buttons, and form controls. `main_window.py` has no other styling code — all colours/spacing are centralized here.
 
 ---
 
@@ -410,17 +291,28 @@ def reset(self) -> None: ...             # resets progress bar to 0, disables pa
 
 Auto-generated by `pyuic6` from `qt/MainWindow.ui`. **Never edit manually** — changes will be overwritten on next regeneration.
 
-Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as instance attributes, including:
+Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as instance attributes. Current top-level structure: one `tabWidget` with four tabs — `Visualization`, `SuperResolution`, `Calibration`, `Classification` — each hosting its own `HSIViewer`. There is no sidebar and no `panelContainer` anymore.
 
 | Attribute | Type | Purpose |
 |-----------|------|---------|
-| `viewer` | `HSIViewer` | Main image display (custom widget) |
-| `panelContainer` | `QWidget` | Host for the active `FeaturePanel` |
-| `label_2` | `QLabel` | Displays the loaded file path |
-| `visualizationButton` | `QPushButton` | Sidebar mode selector |
-| `superResolutionButton` | `QPushButton` | Sidebar mode selector |
-| `calibrationButton` | `QPushButton` | Sidebar mode selector |
-| `classificationButton` | `QPushButton` | Sidebar mode selector |
+| `tabWidget` | `QTabWidget` | Top-level section selector (replaces the old sidebar buttons) |
+| `viewer` | `HSIViewer` | Visualization tab's image display |
+| `imageFilePath` | `QLabel` | Loaded file path, Visualization tab |
+| `superResViewer` | `HSIViewer` | Super-Resolution tab's image display |
+| `superResFilePath` | `QLabel` | Loaded file path, Super-Resolution tab |
+| `calibrationViewer` | `HSIViewer` | Calibration tab's image display |
+| `darkFileButton` / `darkFileEdit` | `QPushButton` / `QLineEdit` | Dark-frame file picker |
+| `referenceFileButton` / `referenceFileEdit` | `QPushButton` / `QLineEdit` | Reference-frame file picker |
+| `calibrateButton` | `QPushButton` | Always disabled — see `_connect_signals` |
+| `classificationViewer` | `HSIViewer` | Classification tab's image display |
+| `classificationFilePath` | `QLabel` | Loaded file path, Classification tab |
+| `classificationModeTabs` | `QTabWidget` | Nested Unsupervised / Supervised sub-tabs |
+| `numOfClassesEdit`, `maxIterationsEdit` | `QLineEdit` | Unsupervised tab inputs (K-means params) |
+| `unsupervisedClassifyButton` | `QPushButton` | Enabled once an image is loaded; not yet wired to a handler |
+| `lineEdit` | `QLineEdit` | Supervised tab — groundtruth file path |
+| `comboBox` | `QComboBox` | Supervised tab — classifier choice (Gaussian / Mahalanobis / Perceptron / TBD) |
+| `pushButton` | `QPushButton` | Supervised tab — groundtruth file picker |
+| `pushButton_2` | `QPushButton` | Supervised tab — Classify; enabled once an image is loaded, not yet wired |
 | `actionLoadImage` | `QAction` | File menu — load |
 | `actionSaveImage` | `QAction` | File menu — save |
 
@@ -430,20 +322,27 @@ Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as
 
 ### Acyclic dependency via signals
 
-The previous design set `viewer.mainui = self` so the viewer could call `self.mainui.actionUndo.setEnabled(...)`. This created a circular dependency. The new design inverts it: `HSIViewer` emits `historyChanged(can_undo, can_redo)` and `MainWindowController` connects a slot. `ui/viewer.py` has no import from `ui/main_window.py`.
+`HSIViewer` emits `historyChanged(can_undo, can_redo)`, `spectrumPlotRequested(pos)`, `meanIndexRequested(name)` rather than holding a back-reference to the controller. `ui/viewer.py` still has no import from `ui/main_window.py`. The controller side of this contract is currently empty (see below) but the emitting side is intact, so wiring it back up is additive, not a redesign.
 
-### Named `panelContainer` replaces `itemAt(2)`
+### Sidebar + swappable panels → static tabs
 
-The previous code used `self.verticalLayoutBottomRight.itemAt(2).widget()` to find the swappable panel — a silent runtime failure if the layout order changed. `panelContainer` is a named `QWidget` defined in `MainWindow.ui`, so `setupUi` makes it a typed attribute directly accessible as `self.panelContainer`.
-
-### `Functionality` enum replaces string dispatch
-
-`selectFunctionality("Super-resolution")` had no compile-time safety. The `Functionality` enum makes invalid values a `TypeError` at the call site, and the `_panels` dict is exhaustively typed.
+The original design swapped a single `FeaturePanel` subclass in and out of a named `panelContainer`, driven by a `Functionality` enum and a sidebar of mode buttons. As of PRs #5–#11, `MainWindow.ui` was rebuilt around a `QTabWidget` with one fixed tab per feature, each holding its own `HSIViewer` and controls directly. This trades the old single-shared-viewer model for four independent viewers (simpler per-tab layout, no dynamic widget teardown/rebuild) at the cost of the four viewers not staying in sync. The now-dead `ui/panels/` classes and their `.ui` files have since been removed (see "Removed: `ui/panels/`" above).
 
 ### `HSIData` consolidates scattered state
 
-Previously, `image_path` and `hsi` lived in `MainWindowController` while `rgb` and `mask_array` lived in `HSIViewer`. `HSIData` owns all of it. Panels read from `self._hsi_data`; only the controller writes to it on load.
+`HSIData` still owns `image_path`, `spectral_obj`, `rgb_array`, `mask_array`, etc., written only by `_load_image`. In practice `_load_image` currently pushes data into the four `HSIViewer`s directly from its local variables rather than reading back through `self._hsi_data`, so `HSIData` is populated but not yet consumed as the single read path it was designed to be.
 
 ### `core/` has zero Qt imports
 
-All functions in `core/hsi_utils.py` work without a running `QApplication`. `numpy_to_qpixmap` imports Qt locally inside the function body. This keeps the module testable in a headless environment.
+Still true. All functions in `core/hsi_utils.py` work without a running `QApplication`. `numpy_to_qpixmap` imports Qt locally inside the function body. This keeps the module testable in a headless environment.
+
+---
+
+## Known gaps
+
+Carried over from the current rubric self-assessment / sprint-1 backlog, listed here because they're structural rather than just "unfinished feature":
+
+- **Viewer signals are unconnected.** `historyChanged`, `spectrumPlotRequested`, and `meanIndexRequested` are emitted by all four `HSIViewer`s but `MainWindowController._connect_signals` does not listen to any of them. `_on_spectrum_plot` and `_on_mean_index` exist as stubs but are unreachable. Tracked by `LEAF-118` (spectrum plot) and the Visualization-tab index wiring under `LEAF-114`.
+- **Calibration is permanently disabled.** `calibrateButton` is disabled unconditionally in `_connect_signals` and nothing re-enables it after image load. Tracked by `LEAF-116`.
+- **Unsupervised/Supervised classify buttons are enabled but unwired** — `unsupervisedClassifyButton` and `pushButton_2` flip to enabled on image load but have no click handler. Tracked by `LEAF-119`/`LEAF-120`.
+- **`_save_image` is a stub** with no format decided yet.
