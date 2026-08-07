@@ -69,6 +69,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setBackgroundBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
         self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.text_item = QGraphicsTextItem("APPN-Tech")
         font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
@@ -77,12 +78,13 @@ class HSIViewer(QtWidgets.QGraphicsView):
         font.setItalic(True)
         self.text_item.setFont(font)
         self.text_item.setDefaultTextColor(QColor("#eaecee"))
-        self.text_item.setTextWidth(400)
+        self.text_item.setTextWidth(-1)
         self.text_item.setPos(
-            -self.text_item.boundingRect().width() / 2,
-            -self.text_item.boundingRect().height() / 2,
+            -self.text_item.boundingRect().center().x(),
+            -self.text_item.boundingRect().center().y(),
         )
         self._scene.addItem(self.text_item)
+        self.setSceneRect(self.text_item.sceneBoundingRect())
 
         self.text_item.setZValue(0)
         self._photo.setZValue(1)

@@ -167,28 +167,52 @@ QRadioButton::indicator:checked {
     background: #ffffff;
 }
 
-QTabWidget::pane {
+QTabWidget#tabWidget::pane {
     border: 1px solid #d8e2df;
-    border-radius: 6px;
+    border-radius: 8px;
     top: -1px;
-    background: #ffffff;
+    background: #f9fbfa;
 }
 
-QTabBar::tab {
-    background: #e9f0ee;
+QTabBar#mainTabBar {
+    background: transparent;
+}
+
+QTabBar#mainTabBar::tab {
+    min-width: 108px;
+    min-height: 20px;
+    background: transparent;
     color: #536663;
-    border: 1px solid #d8e2df;
+    border: 1px solid transparent;
     border-bottom: 0;
-    padding: 8px 14px;
+    padding: 9px 16px 10px 16px;
     margin-right: 4px;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
+    font-weight: 600;
 }
 
-QTabBar::tab:selected {
-    background: #ffffff;
+QTabBar#mainTabBar::tab:hover {
+    background: #e3eeeb;
+    color: #264b46;
+}
+
+QTabBar#mainTabBar::tab:selected {
+    background: #f9fbfa;
     color: #173532;
     border-color: #cbdad6;
+    border-bottom-color: #f9fbfa;
+}
+
+QTabBar#mainTabBar:focus::tab:selected {
+    border-color: #78afa5;
+    border-bottom-color: #f9fbfa;
+}
+
+QFrame#tabIndicator {
+    background: #168b7b;
+    border: 0;
+    border-radius: 1px;
 }
 
 QTabWidget#classificationModeTabs::pane {
@@ -198,36 +222,37 @@ QTabWidget#classificationModeTabs::pane {
     background: #ffffff;
 }
 
-QTabWidget#classificationModeTabs QTabBar::tab {
+QTabBar#classificationTabBar::tab {
     min-width: 112px;
-    background: #e9f0ee;
+    background: transparent;
     color: #536663;
-    border: 1px solid #d2dfdc;
+    border: 1px solid transparent;
     border-bottom: 0;
     padding: 7px 16px;
     margin-right: 3px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
     font-weight: 600;
 }
 
-QTabWidget#classificationModeTabs QTabBar::tab:hover {
+QTabBar#classificationTabBar::tab:hover {
     background: #dcebe7;
     color: #264b46;
-    border-color: #b9d1cb;
 }
 
-QTabWidget#classificationModeTabs QTabBar::tab:selected {
-    background: #168b7b;
-    color: #ffffff;
-    border-color: #168b7b;
+QTabBar#classificationTabBar::tab:selected {
+    background: #ffffff;
+    color: #173532;
+    border-color: #cbdad6;
+    border-bottom-color: #ffffff;
 }
 
-QTabWidget#classificationModeTabs QTabBar::tab:selected:hover {
-    background: #117b6d;
-    color: #ffffff;
-    border-color: #117b6d;
+QTabBar#classificationTabBar:focus::tab:selected {
+    border-color: #78afa5;
+    border-bottom-color: #ffffff;
 }
 
-QTabWidget#classificationModeTabs QTabBar::tab:disabled {
+QTabBar#classificationTabBar::tab:disabled {
     background: #f0f3f2;
     color: #9ba9a6;
     border-color: #dde5e2;
