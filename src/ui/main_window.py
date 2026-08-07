@@ -130,6 +130,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         self._hsi_data = HSIData()
         self._configure_tabs()
+        self._configure_file_menu()
         self._connect_signals()
 
     # ------------------------------------------------------------------ #
@@ -156,6 +157,27 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             tab_bar.setExpanding(False)
             tab_bar.setElideMode(QtCore.Qt.TextElideMode.ElideRight)
             self._tab_transitions.append(_TabTransitionController(tab_widget))
+
+    def _configure_file_menu(self) -> None:
+        """Fold the File menu into the main tab row as a ribbon-style dropdown."""
+        file_menu = QtWidgets.QMenu(self)
+        file_menu.addAction(self.actionLoadImage)
+        file_menu.addAction(self.actionSaveImage)
+
+        file_button = QtWidgets.QToolButton(self.tabWidget)
+        file_button.setObjectName("fileMenuButton")
+        file_button.setText("File")
+        file_button.setMenu(file_menu)
+        file_button.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        file_button.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        file_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.tabWidget.setCornerWidget(
+            file_button, QtCore.Qt.Corner.TopLeftCorner
+        )
 
     def _connect_signals(self) -> None:
         self.actionLoadImage.triggered.connect(self._load_image)
