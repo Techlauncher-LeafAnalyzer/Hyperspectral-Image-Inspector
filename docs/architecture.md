@@ -239,6 +239,12 @@ def _configure_tabs(self) -> None:
     classificationModeTabs = Unsupervised/Supervised) and attach a
     _TabTransitionController to each for the slide/fade animation."""
 
+def _configure_file_menu(self) -> None:
+    """Build a File dropdown (Load Image / Save Image) and install it as
+    tabWidget's top-left corner widget, so it sits in the same row as the
+    Visualization/Super-Resolution/Calibration/Classification tabs instead
+    of a separate QMenuBar row."""
+
 def _connect_signals(self) -> None:
     """Wires: actionLoadImage -> _load_image, actionSaveImage -> _save_image,
     darkFileButton/referenceFileButton/pushButton -> file pickers.
@@ -313,8 +319,10 @@ Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as
 | `comboBox` | `QComboBox` | Supervised tab — classifier choice (Gaussian / Mahalanobis / Perceptron / TBD) |
 | `pushButton` | `QPushButton` | Supervised tab — groundtruth file picker |
 | `pushButton_2` | `QPushButton` | Supervised tab — Classify; enabled once an image is loaded, not yet wired |
-| `actionLoadImage` | `QAction` | File menu — load |
-| `actionSaveImage` | `QAction` | File menu — save |
+| `actionLoadImage` | `QAction` | File dropdown — load |
+| `actionSaveImage` | `QAction` | File dropdown — save |
+
+There is no `menubar`/`menuFile` anymore — `MainWindow.ui` no longer declares a `QMenuBar`. `_configure_file_menu` (in `main_window.py`) builds the File `QMenu` from the two actions above at runtime and installs it as a `QToolButton` in `tabWidget`'s top-left corner (see below).
 
 ---
 
@@ -327,6 +335,10 @@ Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as
 ### Sidebar + swappable panels → static tabs
 
 The original design swapped a single `FeaturePanel` subclass in and out of a named `panelContainer`, driven by a `Functionality` enum and a sidebar of mode buttons. As of PRs #5–#11, `MainWindow.ui` was rebuilt around a `QTabWidget` with one fixed tab per feature, each holding its own `HSIViewer` and controls directly. This trades the old single-shared-viewer model for four independent viewers (simpler per-tab layout, no dynamic widget teardown/rebuild) at the cost of the four viewers not staying in sync. The now-dead `ui/panels/` classes and their `.ui` files have since been removed (see "Removed: `ui/panels/`" above).
+
+### File menu → ribbon-style corner dropdown (`LEAF-121`)
+
+The `QMenuBar`/`menuFile` row above the tabs has been removed from `MainWindow.ui`; `actionLoadImage`/`actionSaveImage` are still declared as standalone `QAction`s but are no longer attached to a menu bar in the `.ui` file. `MainWindowController._configure_file_menu` builds the `QMenu` from those actions at runtime and sets it on a `QToolButton` installed via `tabWidget.setCornerWidget(..., Qt.Corner.TopLeftCorner)`, so "File" reads left-to-right with the other tabs in one row (Word ribbon-style) instead of a separate row above them.
 
 ### `HSIData` consolidates scattered state
 

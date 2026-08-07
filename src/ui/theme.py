@@ -215,6 +215,40 @@ QFrame#tabIndicator {
     border-radius: 1px;
 }
 
+QToolButton#fileMenuButton {
+    min-width: 76px;
+    min-height: 20px;
+    background: transparent;
+    color: #536663;
+    border: 1px solid transparent;
+    border-bottom: 1px solid #cbdad6;
+    padding: 9px 14px 10px 14px;
+    margin-right: 8px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    font-weight: 600;
+}
+
+QToolButton#fileMenuButton::menu-indicator {
+    image: url(__COMBOBOX_ARROW__);
+    width: 10px;
+    height: 6px;
+    subcontrol-origin: padding;
+    subcontrol-position: right center;
+    right: 4px;
+}
+
+QToolButton#fileMenuButton:hover {
+    background: #e3eeeb;
+    color: #264b46;
+}
+
+QToolButton#fileMenuButton:pressed,
+QToolButton#fileMenuButton::menu-button:pressed {
+    background: #dcefeb;
+    color: #173532;
+}
+
 QTabWidget#classificationModeTabs::pane {
     border: 1px solid #cbdad6;
     border-radius: 6px;
@@ -291,22 +325,6 @@ QSplitter::handle:horizontal {
 
 QSplitter::handle:vertical {
     height: 2px;
-}
-
-QMenuBar {
-    background: #f8fbfa;
-    color: #263735;
-    border-bottom: 1px solid #d8e2df;
-}
-
-QMenuBar::item {
-    padding: 4px 10px;
-    background: transparent;
-}
-
-QMenuBar::item:selected {
-    background: #e3efec;
-    border-radius: 4px;
 }
 
 QMenu {
