@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hyperspectral Image Inspector — TechLauncher Rubric Evidence</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+<style>
+  :root {
+    --leaf-green: #2e7d32;
+    --leaf-amber: #b8860b;
+    --leaf-red: #b3261e;
+    --leaf-grey: #5f6368;
+  }
+  .reveal { font-family: 'Helvetica Neue', Arial, sans-serif; }
+  .reveal h1, .reveal h2, .reveal h3 { font-family: inherit; text-transform: none; letter-spacing: -0.01em; }
+  .reveal h2 { color: var(--leaf-green); font-size: 1.5em; }
+  .reveal section.section-divider h1 { color: var(--leaf-green); font-size: 2.2em; }
+  .reveal section.section-divider .subtitle { color: var(--leaf-grey); font-size: 0.9em; margin-top: 0.5em; }
+  .reveal .slide-number { color: var(--leaf-grey); }
+  .kicker { display: inline-block; font-size: 0.42em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: #fff; background: var(--leaf-green); padding: 0.15em 0.6em; border-radius: 3px; vertical-align: middle; margin-right: 0.4em; }
+  .rubric-line { font-size: 0.62em; color: var(--leaf-grey); font-style: italic; margin: 0.2em 0 0.6em 0; border-left: 3px solid var(--leaf-green); padding-left: 0.5em; text-align: left; }
+  .reveal .content { font-size: 0.62em; text-align: left; }
+  .reveal .content p, .reveal .content li { margin-bottom: 0.35em; }
+  .reveal ul { margin-left: 0.2em; }
+  .evidence { background: #f4f7f4; border: 1px solid #dbe6db; border-radius: 6px; padding: 0.5em 0.8em; margin-top: 0.5em; font-size: 0.92em; }
+  .evidence .tag { font-weight: 700; color: var(--leaf-green); }
+  .gap { background: #fdf6ec; border: 1px solid #f0dcb5; border-left: 4px solid var(--leaf-amber); border-radius: 4px; padding: 0.5em 0.8em; margin-top: 0.5em; font-size: 0.92em; }
+  .gap .tag { font-weight: 700; color: var(--leaf-amber); }
+  .status-pill { display: inline-block; font-size: 0.7em; font-weight: 700; padding: 0.1em 0.55em; border-radius: 10px; margin-left: 0.4em; }
+  .status-done { background: #e6f4ea; color: var(--leaf-green); }
+  .status-partial { background: #fdf6ec; color: var(--leaf-amber); }
+  .status-gap { background: #fbeaea; color: var(--leaf-red); }
+  .two-col { display: flex; gap: 1em; text-align: left; }
+  .two-col > div { flex: 1; }
+  .reveal table { font-size: 0.75em; }
+  .reveal table th { background: #eef4ee; }
+  .agenda-table { width: 100%; font-size: 1.35em; margin: 0.9em 0; border-collapse: separate; border-spacing: 0 0.3em; }
+  .agenda-table th { padding: 0.5em 0.8em; }
+  .agenda-table td { padding: 0.7em 0.8em; background: #fafcfa; border-top: 1px solid #dbe6db; border-bottom: 1px solid #dbe6db; }
+  .agenda-table td:first-child { border-left: 1px solid #dbe6db; border-radius: 6px 0 0 6px; }
+  .agenda-table td:last-child { border-right: 1px solid #dbe6db; border-radius: 0 6px 6px 0; }
+  .agenda-table .status-pill { font-size: 0.8em; padding: 0.15em 0.7em; margin: 0 0.15em; }
+  .src { font-size: 0.55em; color: var(--leaf-grey); margin-top: 0.6em; }
+  .src a { color: var(--leaf-grey); }
+  .agenda-cat { color: var(--leaf-green); }
+  /* Condensed-deck additions: dense per-point rows so many rubric bullets fit per slide */
+  .rubric-item { margin-bottom: 1.1em; }
+  .rubric-item .point { font-weight: 700; margin-bottom: 0; }
+  .rubric-item .evidence, .rubric-item .gap { padding: 0.5em 0.75em; margin-top: 0.3em; font-size: 0.9em; }
+  .content.compact-items .rubric-item { margin-bottom: 0.7em; }
+  .content.compact-items .rubric-item .evidence, .content.compact-items .rubric-item .gap { padding: 0.35em 0.6em; margin-top: 0.2em; }
+  .pr-table { width: 100%; border-collapse: collapse; }
+  .pr-table th { padding: 0.32em 0.65em; background: #eef4ee; text-align: left; }
+  .pr-table td { padding: 0.24em 0.65em; border-bottom: 1px solid #dbe6db; }
+  .pr-table tr:nth-child(even) td { background: #f7faf7; }
+  .pr-table tr.other-repo td { background: #fdf6ec; }
+  .pr-table .pr-num { color: var(--leaf-grey); }
+  .type-table td { padding: 0.25em 0.6em 0.25em 0; }
+  .type-table td:last-child { font-weight: 700; color: var(--leaf-green); text-align: right; padding-right: 0.6em; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ============ TITLE ============ -->
+<section>
+  <div style="height:100%; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+    <h2 style="font-size:1.1em; color:var(--leaf-grey); font-weight:400;">TechLauncher 2026 S1 Key Criteria Evidence Review</h2>
+    <h1 style="color:var(--leaf-green);">Hyperspectral Image Inspector</h1>
+    <p style="color:var(--leaf-grey); font-size:0.75em;">Team LEAF · Ryan Foote · Guochen Wang · Pengyun Wang · Jingyi Sun</p>
+    <p style="color:var(--leaf-grey); font-size:0.6em;">14 August 2026</p>
+  </div>
+</section>
+
+<!-- ============ AGENDA ============ -->
+<section>
+  <h2>How this deck is organised</h2>
+  <div class="content" style="font-size:0.72em;">
+    <p>Each following slide covers one rubric category. Every claim is backed by a specific Jira ticket or Confluence page</p>
+    <table class="agenda-table">
+      <tr><th class="agenda-cat">Category</th><th>Bullets</th><th>Status snapshot</th></tr>
+      <tr><td class="agenda-cat">Stakeholder Engagement</td><td>7</td><td><span class="status-pill status-done">5 solid</span> <span class="status-pill status-gap">2 gaps</span></td></tr>
+      <tr><td class="agenda-cat">Planning &amp; Organisation</td><td>10</td><td><span class="status-pill status-done">6 solid</span> <span class="status-pill status-gap">3 gaps</span> <span class="status-pill status-partial">1 improving</span></td></tr>
+      <tr><td class="agenda-cat">Execution &amp; Quality</td><td>8</td><td><span class="status-pill status-done">6 solid</span> <span class="status-pill status-gap">2 gaps</span></td></tr>
+      <tr><td class="agenda-cat">Reflection &amp; Improvement</td><td>6</td><td><span class="status-pill status-done">2 solid</span> <span class="status-pill status-gap">4 gaps</span></td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SECTION 1: STAKEHOLDER ENGAGEMENT (7 points, 1 slide) -->
+<!-- ============================================================ -->
+<section>
+  <h2>1. Stakeholder Engagement <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content compact-items" style="font-size:0.55em;">
+    <div class="two-col">
+      <div>
+        <div class="rubric-item">
+          <p class="point">Regular meetings in The Hive <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Fixed weekly cadence — Client Fri 10am, Tutor Fri 2:30pm. Client Mtg #8: full attendance (4 team + client Tao Hu). 8 meeting logs to date.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Detailed progress &amp; challenge updates <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Weekly Report covers requirements closure, MVC split, 17 new tickets, 7 PRs merged. Client walked through open questions live, not a "finished" plan.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Clarify expectations &amp; flag risks early <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Design doc "Residual Open Questions": ground-truth dataset availability, GPU hardware, sensor model — named as needing the client, not guessable.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Record meeting minutes + action items <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">8 Confluence pages, Date/Participants/Goals/Notes template. Nuance: a numbered action-item list per meeting is still maturing.</div>
+        </div>
+      </div>
+      <div>
+        <div class="rubric-item">
+          <p class="point">Assign &amp; manage tasks from feedback <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Client Mtg #8 → Planning Doc Q&amp;A → Design/FR doc → 17 new tickets (LEAF-104–120) same week. Gap: not yet repeatable every meeting.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Report action-item status to stakeholders <span class="status-pill status-gap">GAP</span></p>
+          <div class="gap">"Not yet a formal, recurring practice; we report progress narratively rather than against a tracked action-item list." Named as next-sprint improvement.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Improve relationships / address conflicts <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">No conflicts to date; practice is timely, honest reporting (incl. "not started" items). Risk register tracks "miscommunication with client" (Med/High) with mitigation.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SECTION 2: PLANNING AND ORGANISATION (10 points, 2 slides) -->
+<!-- ============================================================ -->
+<section>
+  <h2>2. Planning &amp; Organisation <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content" style="font-size:0.66em;">
+    <div class="two-col">
+      <div>
+        <div class="rubric-item">
+          <p class="point">Project Vision with stakeholders <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Design Overview &amp; FR doc built from Planning Doc Q&amp;A + Client Mtg #8: problem statement, system overview, FRs, NFRs, Phase 2 backlog, open questions.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Tool to plan &amp; manage project <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Jira (Epic LEAF-84 + Sprint board) rather than GitLab — functionally equivalent, different vendor. GitHub for source control. Currently Sprint 4 (30 Jul–14 Aug).</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Record goals &amp; milestones <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Epic → Story → Subtask hierarchy (e.g. LEAF-104, LEAF-93). FR doc §7 "Traceability" links every requirement to its Confluence source and Jira ticket.</div>
+        </div>
+      </div>
+      <div>
+        <div class="rubric-item">
+          <p class="point">Maintain a backlog <span class="status-pill status-partial">PARTIAL</span></p>
+          <div class="evidence">100+ issues; grew by 21 in one week. Scenario &amp; User Story pages exist.</div>
+          <div class="gap">Tickets use Given/When/Then, not formal persona format; no standalone test tickets yet.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Map PBIs to goals &amp; milestones <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">LEAF-104→FR§3.2 Visualization, LEAF-105→FR§3.4 Calibration, LEAF-107→FR§3.5 Segmentation — each traced to Epic LEAF-84.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>2. Planning &amp; Organisation <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content" style="font-size:0.66em;">
+    <div class="two-col">
+      <div>
+        <div class="rubric-item">
+          <p class="point">Planning Poker for estimates <span class="status-pill status-gap">GAP</span></p>
+          <div class="gap">No estimation yet — all 17 new tickets have no story points. Still using the "simple deadlines" early-stage allowance. Next step: size sprint tickets as a team.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Assign PBIs, set deadlines <span class="status-pill status-partial">IMPROVING</span></p>
+          <div class="evidence">7 Aug: tickets unassigned. 14 Aug: all 8 Sprint 4 items now carry a named assignee matching the Model/View split (e.g. LEAF-104→Pengyun, LEAF-106→Guochen).</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Prioritise backlog by goals/needs <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Deliberate cuts: Supervised classification deferred (client dataset question unresolved); Super-Resolution de-risked via research spike LEAF-112 first.</div>
+        </div>
+      </div>
+      <div>
+        <div class="rubric-item">
+          <p class="point">Identify &amp; manage risks <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">7 risks tracked, each with a named owner — e.g. miscommunication (Med/High), limited Friday-only dev time (High/High), dependency delays (Med/High). Reviewed weekly.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Monitor velocity for future planning <span class="status-pill status-gap">GAP</span></p>
+          <div class="gap">No velocity tracked yet — direct consequence of the estimation gap above. Becomes possible once Planning Poker sizing starts next sprint.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SECTION 3: EXECUTION AND QUALITY (8 points, 2 slides) -->
+<!-- ============================================================ -->
+<section>
+  <h2>3. Execution &amp; Quality <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content" style="font-size:0.74em;">
+    <div class="two-col">
+      <div>
+        <div class="rubric-item">
+          <p class="point">PM tool for task management <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Jira Epic LEAF-84 + Sprint 4 board hold every Story, Task, Subtask, Bug — no parallel spreadsheet or ad hoc list.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Keep milestones/PBIs up to date <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">FR audit tags each requirement Done/Partial/UI only/Not started against the real codebase — an honest audit, not a status guess.</div>
+        </div>
+      </div>
+      <div>
+        <div class="rubric-item">
+          <p class="point">Version control practices <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">7 scoped PRs this week (#5–11); 15 merged to date. Commit messages reference the originating Jira ticket (e.g. LEAF-121).</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">CI/CD pipelines <span class="status-pill status-gap">GAP</span></p>
+          <div class="gap">No CI/CD configuration in the repo (no .github/workflows). Named as a genuine next step — even a lint/build check would help.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>3. Execution &amp; Quality <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content" style="font-size:0.74em;">
+    <div class="two-col">
+      <div>
+        <div class="rubric-item">
+          <p class="point">Unit/integration testing <span class="status-pill status-gap">GAP</span></p>
+          <div class="gap">NFR specifies vegetation indices validated within 1% tolerance vs. sample-img/, but most Model-layer work is "Not started" — top priority for Jingyi/Pengyun next sprint.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Peer review of code/docs/design <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Every merged PR this week had human approval (Ryan/Guochen cross-review) plus a bot review (Copilot/CodeRabbit). Design doc reviewed against the live codebase too.</div>
+        </div>
+      </div>
+      <div>
+        <div class="rubric-item">
+          <p class="point">Monitor &amp; respond to challenges <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">PR #11 fixed a Classification-tab regression the same week. Super-Resolution spike (LEAF-112) time-boxes the riskiest area proactively.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Summarise impact of work completed <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">One tool now covers Visualization, Calibration, Super-Resolution, Classification — replacing crash-prone/basic tools for APPN operators and researchers.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SECTION 4: REFLECTION AND IMPROVEMENT (6 points, 1 slide) -->
+<!-- ============================================================ -->
+<section>
+  <h2>4. Reflection &amp; Improvement <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content" style="font-size:0.6em;">
+    <div class="two-col">
+      <div>
+        <div class="rubric-item">
+          <p class="point">Seek tutor/stakeholder feedback regularly <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">Weekly tutor meeting (Fri 2:30pm) alongside weekly client meeting (Fri 10am). Weekly Report for Tutor exists specifically to feed this loop.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Sprint review each sprint <span class="status-pill status-gap">GAP</span></p>
+          <div class="gap">No formal sprint review held yet — Client Mtg #8 served a similar function informally. Sprint 4 closes 14 Aug (today); a proper review is planned before it does.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Sprint retrospective each sprint <span class="status-pill status-gap">GAP</span></p>
+          <div class="gap">One retro logged (Sprint 1, 24 Apr) but the Start/Stop/Keep template was never filled in. None run for Sprints 2–4; a real retro planned before next sprint boundary.</div>
+        </div>
+      </div>
+      <div>
+        <div class="rubric-item">
+          <p class="point">PBIs from retro/review actions <span class="status-pill status-gap">GAP</span></p>
+          <div class="gap">Blocked on the two gaps above — no retro/review actions exist yet to convert into PBIs. Natural next step once Sprint 4 review/retro happens.</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Record clear responses to feedback <span class="status-pill status-done">SOLID</span></p>
+          <div class="evidence">This week's "Rubric Self-Assessment" is the team's first explicit, point-by-point response to an external feedback framework (the rubric itself).</div>
+        </div>
+        <div class="rubric-item">
+          <p class="point">Individual reflections (optional) <span class="status-pill status-gap">DEFERRED</span></p>
+          <div class="gap">Not yet started — deprioritised in favour of the higher-priority gaps above. Explicitly optional per the rubric.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CLOSING ============ -->
+<section>
+  <h2>Where this leaves us</h2>
+  <div class="content">
+    <div class="two-col">
+      <div>
+        <p><strong style="color:var(--leaf-green);">Strong and evidenced</strong></p>
+        <ul>
+          <li>Weekly client + tutor meeting cadence, fully attended</li>
+          <li>Client feedback → design doc → Jira tickets pipeline</li>
+          <li>Living risk register with owners, reviewed weekly</li>
+          <li>PR-based workflow with dual (human + bot) review</li>
+          <li>Honest, audited FR status rather than optimistic tracking</li>
+        </ul>
+      </div>
+      <div>
+        <p><strong style="color:var(--leaf-amber);">Named gaps, with a plan</strong></p>
+        <ul>
+          <li>Planning Poker / story points / velocity — start next sprint</li>
+          <li>CI/CD pipeline — even a lint/build check is the next floor</li>
+          <li>Model-layer unit tests against <code>sample-img/</code> — top priority for next sprint's Model owners</li>
+          <li>Formal sprint review + retrospective — due before Sprint 4 closes today</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ APPENDIX: PULL REQUESTS ============ -->
+<section>
+  <h2>Pull Requests <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content" style="font-size:0.58em;">
+    <p style="margin-bottom:0.25em;">15 PRs merged since 22 May 2026. 14 in Hyperspectral-Image-Inspector, plus 1 bug-fix PR in the Leaf-Analyzer-Pattern-Generation repo.</p>
+    <table class="pr-table">
+      <tr><th>Date</th><th>PR</th><th>Title</th><th>Repo</th></tr>
+      <tr><td>7 Aug</td><td class="pr-num">#15</td><td><code>LEAF-121</code> file to navigation bar</td><td>Inspector</td></tr>
+      <tr><td>7 Aug</td><td class="pr-num">#14</td><td>Requirements update</td><td>Inspector</td></tr>
+      <tr><td>7 Aug</td><td class="pr-num">#13</td><td>Remove dead ui/panels/ swappable-panel code</td><td>Inspector</td></tr>
+      <tr><td>7 Aug</td><td class="pr-num">#12</td><td>feat(ui): refine tab interactions and viewer alignment</td><td>Inspector</td></tr>
+      <tr><td>7 Aug</td><td class="pr-num">#11</td><td>feat(ui): restore classification tab</td><td>Inspector</td></tr>
+      <tr><td>31 Jul</td><td class="pr-num">#10</td><td><code>LEAF-96</code> Super Resolution buttons</td><td>Inspector</td></tr>
+      <tr><td>31 Jul</td><td class="pr-num">#9</td><td>feat(ui): add calibration tab to the main window</td><td>Inspector</td></tr>
+      <tr class="other-repo"><td>31 Jul</td><td class="pr-num">#32</td><td><code>LEAF-98</code> Fix text scaling saving <em>(bug fix)</em></td><td>Pattern Gen</td></tr>
+      <tr><td>31 Jul</td><td class="pr-num">#7</td><td><code>LEAF-94</code> Visualization panel framework</td><td>Inspector</td></tr>
+      <tr><td>31 Jul</td><td class="pr-num">#6</td><td><code>LEAF-91</code> Tabular UI Foundations</td><td>Inspector</td></tr>
+      <tr><td>31 Jul</td><td class="pr-num">#5</td><td><code>LEAF-92</code> apply a theme to the app</td><td>Inspector</td></tr>
+      <tr><td>22 May</td><td class="pr-num">#4</td><td><code>LEAF-89</code> fix image opening</td><td>Inspector</td></tr>
+      <tr><td>22 May</td><td class="pr-num">#3</td><td><code>LEAF-88</code> architecture overview file</td><td>Inspector</td></tr>
+      <tr><td>22 May</td><td class="pr-num">#2</td><td><code>LEAF-87</code> Claude initial OOP rewrite</td><td>Inspector</td></tr>
+      <tr><td>22 May</td><td class="pr-num">#1</td><td>fix: resolve file path issue and correct file naming typo</td><td>Inspector</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============ APPENDIX: JIRA TICKETS ============ -->
+<section>
+  <h2>Jira Tickets <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content" style="font-size:0.64em;">
+    <p>40 tickets created or modified since 22 May 2026 (of 109 in the project overall).</p>
+    <div class="two-col">
+      <div>
+        <p style="font-weight:700; color:var(--leaf-green); margin-bottom:0.4em;">Where the activity sits</p>
+        <div class="evidence"><span class="tag">LEAF-84 · Hyperspectral</span> <span class="status-pill status-partial">IN PROGRESS</span><br>31 tickets touched — the epic itself, its 18 direct children, and 12 further subtasks</div>
+        <div class="evidence"><span class="tag">LEAF-6 / LEAF-13 · Design Process &amp; MVP</span> <span class="status-pill status-done">DONE</span><br>9 tickets touched — edits/status updates on already-completed early-phase work</div>
+      </div>
+      <div>
+        <p style="font-weight:700; color:var(--leaf-green); margin-bottom:0.4em;">By type (40 total)</p>
+        <table class="type-table">
+          <tr><td>Task</td><td>18</td></tr>
+          <tr><td>Subtask</td><td>12</td></tr>
+          <tr><td>Story</td><td>6</td></tr>
+          <tr><td>Epic</td><td>3</td></tr>
+          <tr><td>Bug</td><td>1</td></tr>
+        </table>
+        <p style="font-weight:700; color:var(--leaf-green); margin:0.7em 0 0.4em;">By status</p>
+        <p><span class="status-pill status-done">22 Done (PR merged)</span></p>
+        <p style="margin-top:0.3em;"><span class="status-pill status-partial">1 In Progress</span> <span class="status-pill status-gap">17 To Do</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: 'c/t',
+    transition: 'slide',
+    width: 1280,
+    height: 720,
+    margin: 0.06,
+    center: false
+  });
+</script>
+</body>
+</html>
