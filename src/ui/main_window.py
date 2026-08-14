@@ -242,7 +242,24 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.calibrateButton.setToolTip("Calibration is not implemented yet")
         self.runSuperResButton.setEnabled(False)
         self.runSuperResButton.setToolTip(
-            "Super-Resolution processing is not implemented yet"
+            "Load an image to test the Super-Resolution workflow"
+        )
+        self.runSuperResButton.clicked.connect(
+            self._run_super_resolution_simulation
+        )
+        self._super_res_progress_animation = QtCore.QPropertyAnimation(
+            self.superResProgressBar,
+            b"value",
+            self,
+        )
+        self._super_res_progress_animation.setDuration(2800)
+        self._super_res_progress_animation.setStartValue(0)
+        self._super_res_progress_animation.setEndValue(100)
+        self._super_res_progress_animation.setEasingCurve(
+            QtCore.QEasingCurve.Type.Linear
+        )
+        self._super_res_progress_animation.finished.connect(
+            self._finish_super_resolution_simulation
         )
         self._update_super_resolution_view_state(
             self.highResButton.isChecked()
@@ -263,6 +280,67 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             status = "Showing the original file before processing"
 
         self.superResStatusText.setText(status)
+
+    def _run_super_resolution_simulation(self) -> None:
+        """Temporarily exercise the processing UI without running inference."""
+        if (
+            not self._hsi_data.is_loaded()
+            or self._super_res_progress_animation.state()
+            == QtCore.QAbstractAnimation.State.Running
+        ):
+            return
+
+        self.highResButton.setChecked(True)
+        self.lowResButton.setEnabled(False)
+        self.highResButton.setEnabled(False)
+        self.lowResButton.setToolTip(
+            "View selection is locked while the simulation runs"
+        )
+        self.highResButton.setToolTip(
+            "View selection is locked while the simulation runs"
+        )
+        self.runSuperResButton.setEnabled(False)
+        self.runSuperResButton.setText("Processing…")
+        self.runSuperResButton.setToolTip(
+            "Super-Resolution progress simulation is running"
+        )
+        self.superResProgressBar.setValue(0)
+        self.superResStatusStack.setCurrentWidget(self.superResProgressPage)
+        self.statusbar.showMessage("Simulating Super-Resolution processing…")
+        self._super_res_progress_animation.start()
+
+    def _finish_super_resolution_simulation(self) -> None:
+        """Restore controls while leaving the completed progress visible."""
+        self._set_super_resolution_simulation_ready()
+        self.statusbar.showMessage(
+            "Super-Resolution progress simulation complete",
+            5000,
+        )
+
+    def _set_super_resolution_simulation_ready(self) -> None:
+        """Enable the temporary workflow and restore its idle labels."""
+        self.lowResButton.setEnabled(True)
+        self.highResButton.setEnabled(True)
+        self.lowResButton.setToolTip(
+            "View the original file before Super-Resolution processing"
+        )
+        self.highResButton.setToolTip(
+            "View the processed result after Super-Resolution"
+        )
+        self.runSuperResButton.setEnabled(True)
+        self.runSuperResButton.setText("Run Super-Resolution")
+        self.runSuperResButton.setToolTip(
+            "Temporarily simulate Super-Resolution processing progress"
+        )
+
+    def _reset_super_resolution_simulation(self) -> None:
+        """Prepare the temporary workflow after an image is loaded."""
+        self._super_res_progress_animation.stop()
+        self.superResProgressBar.setValue(0)
+        self._set_super_resolution_simulation_ready()
+        self._update_super_resolution_view_state(
+            self.highResButton.isChecked()
+        )
 
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
@@ -352,9 +430,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.superResFilePath.setToolTip(str(image_path))
         self.classificationFilePath.setText(loaded_file_text)
         self.classificationFilePath.setToolTip(str(image_path))
-        self._update_super_resolution_view_state(
-            self.highResButton.isChecked()
-        )
         self.unsupervisedClassifyButton.setEnabled(True)
         self.pushButton_2.setEnabled(True)
         self.statusbar.showMessage(f"Loaded {image_path.name}")
@@ -375,6 +450,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.classificationViewer.rgb        = rgb_array
         self.classificationViewer.mask_array = self._hsi_data.mask_array
         self.classificationViewer.set_photo(pixmap)
+        self._reset_super_resolution_simulation()
 
     def _save_image(self) -> None:
         pass
