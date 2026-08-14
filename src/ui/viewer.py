@@ -80,6 +80,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         # --- image data ---
         self._zoom: int = 0
         self._empty: bool = True
+        self._pending_view_state: Optional[tuple[float, QPointF]] = None
         self.rgb: Optional[NDArray[np.uint8]] = None
         self.mask_array: Optional[NDArray[np.uint8]] = None
         self.avatarArray: Optional[NDArray[np.uint8]] = None
@@ -182,6 +183,45 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def set_avatar(self, pixmap: QPixmap) -> None:
         self.avatar.setPixmap(pixmap)
 
+    def get_view_state(self) -> Optional[tuple[float, QPointF]]:
+        """Return (scale_factor, scene_center) describing the current pan/zoom."""
+        if not self.has_photo():
+            return None
+        return self.transform().m11(), self.mapToScene(self.viewport().rect().center())
+
+    def set_view_state(self, state: tuple[float, QPointF]) -> None:
+        """Apply a (scale_factor, scene_center) pair captured via `get_view_state`."""
+        if not self.has_photo():
+            return
+        scale_factor, center = state
+        self.resetTransform()
+        self.scale(scale_factor, scale_factor)
+        self.centerOn(center)
+        self._zoom = 1
+
+    def queue_view_state(self, state: tuple[float, QPointF]) -> None:
+        """Apply `state` now, and again on every resize for a short window.
+
+        A viewer whose tab has never been shown before doesn't have its
+        final viewport size yet, so `centerOn` inside `set_view_state`
+        can compute against stale/default geometry, and the surrounding
+        layout may still be settling across several resize events. Keep
+        reapplying until geometry stops changing, then stop.
+        """
+        self._pending_view_state = state
+        self.set_view_state(state)
+        QtCore.QTimer.singleShot(300, self._clear_pending_view_state)
+
+    def _clear_pending_view_state(self) -> None:
+        self._pending_view_state = None
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if self._pending_view_state is not None:
+            # The scale was already applied when the state was queued; only
+            # the center needs recomputing as the viewport settles.
+            self.centerOn(self._pending_view_state[1])
+
     def set_mask(self, mask: NDArray[np.uint8]) -> None:
         """Accept a new mask array and render it as a blue RGBA overlay."""
         self.mask_array = mask
@@ -251,10 +291,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         if self.has_photo():
             if event.angleDelta().y() > 0:
-                factor = 1.25
+                factor = 1.125
                 self._zoom += 1
             else:
-                factor = 0.8
+                factor = 1 / 1.125
                 self._zoom -= 1
             if self._zoom > 0:
                 self.scale(factor, factor)
