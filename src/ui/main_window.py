@@ -1,22 +1,31 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import spectral.io.envi as envi
 from numpy.typing import NDArray
-from spectral import get_rgb
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
-from core.hsi_data import HSIData
+from core import (
+    HSIData,
+    HSIError,
+    HSIReader,
+    VisualizationMode,
+    VisualizationRequest,
+    VisualizationService,
+)
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.tab_transition.handler import TabTransitionHandler
 from ui.viewer import HSIViewer
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -42,6 +51,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         self._hsi_data = HSIData()
+        self._hsi_reader = HSIReader()
+        self._visualization_service = VisualizationService()
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
         self._configure_tabs()
@@ -323,37 +334,37 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self,
             "Open Hyperspectral Image",
             "",
-            "Hyperspectral Images (*.bil *.bip *.bsq)",
+            "Hyperspectral Images (*.hdr *.bil *.bip *.bsq *.dat *.img *.raw)",
         )
         if not image_path_str:
             return
 
-        image_path = Path(image_path_str)
-        header_path = image_path.with_suffix(".hdr")
-
-        if not header_path.exists():
-            QMessageBox.critical(self, "Error", "Header file not found!")
+        selected_path = Path(image_path_str)
+        try:
+            candidate = self._hsi_reader.open(selected_path)
+            result = self._visualization_service.render(
+                candidate,
+                VisualizationRequest(mode=VisualizationMode.RGB),
+            )
+        except HSIError as exc:
+            QMessageBox.critical(self, "Unable to load image", str(exc))
+            self.statusbar.showMessage("Image load failed")
+            return
+        except Exception as exc:  # Keep Qt's event loop alive for unexpected failures.
+            LOGGER.exception("Unexpected hyperspectral import failure")
+            QMessageBox.critical(
+                self,
+                "Unable to load image",
+                f"An unexpected error occurred: {exc}",
+            )
+            self.statusbar.showMessage("Image load failed")
             return
 
-        with header_path.open() as f:
-            first_line = f.readline().strip()
-
-        if first_line.startswith("BYTEORDER"):
-            meta = hsi_utils.read_psi_header(header_path)
-            header_path = image_path.with_name(image_path.stem + "_envi.hdr")
-            hsi_utils.create_envi_header(header_path, meta)
-
-        spectral_obj = envi.open(str(header_path), str(image_path))
-        wavelengths = [float(w) for w in spectral_obj.metadata["wavelength"]]
-        rgb_bands = hsi_utils.find_rgb_bands(wavelengths)
-        rgb_array = (get_rgb(spectral_obj, rgb_bands) * 255).astype(np.uint8).copy()
-
-        self._hsi_data.image_path   = image_path
-        self._hsi_data.header_path  = header_path
-        self._hsi_data.spectral_obj = spectral_obj
-        self._hsi_data.wavelengths  = wavelengths
-        self._hsi_data.rgb_array    = rgb_array
-        self._hsi_data.mask_array   = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
+        rgb_array = result.display_rgb
+        candidate.rgb_array = rgb_array
+        candidate.mask_array = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
+        self._hsi_data.update_from(candidate)
+        image_path = self._hsi_data.data_path
 
         loaded_file_text = f"File Loaded: {image_path}"
         self.imageFilePath.setText(loaded_file_text)
