@@ -209,6 +209,12 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Local Model development assets (never upload)
+/tests/
+/sample_data/
+/dev_tools/visualization_harness/
+/pytest.ini
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

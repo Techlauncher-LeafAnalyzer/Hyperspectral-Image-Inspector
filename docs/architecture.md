@@ -350,6 +350,39 @@ Still true. All functions in `core/hsi_utils.py` work without a running `QApplic
 
 ---
 
+## Visualization Model integration
+
+The production Visualization Model now lives in `src/core/visualization_model.py`
+and is re-exported through `core`. File import is implemented by
+`src/core/hsi_reader.py`; Model-domain failures live in `src/core/errors.py`.
+
+The team Controller now uses this production path directly:
+
+```
+MainWindowController
+  -> HSIReader.open(selected_path)
+  -> VisualizationService.render(... RGB ...)
+  -> existing HSIData.update_from(candidate)
+  -> Qt pixmap/viewer update
+```
+
+`core.hsi_utils` is the shared low-level compatibility module. It owns PSI
+parsing, temporary ENVI adapter generation, and wavelength lookup, so
+`HSIReader`, `HSIData`, and legacy Controller helpers use the same rules.
+PSI adapters are cached in the operating-system temporary directory; loading
+a capture never writes conversion artifacts beside source data.
+
+`HSIData` preserves the mutable fields consumed by the current team Controller
+and also exposes lazy targeted reads for feature Models. Controllers should
+import from `core`, run disk-reading Model calls in workers, and create Qt or
+OpenGL widgets only on the GUI thread. The full contract is documented in
+`docs/model_visualization_api.md`.
+
+Local tests, sample captures, and the temporary Model-only test View/Controller
+are intentionally ignored and are not part of the shared production tree.
+
+---
+
 ## Known gaps
 
 Carried over from the current rubric self-assessment / sprint-1 backlog, listed here because they're structural rather than just "unfinished feature":
