@@ -21,6 +21,12 @@ the stable public API.
   view-owned 3D renderer.
 - `HypercubeViewData`: aspect-preserving, downsampled real cube surfaces for
   SPy's interactive OpenGL hypercube without loading the full image volume.
+- `VisualizationExportService`: validates and atomically saves the exact RGB
+  display array selected by a Controller.
+- `VisualizationExportRequest`: destination, overwrite permission, and JPEG
+  quality supplied after the Controller completes its save-dialog workflow.
+- `VisualizationExportResult`: saved path, format, dimensions, size, checksum,
+  and whether the selected encoding is lossless.
 
 ## Controller integration
 
@@ -50,6 +56,60 @@ view.show_value_range(result.value_range)
 Controller code should import the stable package surface shown above. Do not
 import from `visualization_model.py` directly; `core` re-exports
 the supported interface so implementation modules can change independently.
+
+### Saving the current displayed view
+
+The Model cannot determine what a Qt widget currently shows. The Controller
+must retain the latest displayed RGB array and pass that exact array to the
+export service. For an ordinary visualization this is normally
+`VisualizationResult.display_rgb` or the matching `HSIData.rgb_array` after a
+crop. Do not pass raw cube bands unless they are actually what the View shows.
+If annotations, cursor overlays, viewport-only cropping, or zoom must appear in
+the saved file, the View must capture its framebuffer and the Controller must
+convert that capture to an RGB NumPy array before calling the Model.
+
+```python
+from core import (
+    VisualizationExportError,
+    VisualizationExportRequest,
+    VisualizationExportService,
+)
+
+exporter = VisualizationExportService()
+
+# output_path comes from the View's save-file dialog. Set overwrite=True only
+# after the Controller has asked the user to replace an existing file.
+try:
+    saved = exporter.save_display(
+        current_display_rgb,
+        VisualizationExportRequest(output_path, overwrite=user_confirmed),
+    )
+except VisualizationExportError as error:
+    controller.show_export_error(str(error))
+else:
+    controller.show_export_complete(
+        saved.output_path,
+        saved.file_size_bytes,
+    )
+```
+
+Recommended MVC sequence:
+
+1. View emits a Save action; Controller verifies an image is displayed.
+2. Controller opens a save dialog using `supported_extensions` and obtains any
+   overwrite confirmation. Dialogs and confirmation never belong in Model code.
+3. Controller passes the retained `uint8 (height, width, 3)` RGB array and a
+   `VisualizationExportRequest` to a worker.
+4. Worker catches `VisualizationExportError` and returns either the error text
+   or `VisualizationExportResult` through queued signals.
+5. Controller updates status/UI on the GUI thread. A failed export leaves both
+   the displayed pixels and any pre-existing destination unchanged.
+
+PNG is appended when the selected name has no extension and is recommended for
+exact pixel preservation. TIFF and BMP are also lossless; JPEG is intentionally
+lossy. For the interactive hypercube, framebuffer capture is a View operation:
+the View captures the current camera frame, the Controller converts it to an RGB
+NumPy array, and this same Model service persists it.
 
 ### Recommended Controller lifecycle
 
@@ -104,6 +164,7 @@ payload and must not be reused for scientific calculations.
 | `HSIHeaderError` | Show the metadata problem; retain the current dataset. |
 | `WavelengthError` | Explain or disable the unavailable visualization mode. |
 | `VisualizationError` | Keep the prior view and show the request error. |
+| `VisualizationExportError` | Show the save/path problem; keep the current view. |
 | `CancelledError` | Clear busy state silently; retain the prior view. |
 | Unexpected exception | Log its traceback and show a generic internal error. |
 

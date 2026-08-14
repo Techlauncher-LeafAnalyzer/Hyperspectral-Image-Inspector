@@ -6,6 +6,7 @@ from .errors import (
     HSIFileError,
     HSIHeaderError,
     VisualizationError,
+    VisualizationExportError,
     WavelengthError,
 )
 from .hsi_data import Functionality, HSIData, ImageFormat
@@ -20,6 +21,12 @@ from .visualization_model import (
     VisualizationResult,
     VisualizationService,
 )
+from .visualization_export_model import (
+    ImageExportFormat,
+    VisualizationExportRequest,
+    VisualizationExportResult,
+    VisualizationExportService,
+)
 
 __all__ = [
     "CancelledError",
@@ -33,8 +40,13 @@ __all__ = [
     "HypercubeData",
     "HypercubeViewData",
     "ImageFormat",
+    "ImageExportFormat",
     "SpectrumResult",
     "VisualizationError",
+    "VisualizationExportError",
+    "VisualizationExportRequest",
+    "VisualizationExportResult",
+    "VisualizationExportService",
     "VisualizationMode",
     "VisualizationRequest",
     "VisualizationResult",
