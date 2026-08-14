@@ -1,19 +1,30 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import Optional
+from typing import Callable, Mapping, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPen, QPixmap
-from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QMenu
+from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 
 
 class PromptMode(Enum):
+    """
+    Whether the input is prompted via a grouping of points or a rectangular box
+    """
     POINTS = auto()
     BOXES  = auto()
+
+
+# Signature for the callback that supplies visualization values for a single
+# hovered pixel. Keyed by the visualization names in VISUALIZATION_NAMES.
+# This is the seam a future visualization model plugs into: assign
+# `viewer.pixel_value_provider = ...` the same way the controller already
+# assigns `viewer.rgb`/`viewer.mask_array` after loading an image.
+PixelValueProvider = Callable[[int, int], Mapping[str, object]]
 
 
 class HSIViewer(QtWidgets.QGraphicsView):
@@ -27,6 +38,20 @@ class HSIViewer(QtWidgets.QGraphicsView):
     historyChanged        = pyqtSignal(bool, bool)   # (can_undo, can_redo)
     spectrumPlotRequested = pyqtSignal(QPointF)
     meanIndexRequested    = pyqtSignal(str)
+
+    # All visualization modes except HyperCube, in display order.
+    VISUALIZATION_NAMES = ("RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI")
+
+    # Placeholder values used until a real pixel_value_provider is wired in.
+    _DUMMY_PIXEL_VALUES: Mapping[str, object] = {
+        "RGB": (128, 128, 128),
+        "NDVI": 0.42,
+        "EVI": 0.31,
+        "MCARI": 0.55,
+        "MTVI": 0.67,
+        "OSAVI": 0.38,
+        "PRI": -0.05,
+    }
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -51,6 +76,26 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.rgb: Optional[NDArray[np.uint8]] = None
         self.mask_array: Optional[NDArray[np.uint8]] = None
         self.avatarArray: Optional[NDArray[np.uint8]] = None
+
+        # --- pixel value overlay ---
+        self.pixel_value_provider: PixelValueProvider = self._dummy_pixel_values
+        self._pixel_overlay_enabled: bool = False
+        self._pixel_overlay = QLabel(self.viewport())
+        self._pixel_overlay.setObjectName("pixelValueOverlay")
+        self._pixel_overlay.setStyleSheet(
+            "QLabel#pixelValueOverlay {"
+            "  background-color: rgba(20, 20, 20, 200);"
+            "  color: #f5f5f5;"
+            "  border: 1px solid #555555;"
+            "  border-radius: 4px;"
+            "  padding: 4px 6px;"
+            "  font-size: 11px;"
+            "}"
+        )
+        self._pixel_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._pixel_overlay.hide()
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
 
         # --- scene items ---
         self._scene = QtWidgets.QGraphicsScene(self)
@@ -218,6 +263,11 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         super().mouseMoveEvent(event)
+        self._update_pixel_overlay(event.position().toPoint())
+
+    def leaveEvent(self, event: QtCore.QEvent) -> None:
+        super().leaveEvent(event)
+        self._pixel_overlay.hide()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         super().mouseReleaseEvent(event)
@@ -286,6 +336,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
         index_menu.addAction("NDVI", lambda: self.meanIndexRequested.emit("NDVI"))
         index_menu.addAction("EVI", lambda: self.meanIndexRequested.emit("EVI"))
         menu.addMenu(index_menu)
+
+        pixel_values_action = menu.addAction("Show Pixel Values")
+        pixel_values_action.setCheckable(True)
+        pixel_values_action.setChecked(self._pixel_overlay_enabled)
+        pixel_values_action.toggled.connect(self._set_pixel_overlay_enabled)
+
         menu.exec(event.globalPos())
 
     # ------------------------------------------------------------------ #
@@ -299,6 +355,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.input_labels = []
         self.history = []
         self.redo_stack = []
+        self._pixel_overlay.hide()
 
     def _clear_selection(self) -> None:
         self._clear()
@@ -314,3 +371,54 @@ class HSIViewer(QtWidgets.QGraphicsView):
             rgba.data, rgba.shape[1], rgba.shape[0],
             QImage.Format.Format_RGBA8888,
         )))
+
+    def _set_pixel_overlay_enabled(self, enabled: bool) -> None:
+        self._pixel_overlay_enabled = enabled
+        if not enabled:
+            self._pixel_overlay.hide()
+
+    def _update_pixel_overlay(self, view_pos: QtCore.QPoint) -> None:
+        if not self._pixel_overlay_enabled or not self.has_photo():
+            self._pixel_overlay.hide()
+            return
+
+        scene_pos = self.mapToScene(view_pos)
+        photo_rect = self._photo.pixmap().rect()
+        pixel = scene_pos.toPoint()
+        if not photo_rect.contains(pixel):
+            self._pixel_overlay.hide()
+            return
+
+        values = self.pixel_value_provider(pixel.y(), pixel.x())
+        self._pixel_overlay.setText(self._format_pixel_values(values))
+        self._pixel_overlay.adjustSize()
+        self._position_pixel_overlay(view_pos)
+        self._pixel_overlay.show()
+        self._pixel_overlay.raise_()
+
+    def _position_pixel_overlay(self, view_pos: QtCore.QPoint) -> None:
+        offset = QtCore.QPoint(16, 16)
+        target = view_pos + offset
+        bounds = self.viewport().rect()
+        target.setX(min(target.x(), max(0, bounds.width() - self._pixel_overlay.width())))
+        target.setY(min(target.y(), max(0, bounds.height() - self._pixel_overlay.height())))
+        self._pixel_overlay.move(target)
+
+    def _format_pixel_values(self, values: Mapping[str, object]) -> str:
+        lines: list[str] = []
+        for name in self.VISUALIZATION_NAMES:
+            value = values.get(name)
+            if isinstance(value, tuple):
+                formatted = ", ".join(f"{component:.0f}" for component in value)
+                lines.append(f"{name}: ({formatted})")
+            elif isinstance(value, (int, float)):
+                lines.append(f"{name}: {value:.3f}")
+            else:
+                lines.append(f"{name}: —")
+        return "\n".join(lines)
+
+    @classmethod
+    def _dummy_pixel_values(cls, row: int, column: int) -> Mapping[str, object]:
+        """Placeholder provider; real per-pixel values arrive with the
+        visualization model integration."""
+        return cls._DUMMY_PIXEL_VALUES
