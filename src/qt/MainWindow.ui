@@ -163,24 +163,36 @@
         </item>
         <item>
          <widget class="QGroupBox" name="superResControls">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>86</height>
+           </size>
+          </property>
           <property name="maximumSize">
            <size>
             <width>16777215</width>
-            <height>121</height>
+            <height>86</height>
            </size>
           </property>
           <property name="title">
            <string/>
           </property>
-          <layout class="QGridLayout" name="superResGrid">
-           <item row="1" column="0" colspan="2">
-            <widget class="QProgressBar" name="superResProgressBar">
-             <property name="value">
-              <number>0</number>
+          <layout class="QGridLayout" name="superResGrid" columnstretch="0,0,0,0,1,0">
+           <property name="horizontalSpacing">
+            <number>8</number>
+           </property>
+           <item row="0" column="0">
+            <widget class="QLabel" name="superResComparisonLabel">
+             <property name="text">
+              <string>Compare view</string>
+             </property>
+             <property name="stepLabel" stdset="0">
+              <bool>true</bool>
              </property>
             </widget>
            </item>
-           <item row="0" column="0">
+           <item row="0" column="1">
             <widget class="QRadioButton" name="lowResButton">
              <property name="minimumSize">
               <size>
@@ -195,14 +207,30 @@
               </size>
              </property>
              <property name="text">
-              <string>Low Res</string>
+              <string>Original · Low resolution</string>
              </property>
              <property name="checked">
               <bool>true</bool>
              </property>
+             <property name="accessibleDescription">
+              <string>View the original file before Super-Resolution processing</string>
+             </property>
             </widget>
            </item>
-           <item row="0" column="1">
+           <item row="0" column="2">
+            <widget class="QLabel" name="superResFlowArrow">
+             <property name="text">
+              <string>→</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignmentFlag::AlignCenter</set>
+             </property>
+             <property name="flowArrow" stdset="0">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="3">
             <widget class="QRadioButton" name="highResButton">
              <property name="minimumSize">
               <size>
@@ -217,8 +245,121 @@
               </size>
              </property>
              <property name="text">
-              <string>High Res</string>
+              <string>Processed · High resolution</string>
              </property>
+             <property name="accessibleDescription">
+              <string>View the result after Super-Resolution processing</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="4">
+            <spacer name="superResActionSpacer">
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>24</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item row="0" column="5">
+            <widget class="QPushButton" name="runSuperResButton">
+             <property name="enabled">
+              <bool>false</bool>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>190</width>
+               <height>28</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>190</width>
+               <height>28</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Run Super-Resolution</string>
+             </property>
+             <property name="primaryButton" stdset="0">
+              <bool>true</bool>
+             </property>
+             <property name="accessibleDescription">
+              <string>Create the processed high-resolution result from the original file</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="superResResultLabel">
+             <property name="text">
+              <string>Result status</string>
+             </property>
+             <property name="stepLabel" stdset="0">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1" colspan="5">
+            <widget class="QStackedWidget" name="superResStatusStack">
+             <property name="currentIndex">
+              <number>0</number>
+             </property>
+             <widget class="QWidget" name="superResIdlePage">
+              <layout class="QHBoxLayout" name="superResIdleLayout">
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="superResStatusText">
+                 <property name="text">
+                  <string>Showing the original file before processing</string>
+                 </property>
+                 <property name="statusMessage" stdset="0">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+             <widget class="QWidget" name="superResProgressPage">
+              <layout class="QHBoxLayout" name="superResProgressLayout">
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QProgressBar" name="superResProgressBar">
+                 <property name="value">
+                  <number>0</number>
+                 </property>
+                 <property name="accessibleName">
+                  <string>Super-Resolution processing progress</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
             </widget>
            </item>
           </layout>
