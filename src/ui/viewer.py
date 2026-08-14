@@ -7,7 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QPointF, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 
 
@@ -75,6 +75,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._cropping: bool = False
         self._crop_start: Optional[QPointF] = None
         self._crop_rect_item: Optional[QGraphicsRectItem] = None
+        self._crop_overlay_item: Optional[QtWidgets.QGraphicsPathItem] = None
 
         # --- image data ---
         self._zoom: int = 0
@@ -274,12 +275,26 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         if self._cropping and self._crop_start is not None:
             current = self.mapToScene(event.position().toPoint())
+            selection = QtCore.QRectF(self._crop_start, current).normalized()
+
             if self._crop_rect_item is not None:
                 self._scene.removeItem(self._crop_rect_item)
-            self._crop_rect_item = self._scene.addRect(
-                QtCore.QRectF(self._crop_start, current).normalized(),
-                QPen(Qt.GlobalColor.yellow, 0, Qt.PenStyle.DashLine),
+            if self._crop_overlay_item is not None:
+                self._scene.removeItem(self._crop_overlay_item)
+
+            overlay_path = QPainterPath()
+            overlay_path.addRect(QtCore.QRectF(self._photo.pixmap().rect()))
+            overlay_path.addRect(selection)
+            overlay_path.setFillRule(Qt.FillRule.OddEvenFill)
+            self._crop_overlay_item = self._scene.addPath(
+                overlay_path, QPen(Qt.PenStyle.NoPen), QBrush(QColor(0, 0, 0, 140))
             )
+            self._crop_overlay_item.setZValue(10)
+
+            self._crop_rect_item = self._scene.addRect(
+                selection, QPen(Qt.GlobalColor.yellow, 0, Qt.PenStyle.DashLine)
+            )
+            self._crop_rect_item.setZValue(11)
             return
         super().mouseMoveEvent(event)
         self._update_pixel_overlay(event.position().toPoint())
@@ -406,6 +421,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         if self._crop_rect_item is not None:
             self._scene.removeItem(self._crop_rect_item)
             self._crop_rect_item = None
+        if self._crop_overlay_item is not None:
+            self._scene.removeItem(self._crop_overlay_item)
+            self._crop_overlay_item = None
         self._cropping = False
         self._crop_start = None
         self.setCursor(Qt.CursorShape.ArrowCursor)

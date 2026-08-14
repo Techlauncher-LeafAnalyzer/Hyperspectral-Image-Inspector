@@ -227,7 +227,7 @@ class Ui_MainWindow(object):
         self.actionSaveImage.setObjectName("actionSaveImage")
 
         self.retranslateUi(MainWindow)
-        self.tabWidget.setCurrentIndex(1)
+        self.tabWidget.setCurrentIndex(0)
         self.classificationModeTabs.setCurrentIndex(1)
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
 
