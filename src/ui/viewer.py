@@ -324,10 +324,20 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if self._cropping:
+            if event.button() != Qt.MouseButton.LeftButton:
+                self._end_crop_mode()
+                return
+
             end_pos = self.mapToScene(event.position().toPoint())
             crop_rect = None
             if self._crop_start is not None:
-                crop_rect = QtCore.QRectF(self._crop_start, end_pos).normalized()
+                image_rect = QtCore.QRectF(self._photo.pixmap().rect())
+                crop_rect = (
+                    QtCore.QRectF(self._crop_start, end_pos)
+                    .normalized()
+                    .intersected(image_rect)
+                )
+
             self._end_crop_mode()
             if crop_rect is not None and crop_rect.width() >= 1 and crop_rect.height() >= 1:
                 self.cropRequested.emit(crop_rect)
