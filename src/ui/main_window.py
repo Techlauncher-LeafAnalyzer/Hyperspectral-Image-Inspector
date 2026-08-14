@@ -44,10 +44,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data = HSIData()
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
-        self._active_viewer: Optional[HSIViewer] = None
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
+        self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
@@ -417,20 +417,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.classificationViewer,
         )
 
-    def _tab_viewers(self) -> tuple:
-        return (
-            self.viewer,
-            self.superResViewer,
-            self.calibrationViewer,
-            self.classificationViewer,
-        )
+    def _viewer_for_tab(self, index: int) -> Optional[HSIViewer]:
+        page = self.tabWidget.widget(index)
+        return page.findChild(HSIViewer) if page is not None else None
 
     def _on_tab_changed(self, index: int) -> None:
-        tab_viewers = self._tab_viewers()
-        if not (0 <= index < len(tab_viewers)):
+        new_viewer = self._viewer_for_tab(index)
+        if new_viewer is None:
             return
 
-        new_viewer = tab_viewers[index]
         if self._active_viewer is not None and self._active_viewer is not new_viewer:
             state = self._active_viewer.get_view_state()
             if state is not None:

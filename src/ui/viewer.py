@@ -218,7 +218,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         if self._pending_view_state is not None:
-            self.set_view_state(self._pending_view_state)
+            # The scale was already applied when the state was queued; only
+            # the center needs recomputing as the viewport settles.
+            self.centerOn(self._pending_view_state[1])
 
     def set_mask(self, mask: NDArray[np.uint8]) -> None:
         """Accept a new mask array and render it as a blue RGBA overlay."""
@@ -289,10 +291,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         if self.has_photo():
             if event.angleDelta().y() > 0:
-                factor = 1.25
+                factor = 1.125
                 self._zoom += 1
             else:
-                factor = 0.8
+                factor = 1 / 1.125
                 self._zoom -= 1
             if self._zoom > 0:
                 self.scale(factor, factor)
