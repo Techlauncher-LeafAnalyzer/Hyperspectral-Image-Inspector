@@ -5,7 +5,8 @@ Model under `src/core`.
 
 Visualization Model capabilities include lazy ENVI/PSI loading, RGB, single
 bands, NDVI, EVI, MCARI, MTVI, OSAVI, PRI, pixel spectra, and renderer-neutral
-hypercube payloads.
+hypercube payloads. Rendered display arrays can be exported through the
+View-neutral visualization export Model.
 
 Controllers should depend on the public Model surface:
 

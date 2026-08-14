@@ -26,6 +26,10 @@ class VisualizationError(HSIError):
     """A visualization request is invalid or could not be computed."""
 
 
+class VisualizationExportError(VisualizationError):
+    """A displayed visualization could not be validated or saved."""
+
+
 class CancelledError(HSIError):
     """A Controller-requested cancellation stopped Model processing.
 
