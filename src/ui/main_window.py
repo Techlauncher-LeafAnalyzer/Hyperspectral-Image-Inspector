@@ -339,9 +339,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if not image_path_str:
             return
 
-        selected_path = Path(image_path_str)
+        self.load_image_from_path(Path(image_path_str))
+
+    def load_image_from_path(self, image_path: Path) -> None:
         try:
-            candidate = self._hsi_reader.open(selected_path)
+            candidate = self._hsi_reader.open(image_path)
             result = self._visualization_service.render(
                 candidate,
                 VisualizationRequest(mode=VisualizationMode.RGB),
@@ -364,18 +366,18 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         candidate.rgb_array = rgb_array
         candidate.mask_array = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
         self._hsi_data.update_from(candidate)
-        image_path = self._hsi_data.data_path
+        loaded_path = self._hsi_data.data_path
 
-        loaded_file_text = f"File Loaded: {image_path}"
+        loaded_file_text = f"File Loaded: {loaded_path}"
         self.imageFilePath.setText(loaded_file_text)
-        self.imageFilePath.setToolTip(str(image_path))
+        self.imageFilePath.setToolTip(str(loaded_path))
         self.superResFilePath.setText(loaded_file_text)
-        self.superResFilePath.setToolTip(str(image_path))
+        self.superResFilePath.setToolTip(str(loaded_path))
         self.classificationFilePath.setText(loaded_file_text)
-        self.classificationFilePath.setToolTip(str(image_path))
+        self.classificationFilePath.setToolTip(str(loaded_path))
         self.unsupervisedClassifyButton.setEnabled(True)
         self.pushButton_2.setEnabled(True)
-        self.statusbar.showMessage(f"Loaded {image_path.name}")
+        self.statusbar.showMessage(f"Loaded {loaded_path.name}")
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
         self._push_image_to_viewers()
