@@ -146,25 +146,56 @@ QComboBox::down-arrow {
 
 QRadioButton {
     color: #263735;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
     spacing: 8px;
     padding: 4px 8px;
 }
 
 QRadioButton::indicator {
-    width: 15px;
-    height: 15px;
+    width: 18px;
+    height: 18px;
+    border: 0;
 }
 
 QRadioButton::indicator:unchecked {
-    border: 1px solid #9dafaa;
-    border-radius: 8px;
-    background: #ffffff;
+    image: url(__RADIO_UNCHECKED__);
 }
 
 QRadioButton::indicator:checked {
-    border: 4px solid #168b7b;
-    border-radius: 8px;
-    background: #ffffff;
+    image: url(__RADIO_CHECKED__);
+}
+
+QRadioButton:hover {
+    color: #173f39;
+    background: #edf6f4;
+    border-color: #d2e5e1;
+}
+
+QRadioButton:checked {
+    color: #123e37;
+    background: #e3f2ef;
+    border-color: #a8d2ca;
+}
+
+QRadioButton:checked:hover {
+    background: #dbeeea;
+    border-color: #82bdb2;
+}
+
+QRadioButton:focus {
+    border-color: #168b7b;
+    background: #f2f9f7;
+}
+
+QRadioButton:checked:focus {
+    background: #dff1ed;
+    border-color: #168b7b;
+}
+
+QRadioButton:pressed {
+    background: #d5ebe6;
 }
 
 QTabWidget#tabWidget::pane {
@@ -402,7 +433,12 @@ QScrollBar:vertical, QScrollBar:horizontal {
 def apply_theme(app: QApplication) -> None:
     app.setStyle("Fusion")
     app.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
-    combo_box_arrow = Path(__file__).parent / "assets" / "chevron_down.svg"
+    assets_dir = Path(__file__).parent / "assets"
+    combo_box_arrow = assets_dir / "chevron_down.svg"
+    radio_unchecked = assets_dir / "radio_unchecked.svg"
+    radio_checked = assets_dir / "radio_checked.svg"
     app.setStyleSheet(
         APP_QSS.replace("__COMBOBOX_ARROW__", combo_box_arrow.as_posix())
+        .replace("__RADIO_UNCHECKED__", radio_unchecked.as_posix())
+        .replace("__RADIO_CHECKED__", radio_checked.as_posix())
     )
