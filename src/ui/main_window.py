@@ -364,10 +364,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
 
         height, width = self._hsi_data.rgb_array.shape[:2]
-        x1 = max(0, int(rect.left()))
-        y1 = max(0, int(rect.top()))
-        x2 = min(width, int(rect.right()))
-        y2 = min(height, int(rect.bottom()))
+        x1 = max(0, int(np.floor(rect.left())))
+        y1 = max(0, int(np.floor(rect.top())))
+        x2 = min(width, int(np.ceil(rect.right())))
+        y2 = min(height, int(np.ceil(rect.bottom())))
         if x2 - x1 < 1 or y2 - y1 < 1:
             return
 
