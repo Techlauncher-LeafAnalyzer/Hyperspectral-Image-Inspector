@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import spectral.io.envi as envi
+from numpy.typing import NDArray
 from spectral import get_rgb
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import QPointF
@@ -13,6 +15,15 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 import core.hsi_utils as hsi_utils
 from core.hsi_data import HSIData
 from ui.generated.MainWindow import Ui_MainWindow
+
+
+@dataclass
+class _CropSnapshot:
+    """A prior image state, kept around so a crop can be undone."""
+
+    rgb_array:    NDArray[np.uint8]
+    mask_array:   NDArray[np.uint8]
+    spectral_obj: Optional[object]
 
 
 class _TabTransitionController(QtCore.QObject):
@@ -129,6 +140,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         self._hsi_data = HSIData()
+        self._crop_undo_stack: list[_CropSnapshot] = []
+        self._crop_redo_stack: list[_CropSnapshot] = []
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
@@ -263,6 +276,20 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         self._update_super_resolution_view_state(
             self.highResButton.isChecked()
+        )
+
+        for viewer in self._all_viewers():
+            viewer.cropRequested.connect(self._on_crop_requested)
+
+        QtGui.QShortcut(
+            QtGui.QKeySequence.StandardKey.Undo,
+            self,
+            self._undo_crop,
+        )
+        QtGui.QShortcut(
+            QtGui.QKeySequence.StandardKey.Redo,
+            self,
+            self._redo_crop,
         )
 
     def _update_super_resolution_view_state(
@@ -433,23 +460,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.unsupervisedClassifyButton.setEnabled(True)
         self.pushButton_2.setEnabled(True)
         self.statusbar.showMessage(f"Loaded {image_path.name}")
-        pixmap = hsi_utils.numpy_to_qpixmap(rgb_array)
-
-        self.viewer.rgb        = rgb_array
-        self.viewer.mask_array = self._hsi_data.mask_array
-        self.viewer.set_photo(pixmap)
-
-        self.calibrationViewer.rgb        = rgb_array
-        self.calibrationViewer.mask_array = self._hsi_data.mask_array
-        self.calibrationViewer.set_photo(pixmap)
-
-        self.superResViewer.rgb        = rgb_array
-        self.superResViewer.mask_array = self._hsi_data.mask_array
-        self.superResViewer.set_photo(pixmap)
-
-        self.classificationViewer.rgb        = rgb_array
-        self.classificationViewer.mask_array = self._hsi_data.mask_array
-        self.classificationViewer.set_photo(pixmap)
+        self._crop_undo_stack.clear()
+        self._crop_redo_stack.clear()
+        self._push_image_to_viewers()
         self._reset_super_resolution_simulation()
 
     def _save_image(self) -> None:
@@ -464,3 +477,71 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _on_mean_index(self, index_name: str) -> None:
         pass
+
+    def _on_crop_requested(self, rect: QtCore.QRectF) -> None:
+        if not self._hsi_data.is_loaded():
+            return
+
+        self._crop_undo_stack.append(self._snapshot_current_state())
+        self._crop_redo_stack.clear()
+
+        cropped_size = self._hsi_data.crop(
+            rect.left(),
+            rect.top(),
+            rect.right(),
+            rect.bottom(),
+        )
+        if cropped_size is None:
+            self._crop_undo_stack.pop()
+            return
+
+        self._push_image_to_viewers()
+        self.statusbar.showMessage(
+            f"Cropped to {cropped_size[0]}x{cropped_size[1]}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # Private: crop undo/redo                                             #
+    # ------------------------------------------------------------------ #
+
+    def _all_viewers(self) -> tuple:
+        return (
+            self.viewer,
+            self.calibrationViewer,
+            self.superResViewer,
+            self.classificationViewer,
+        )
+
+    def _snapshot_current_state(self) -> _CropSnapshot:
+        return _CropSnapshot(
+            rgb_array=self._hsi_data.rgb_array,
+            mask_array=self._hsi_data.mask_array,
+            spectral_obj=self._hsi_data.spectral_obj,
+        )
+
+    def _restore_snapshot(self, snapshot: _CropSnapshot) -> None:
+        self._hsi_data.rgb_array    = snapshot.rgb_array
+        self._hsi_data.mask_array   = snapshot.mask_array
+        self._hsi_data.spectral_obj = snapshot.spectral_obj
+        self._push_image_to_viewers()
+
+    def _undo_crop(self) -> None:
+        if not self._crop_undo_stack:
+            return
+        self._crop_redo_stack.append(self._snapshot_current_state())
+        self._restore_snapshot(self._crop_undo_stack.pop())
+        self.statusbar.showMessage("Crop undone")
+
+    def _redo_crop(self) -> None:
+        if not self._crop_redo_stack:
+            return
+        self._crop_undo_stack.append(self._snapshot_current_state())
+        self._restore_snapshot(self._crop_redo_stack.pop())
+        self.statusbar.showMessage("Crop redone")
+
+    def _push_image_to_viewers(self) -> None:
+        pixmap = hsi_utils.numpy_to_qpixmap(self._hsi_data.rgb_array)
+        for viewer in self._all_viewers():
+            viewer.rgb        = self._hsi_data.rgb_array
+            viewer.mask_array = self._hsi_data.mask_array
+            viewer.set_photo(pixmap)

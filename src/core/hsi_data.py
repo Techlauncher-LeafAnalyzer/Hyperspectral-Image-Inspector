@@ -26,8 +26,8 @@ class HSIData:
     """Single source of truth for all loaded hyperspectral image state.
 
     Created once in MainWindowController and passed by reference to each
-    FeaturePanel on construction. Only MainWindowController._load_image writes
-    to this object; panels read from it.
+    FeaturePanel on construction. MainWindowController loads this object and
+    applies updates through HSIData methods; panels read from it.
     """
 
     image_path:   Optional[Path]                  = None
@@ -45,3 +45,21 @@ class HSIData:
         self.image_path = self.header_path = self.image_format = None
         self.spectral_obj = self.rgb_array = self.mask_array = None
         self.wavelengths = []
+
+    def crop(self, left: float, top: float, right: float, bottom: float) -> tuple[int, int] | None:
+        if self.rgb_array is None or self.mask_array is None:
+            return None
+
+        height, width = self.rgb_array.shape[:2]
+        x1 = max(0, int(np.floor(min(left, right))))
+        y1 = max(0, int(np.floor(min(top, bottom))))
+        x2 = min(width, int(np.ceil(max(left, right))))
+        y2 = min(height, int(np.ceil(max(top, bottom))))
+        if x2 - x1 < 1 or y2 - y1 < 1:
+            return None
+
+        self.rgb_array = self.rgb_array[y1:y2, x1:x2, :].copy()
+        self.mask_array = self.mask_array[y1:y2, x1:x2].copy()
+        if self.spectral_obj is not None:
+            self.spectral_obj = self.spectral_obj[y1:y2, x1:x2, :]
+        return (x2 - x1, y2 - y1)
