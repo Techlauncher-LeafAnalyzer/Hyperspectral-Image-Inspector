@@ -38,6 +38,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
     historyChanged        = pyqtSignal(bool, bool)   # (can_undo, can_redo)
     spectrumPlotRequested = pyqtSignal(QPointF)
     meanIndexRequested    = pyqtSignal(str)
+    cropRequested         = pyqtSignal(QtCore.QRectF)
 
     # All visualization modes except HyperCube, in display order.
     VISUALIZATION_NAMES = ("RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI")
@@ -69,6 +70,11 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.allInputBoxList: list[NDArray[np.float64]] = []
         self.history: list[tuple[str, object]] = []
         self.redo_stack: list[tuple[str, object]] = []
+
+        # --- crop mode state ---
+        self._cropping: bool = False
+        self._crop_start: Optional[QPointF] = None
+        self._crop_rect_item: Optional[QGraphicsRectItem] = None
 
         # --- image data ---
         self._zoom: int = 0
@@ -257,11 +263,24 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._zoom = 0
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._cropping:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._crop_start = self.mapToScene(event.position().toPoint())
+            return
         if self._photo.isUnderMouse():
             self.photoClicked.emit(self.mapToScene(event.position().toPoint()))
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._cropping and self._crop_start is not None:
+            current = self.mapToScene(event.position().toPoint())
+            if self._crop_rect_item is not None:
+                self._scene.removeItem(self._crop_rect_item)
+            self._crop_rect_item = self._scene.addRect(
+                QtCore.QRectF(self._crop_start, current).normalized(),
+                QPen(Qt.GlobalColor.yellow, 0, Qt.PenStyle.DashLine),
+            )
+            return
         super().mouseMoveEvent(event)
         self._update_pixel_overlay(event.position().toPoint())
 
@@ -270,6 +289,16 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._pixel_overlay.hide()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._cropping:
+            end_pos = self.mapToScene(event.position().toPoint())
+            crop_rect = None
+            if self._crop_start is not None:
+                crop_rect = QtCore.QRectF(self._crop_start, end_pos).normalized()
+            self._end_crop_mode()
+            if crop_rect is not None and crop_rect.width() >= 1 and crop_rect.height() >= 1:
+                self.cropRequested.emit(crop_rect)
+            return
+
         super().mouseReleaseEvent(event)
         clicked_pos = self.mapToScene(event.position().toPoint())
 
@@ -316,6 +345,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self.new_input_points = np.empty((0, 2), dtype=np.uint32)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape and self._cropping:
+            self._end_crop_mode()
+            return
         if event.key() == Qt.Key.Key_Control:
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
             self.setCursor(Qt.CursorShape.CrossCursor)
@@ -342,6 +374,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         pixel_values_action.setChecked(self._pixel_overlay_enabled)
         pixel_values_action.toggled.connect(self._set_pixel_overlay_enabled)
 
+        if self.has_photo():
+            menu.addSeparator()
+            menu.addAction("Crop", self._begin_crop_mode)
         menu.exec(event.globalPos())
 
     # ------------------------------------------------------------------ #
@@ -360,6 +395,22 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def _clear_selection(self) -> None:
         self._clear()
         self.historyChanged.emit(False, False)
+
+    def _begin_crop_mode(self) -> None:
+        self._cropping = True
+        self._crop_start = None
+        self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def _end_crop_mode(self) -> None:
+        if self._crop_rect_item is not None:
+            self._scene.removeItem(self._crop_rect_item)
+            self._crop_rect_item = None
+        self._cropping = False
+        self._crop_start = None
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        if self.has_photo():
+            self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
 
     def _render_mask(self) -> None:
         if self.mask_array is None:
