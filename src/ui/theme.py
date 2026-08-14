@@ -146,25 +146,69 @@ QComboBox::down-arrow {
 
 QRadioButton {
     color: #263735;
-    spacing: 8px;
-    padding: 4px 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    spacing: 9px;
+    padding: 7px 10px;
 }
 
 QRadioButton::indicator {
-    width: 15px;
-    height: 15px;
+    width: 16px;
+    height: 16px;
 }
 
 QRadioButton::indicator:unchecked {
     border: 1px solid #9dafaa;
-    border-radius: 8px;
+    border-radius: 9px;
     background: #ffffff;
 }
 
 QRadioButton::indicator:checked {
-    border: 4px solid #168b7b;
-    border-radius: 8px;
+    border: 5px solid #168b7b;
+    border-radius: 9px;
     background: #ffffff;
+}
+
+QRadioButton:hover {
+    color: #173f39;
+    background: #edf6f4;
+    border-color: #d2e5e1;
+}
+
+QRadioButton:hover::indicator:unchecked {
+    border-color: #5e9f94;
+    background: #fbfefd;
+}
+
+QRadioButton:checked {
+    color: #123e37;
+    background: #e3f2ef;
+    border-color: #9fcfc6;
+    font-weight: 600;
+}
+
+QRadioButton:checked:hover {
+    background: #d9eeea;
+    border-color: #78b8ac;
+}
+
+QRadioButton:checked:hover::indicator {
+    border-color: #117b6d;
+}
+
+QRadioButton:focus {
+    border-color: #168b7b;
+    background: #f2f9f7;
+}
+
+QRadioButton:checked:focus {
+    background: #dff1ed;
+    border-color: #168b7b;
+}
+
+QRadioButton:pressed {
+    background: #d5ebe6;
 }
 
 QTabWidget#tabWidget::pane {
