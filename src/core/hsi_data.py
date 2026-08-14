@@ -15,9 +15,37 @@ from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
+from spectral.io.spyfile import SubImage
 
 from .errors import VisualizationError, WavelengthError
 from .hsi_utils import nearest_band_index
+
+
+class _CroppedSpyFile(SubImage):
+    """SPy sub-image with exact exclusive-end bounds for band reads.
+
+    SPy 0.25's ``SubImage.read_band`` and ``read_bands`` subtract one from
+    their exclusive end bounds, producing an image one row and column too
+    small. These overrides retain lazy parent-file reads while keeping the
+    advertised crop shape consistent with every Model operation.
+    """
+
+    def read_band(self, band: int) -> np.ndarray:
+        values = self.parent.read_subregion(
+            (self.row_offset, self.row_offset + self.nrows),
+            (self.col_offset, self.col_offset + self.ncols),
+            [band],
+        )
+        return np.asarray(values)[:, :, 0]
+
+    def read_bands(self, bands: Sequence[int]) -> np.ndarray:
+        return np.asarray(
+            self.parent.read_subregion(
+                (self.row_offset, self.row_offset + self.nrows),
+                (self.col_offset, self.col_offset + self.ncols),
+                list(bands),
+            )
+        )
 
 
 class ImageFormat(Enum):
@@ -45,7 +73,9 @@ class HSIData:
     aliases ``image`` and ``wavelengths_nm`` plus targeted read methods.
 
     Pixel data stay on disk inside SPy's lazy ``SpyFile`` until a read method
-    is called. Controllers should serialize concurrent reads on one instance.
+    is called. The Controller creates this object once and updates it in place,
+    so panels can safely retain the shared reference. Controllers should
+    serialize concurrent reads on one instance.
     """
 
     image_path: Optional[Path] = None
@@ -253,3 +283,29 @@ class HSIData:
                 f"{self.rows}x{self.columns} image."
             )
         return np.asarray(self.image.read_pixel(row, column), dtype=np.float32)
+
+    def crop(
+        self, left: float, top: float, right: float, bottom: float
+    ) -> tuple[int, int] | None:
+        """Crop display arrays and retain a lazy SPy-compatible cube view."""
+
+        if self.rgb_array is None or self.mask_array is None:
+            return None
+
+        height, width = self.rgb_array.shape[:2]
+        x1 = max(0, int(np.floor(min(left, right))))
+        y1 = max(0, int(np.floor(min(top, bottom))))
+        x2 = min(width, int(np.ceil(max(left, right))))
+        y2 = min(height, int(np.ceil(max(top, bottom))))
+        if x2 - x1 < 1 or y2 - y1 < 1:
+            return None
+
+        self.rgb_array = self.rgb_array[y1:y2, x1:x2, :].copy()
+        self.mask_array = self.mask_array[y1:y2, x1:x2].copy()
+        if self.spectral_obj is not None:
+            self.spectral_obj = _CroppedSpyFile(
+                self.spectral_obj,
+                (y1, y2),
+                (x1, x2),
+            )
+        return (x2 - x1, y2 - y1)

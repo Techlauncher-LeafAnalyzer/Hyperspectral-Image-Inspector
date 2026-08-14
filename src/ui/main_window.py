@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+from numpy.typing import NDArray
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
@@ -22,6 +24,15 @@ from ui.generated.MainWindow import Ui_MainWindow
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class _CropSnapshot:
+    """A prior image state, kept around so a crop can be undone."""
+
+    rgb_array:    NDArray[np.uint8]
+    mask_array:   NDArray[np.uint8]
+    spectral_obj: Optional[object]
 
 
 class _TabTransitionController(QtCore.QObject):
@@ -140,6 +151,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data = HSIData()
         self._hsi_reader = HSIReader()
         self._visualization_service = VisualizationService()
+        self._crop_undo_stack: list[_CropSnapshot] = []
+        self._crop_redo_stack: list[_CropSnapshot] = []
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
@@ -240,8 +253,132 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.darkFileButton.clicked.connect(self._select_dark_file)
         self.referenceFileButton.clicked.connect(self._select_reference_file)
         self.pushButton.clicked.connect(self._select_groundtruth_file)
+        self.highResButton.toggled.connect(
+            self._update_super_resolution_view_state
+        )
+        self.lowResButton.setToolTip(
+            "View the original file before Super-Resolution processing"
+        )
+        self.highResButton.setToolTip(
+            "View the processed result after Super-Resolution"
+        )
         self.calibrateButton.setEnabled(False)
         self.calibrateButton.setToolTip("Calibration is not implemented yet")
+        self.runSuperResButton.setEnabled(False)
+        self.runSuperResButton.setToolTip(
+            "Load an image to test the Super-Resolution workflow"
+        )
+        self.runSuperResButton.clicked.connect(
+            self._run_super_resolution_simulation
+        )
+        self._super_res_progress_animation = QtCore.QPropertyAnimation(
+            self.superResProgressBar,
+            b"value",
+            self,
+        )
+        self._super_res_progress_animation.setDuration(2800)
+        self._super_res_progress_animation.setStartValue(0)
+        self._super_res_progress_animation.setEndValue(100)
+        self._super_res_progress_animation.setEasingCurve(
+            QtCore.QEasingCurve.Type.Linear
+        )
+        self._super_res_progress_animation.finished.connect(
+            self._finish_super_resolution_simulation
+        )
+        self._update_super_resolution_view_state(
+            self.highResButton.isChecked()
+        )
+
+        for viewer in self._all_viewers():
+            viewer.cropRequested.connect(self._on_crop_requested)
+
+        QtGui.QShortcut(
+            QtGui.QKeySequence.StandardKey.Undo,
+            self,
+            self._undo_crop,
+        )
+        QtGui.QShortcut(
+            QtGui.QKeySequence.StandardKey.Redo,
+            self,
+            self._redo_crop,
+        )
+
+    def _update_super_resolution_view_state(
+        self,
+        show_processed: bool,
+    ) -> None:
+        """Describe the selected before/after state when processing is idle."""
+        self.superResStatusStack.setCurrentWidget(self.superResIdlePage)
+
+        if not self._hsi_data.is_loaded():
+            status = "Load an image to compare the original and processed result"
+        elif show_processed:
+            status = "Processed result not generated — run Super-Resolution"
+        else:
+            status = "Showing the original file before processing"
+
+        self.superResStatusText.setText(status)
+
+    def _run_super_resolution_simulation(self) -> None:
+        """Temporarily exercise the processing UI without running inference."""
+        if (
+            not self._hsi_data.is_loaded()
+            or self._super_res_progress_animation.state()
+            == QtCore.QAbstractAnimation.State.Running
+        ):
+            return
+
+        self.highResButton.setChecked(True)
+        self.lowResButton.setEnabled(False)
+        self.highResButton.setEnabled(False)
+        self.lowResButton.setToolTip(
+            "View selection is locked while the simulation runs"
+        )
+        self.highResButton.setToolTip(
+            "View selection is locked while the simulation runs"
+        )
+        self.runSuperResButton.setEnabled(False)
+        self.runSuperResButton.setText("Processing…")
+        self.runSuperResButton.setToolTip(
+            "Super-Resolution progress simulation is running"
+        )
+        self.superResProgressBar.setValue(0)
+        self.superResStatusStack.setCurrentWidget(self.superResProgressPage)
+        self.statusbar.showMessage("Simulating Super-Resolution processing…")
+        self._super_res_progress_animation.start()
+
+    def _finish_super_resolution_simulation(self) -> None:
+        """Restore controls while leaving the completed progress visible."""
+        self._set_super_resolution_simulation_ready()
+        self.statusbar.showMessage(
+            "Super-Resolution progress simulation complete",
+            5000,
+        )
+
+    def _set_super_resolution_simulation_ready(self) -> None:
+        """Enable the temporary workflow and restore its idle labels."""
+        self.lowResButton.setEnabled(True)
+        self.highResButton.setEnabled(True)
+        self.lowResButton.setToolTip(
+            "View the original file before Super-Resolution processing"
+        )
+        self.highResButton.setToolTip(
+            "View the processed result after Super-Resolution"
+        )
+        self.runSuperResButton.setEnabled(True)
+        self.runSuperResButton.setText("Run Super-Resolution")
+        self.runSuperResButton.setToolTip(
+            "Temporarily simulate Super-Resolution processing progress"
+        )
+
+    def _reset_super_resolution_simulation(self) -> None:
+        """Prepare the temporary workflow after an image is loaded."""
+        self._super_res_progress_animation.stop()
+        self.superResProgressBar.setValue(0)
+        self._set_super_resolution_simulation_ready()
+        self._update_super_resolution_view_state(
+            self.highResButton.isChecked()
+        )
 
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
@@ -334,23 +471,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.unsupervisedClassifyButton.setEnabled(True)
         self.pushButton_2.setEnabled(True)
         self.statusbar.showMessage(f"Loaded {image_path.name}")
-        pixmap = hsi_utils.numpy_to_qpixmap(rgb_array)
-
-        self.viewer.rgb        = rgb_array
-        self.viewer.mask_array = self._hsi_data.mask_array
-        self.viewer.set_photo(pixmap)
-
-        self.calibrationViewer.rgb        = rgb_array
-        self.calibrationViewer.mask_array = self._hsi_data.mask_array
-        self.calibrationViewer.set_photo(pixmap)
-
-        self.superResViewer.rgb        = rgb_array
-        self.superResViewer.mask_array = self._hsi_data.mask_array
-        self.superResViewer.set_photo(pixmap)
-
-        self.classificationViewer.rgb        = rgb_array
-        self.classificationViewer.mask_array = self._hsi_data.mask_array
-        self.classificationViewer.set_photo(pixmap)
+        self._crop_undo_stack.clear()
+        self._crop_redo_stack.clear()
+        self._push_image_to_viewers()
+        self._reset_super_resolution_simulation()
 
     def _save_image(self) -> None:
         pass
@@ -364,3 +488,71 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _on_mean_index(self, index_name: str) -> None:
         pass
+
+    def _on_crop_requested(self, rect: QtCore.QRectF) -> None:
+        if not self._hsi_data.is_loaded():
+            return
+
+        self._crop_undo_stack.append(self._snapshot_current_state())
+        self._crop_redo_stack.clear()
+
+        cropped_size = self._hsi_data.crop(
+            rect.left(),
+            rect.top(),
+            rect.right(),
+            rect.bottom(),
+        )
+        if cropped_size is None:
+            self._crop_undo_stack.pop()
+            return
+
+        self._push_image_to_viewers()
+        self.statusbar.showMessage(
+            f"Cropped to {cropped_size[0]}x{cropped_size[1]}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # Private: crop undo/redo                                             #
+    # ------------------------------------------------------------------ #
+
+    def _all_viewers(self) -> tuple:
+        return (
+            self.viewer,
+            self.calibrationViewer,
+            self.superResViewer,
+            self.classificationViewer,
+        )
+
+    def _snapshot_current_state(self) -> _CropSnapshot:
+        return _CropSnapshot(
+            rgb_array=self._hsi_data.rgb_array,
+            mask_array=self._hsi_data.mask_array,
+            spectral_obj=self._hsi_data.spectral_obj,
+        )
+
+    def _restore_snapshot(self, snapshot: _CropSnapshot) -> None:
+        self._hsi_data.rgb_array    = snapshot.rgb_array
+        self._hsi_data.mask_array   = snapshot.mask_array
+        self._hsi_data.spectral_obj = snapshot.spectral_obj
+        self._push_image_to_viewers()
+
+    def _undo_crop(self) -> None:
+        if not self._crop_undo_stack:
+            return
+        self._crop_redo_stack.append(self._snapshot_current_state())
+        self._restore_snapshot(self._crop_undo_stack.pop())
+        self.statusbar.showMessage("Crop undone")
+
+    def _redo_crop(self) -> None:
+        if not self._crop_redo_stack:
+            return
+        self._crop_undo_stack.append(self._snapshot_current_state())
+        self._restore_snapshot(self._crop_redo_stack.pop())
+        self.statusbar.showMessage("Crop redone")
+
+    def _push_image_to_viewers(self) -> None:
+        pixmap = hsi_utils.numpy_to_qpixmap(self._hsi_data.rgb_array)
+        for viewer in self._all_viewers():
+            viewer.rgb        = self._hsi_data.rgb_array
+            viewer.mask_array = self._hsi_data.mask_array
+            viewer.set_photo(pixmap)

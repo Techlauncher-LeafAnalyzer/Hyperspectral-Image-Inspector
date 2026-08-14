@@ -113,10 +113,47 @@ QPushButton[primaryButton="true"]:hover {
 }
 
 QPushButton#unsupervisedClassifyButton:disabled,
-QPushButton#pushButton_2:disabled {
+QPushButton#pushButton_2:disabled,
+QPushButton#runSuperResButton:disabled {
     color: #9ba9a6;
     background: #f0f3f2;
     border-color: #dde5e2;
+}
+
+QGroupBox#superResControls {
+    background: #f7faf9;
+    border: 1px solid #d8e2df;
+    border-radius: 6px;
+}
+
+QLabel[stepLabel="true"] {
+    color: #526662;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel[flowArrow="true"] {
+    color: #8a9c98;
+    font-size: 16px;
+    font-weight: 600;
+    padding: 0 2px;
+}
+
+QLabel[statusMessage="true"] {
+    color: #5c6f6b;
+    background: #edf3f1;
+    border: 1px solid #d9e4e1;
+    border-radius: 5px;
+    padding: 3px 9px;
+}
+
+QStackedWidget#superResStatusStack {
+    background: transparent;
+    border: 0;
+}
+
+QPushButton#runSuperResButton {
+    padding: 5px 12px;
 }
 
 QLineEdit, QComboBox {
