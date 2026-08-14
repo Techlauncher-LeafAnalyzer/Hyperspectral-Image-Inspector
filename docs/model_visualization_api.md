@@ -17,6 +17,10 @@ the stable public API.
 - `VisualizationResult`: RGB `uint8` display array, raw index values, actual
   bands/wavelengths, title, range, and colormap.
 - `SpectrumResult`: the values and wavelength axis for one pixel.
+- `HypercubeData`: RGB top face and raw row/column spectral side slices for a
+  view-owned 3D renderer.
+- `HypercubeViewData`: aspect-preserving, downsampled real cube surfaces for
+  SPy's interactive OpenGL hypercube without loading the full image volume.
 
 ## Controller integration
 
@@ -84,6 +88,14 @@ another component needs mutable ownership.
 - Undo View scaling, scrolling, and letterboxing before calling
   `spectrum(data, row, column)` for a clicked display location.
 
+### Hypercube handoff
+
+Run `prepare_hypercube_view` in a worker because it reads several surfaces.
+The returned `HypercubeViewData` can cross a queued signal, but create and
+manipulate SPy's OpenGL widget only on the GUI thread. `surface_cube` contains
+valid boundary values and a deliberately empty interior; it is a rendering
+payload and must not be reused for scientific calculations.
+
 ### Error handling map
 
 | Exception | Suggested Controller response |
@@ -120,3 +132,7 @@ Opening an image reads metadata only. RGB and indices use SPy's targeted band
 reads instead of loading the full 480-band cube. `HSIData.estimated_float_bytes`
 allows a controller to warn before any future algorithm requests a full
 float32 load.
+
+`prepare_hypercube_view` reads only four sampled boundary surfaces plus the RGB
+top. The Controller creates SPy's `HypercubeWindow` on the GUI thread after
+that preparation completes in a worker.

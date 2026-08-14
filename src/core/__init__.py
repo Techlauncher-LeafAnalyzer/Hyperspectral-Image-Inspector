@@ -12,6 +12,8 @@ from .hsi_data import Functionality, HSIData, ImageFormat
 from .hsi_reader import HSIReader
 from .visualization_model import (
     DisplayStretch,
+    HypercubeData,
+    HypercubeViewData,
     SpectrumResult,
     VisualizationMode,
     VisualizationRequest,
@@ -28,6 +30,8 @@ __all__ = [
     "HSIFileError",
     "HSIHeaderError",
     "HSIReader",
+    "HypercubeData",
+    "HypercubeViewData",
     "ImageFormat",
     "SpectrumResult",
     "VisualizationError",

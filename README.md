@@ -4,7 +4,8 @@ The production application uses a PyQt6 View/Controller and a UI-independent
 Model under `src/core`.
 
 Visualization Model capabilities include lazy ENVI/PSI loading, RGB, single
-bands, NDVI, EVI, MCARI, MTVI, OSAVI, PRI, and pixel spectra.
+bands, NDVI, EVI, MCARI, MTVI, OSAVI, PRI, pixel spectra, and renderer-neutral
+hypercube payloads.
 
 Controllers should depend on the public Model surface:
 

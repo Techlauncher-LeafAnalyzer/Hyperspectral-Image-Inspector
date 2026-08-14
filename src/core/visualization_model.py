@@ -99,6 +99,38 @@ class SpectrumResult:
     values: np.ndarray
 
 
+@dataclass(frozen=True, slots=True)
+class HypercubeData:
+    """RGB plus orthogonal slices for a custom future cube renderer.
+
+    The current SPy OpenGL View should use :class:`HypercubeViewData` instead.
+    """
+    top_rgb: np.ndarray
+    row_side_values: np.ndarray
+    column_side_values: np.ndarray
+    wavelengths_nm: np.ndarray
+    row_index: int
+    column_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class HypercubeViewData:
+    """Downsampled surface payload for the interactive SPy cube View.
+
+    ``surface_cube`` contains real values on four boundaries; its unused
+    interior is zero and must not be used for scientific analysis. Index arrays
+    map every sample back to the original :class:`HSIData`. Construct OpenGL/Qt
+    widgets from this result only after returning to the GUI thread.
+    """
+
+    top_rgb: np.ndarray
+    surface_cube: np.ndarray
+    wavelengths_nm: np.ndarray
+    row_indices: np.ndarray
+    column_indices: np.ndarray
+    band_indices: np.ndarray
+
+
 class VisualizationService:
     """View-neutral visualization model backed by Spectral Python.
 
@@ -171,6 +203,134 @@ class VisualizationService:
         wavelengths.setflags(write=False)
         values.setflags(write=False)
         return SpectrumResult(row, column, wavelengths, values)
+
+    def hypercube_data(
+        self,
+        data: HSIData,
+        *,
+        row_index: int | None = None,
+        column_index: int | None = None,
+        stretch: DisplayStretch = DisplayStretch(),
+        max_side_points: int = 1024,
+    ) -> HypercubeData:
+        """Return RGB plus two sampled orthogonal spectral slices.
+
+        This lower-level payload targets custom renderers. Sampling bounds
+        memory while retaining all spectral bands; the call performs disk I/O.
+        """
+        if max_side_points < 2:
+            raise VisualizationError("max_side_points must be at least 2.")
+        row = data.rows // 2 if row_index is None else int(row_index)
+        column = data.columns // 2 if column_index is None else int(column_index)
+        if not 0 <= row < data.rows or not 0 <= column < data.columns:
+            raise VisualizationError("Hypercube slice row or column is outside the cube.")
+        top = self._render_rgb(data, stretch).display_rgb
+        column_samples = np.linspace(
+            0, data.columns - 1, min(data.columns, max_side_points), dtype=int
+        )
+        row_samples = np.linspace(
+            0, data.rows - 1, min(data.rows, max_side_points), dtype=int
+        )
+        bands = list(range(data.bands))
+        row_side = np.asarray(
+            data.image.read_subimage([row], column_samples.tolist(), bands), dtype=np.float32
+        )[0]
+        column_side = np.asarray(
+            data.image.read_subimage(row_samples.tolist(), [column], bands), dtype=np.float32
+        )[:, 0, :]
+        return HypercubeData(
+            top_rgb=top,
+            row_side_values=row_side,
+            column_side_values=column_side,
+            wavelengths_nm=data.wavelengths_nm.copy(),
+            row_index=row,
+            column_index=column,
+        )
+
+    def prepare_hypercube_view(
+        self,
+        data: HSIData,
+        *,
+        max_spatial_side: int = 256,
+        max_spectral_bands: int = 192,
+        stretch: DisplayStretch = DisplayStretch(),
+        progress: ProgressCallback | None = None,
+        is_cancelled: CancellationCheck | None = None,
+    ) -> HypercubeViewData:
+        """Prepare a compact cube whose surfaces retain real HSI values.
+
+        SPy's OpenGL cube renders only the top texture and four boundary
+        surfaces. Reading those surfaces directly avoids loading the complete
+        hyperspectral volume into memory. Spatial sampling preserves the
+        source aspect ratio and spectral sampling covers the wavelength range.
+
+        Run this method in a Controller worker. Construct SPy's OpenGL widget
+        on the GUI thread after receiving the result. Cancellation is checked
+        between surface reads; progress is emitted at each completed stage.
+
+        Raises:
+            VisualizationError: A sampling limit is smaller than two.
+            WavelengthError: RGB wavelengths are unavailable.
+            CancelledError: Cancellation was observed between reads.
+        """
+        if max_spatial_side < 2 or max_spectral_bands < 2:
+            raise VisualizationError("Hypercube sampling limits must be at least 2.")
+
+        self._check_cancelled(is_cancelled)
+        self._emit(progress, 0, "Preparing hypercube RGB surface")
+        rgb = self._render_rgb(data, stretch).display_rgb
+
+        spatial_scale = min(1.0, max_spatial_side / max(data.rows, data.columns))
+        row_count = min(data.rows, max(2, round(data.rows * spatial_scale)))
+        column_count = min(data.columns, max(2, round(data.columns * spatial_scale)))
+        band_count = min(data.bands, max_spectral_bands)
+        rows = np.unique(np.linspace(0, data.rows - 1, row_count, dtype=int))
+        columns = np.unique(np.linspace(0, data.columns - 1, column_count, dtype=int))
+        bands = np.unique(np.linspace(0, data.bands - 1, band_count, dtype=int))
+        row_list = rows.tolist()
+        column_list = columns.tolist()
+        band_list = bands.tolist()
+
+        top = np.ascontiguousarray(rgb[np.ix_(rows, columns)])
+        surface = np.zeros((len(rows), len(columns), len(bands)), dtype=np.float32)
+
+        self._check_cancelled(is_cancelled)
+        self._emit(progress, 25, "Reading front cube surface")
+        surface[-1, :, :] = np.asarray(
+            data.image.read_subimage([data.rows - 1], column_list, band_list),
+            dtype=np.float32,
+        )[0]
+
+        self._check_cancelled(is_cancelled)
+        self._emit(progress, 45, "Reading right cube surface")
+        surface[:, -1, :] = np.asarray(
+            data.image.read_subimage(row_list, [data.columns - 1], band_list),
+            dtype=np.float32,
+        )[:, 0, :]
+
+        self._check_cancelled(is_cancelled)
+        self._emit(progress, 65, "Reading back cube surface")
+        surface[0, :, :] = np.asarray(
+            data.image.read_subimage([0], column_list, band_list), dtype=np.float32
+        )[0]
+
+        self._check_cancelled(is_cancelled)
+        self._emit(progress, 85, "Reading left cube surface")
+        surface[:, 0, :] = np.asarray(
+            data.image.read_subimage(row_list, [0], band_list), dtype=np.float32
+        )[:, 0, :]
+
+        wavelengths = np.ascontiguousarray(data.wavelengths_nm[bands])
+        self._check_cancelled(is_cancelled)
+        self._emit(progress, 100, "Hypercube ready")
+        return HypercubeViewData(
+            top_rgb=top,
+            surface_cube=surface,
+            wavelengths_nm=wavelengths,
+            row_indices=rows,
+            column_indices=columns,
+            band_indices=bands,
+        )
 
     def _render_rgb(self, data: HSIData, stretch: DisplayStretch) -> VisualizationResult:
         indices = {
