@@ -363,24 +363,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if not self._hsi_data.is_loaded():
             return
 
-        height, width = self._hsi_data.rgb_array.shape[:2]
-        x1 = max(0, int(np.floor(rect.left())))
-        y1 = max(0, int(np.floor(rect.top())))
-        x2 = min(width, int(np.ceil(rect.right())))
-        y2 = min(height, int(np.ceil(rect.bottom())))
-        if x2 - x1 < 1 or y2 - y1 < 1:
-            return
-
         self._crop_undo_stack.append(self._snapshot_current_state())
         self._crop_redo_stack.clear()
 
-        self._hsi_data.rgb_array  = self._hsi_data.rgb_array[y1:y2, x1:x2, :].copy()
-        self._hsi_data.mask_array = self._hsi_data.mask_array[y1:y2, x1:x2].copy()
-        if self._hsi_data.spectral_obj is not None:
-            self._hsi_data.spectral_obj = self._hsi_data.spectral_obj[y1:y2, x1:x2, :]
+        cropped_size = self._hsi_data.crop(rect.left(), rect.top(), rect.right(), rect.bottom())
+        if cropped_size is None:
+            self._crop_undo_stack.pop()
+            return
 
         self._push_image_to_viewers()
-        self.statusbar.showMessage(f"Cropped to {x2 - x1}x{y2 - y1}")
+        self.statusbar.showMessage(f"Cropped to {cropped_size[0]}x{cropped_size[1]}")
 
     # ------------------------------------------------------------------ #
     # Private: crop undo/redo                                             #
