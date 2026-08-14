@@ -275,26 +275,45 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         if self._cropping and self._crop_start is not None:
             current = self.mapToScene(event.position().toPoint())
-            selection = QtCore.QRectF(self._crop_start, current).normalized()
+            image_rect = QtCore.QRectF(self._photo.pixmap().rect())
+            selection = (
+                QtCore.QRectF(self._crop_start, current)
+                .normalized()
+                .intersected(image_rect)
+            )
 
-            if self._crop_rect_item is not None:
-                self._scene.removeItem(self._crop_rect_item)
-            if self._crop_overlay_item is not None:
-                self._scene.removeItem(self._crop_overlay_item)
+            if selection.isEmpty():
+                if self._crop_rect_item is not None:
+                    self._scene.removeItem(self._crop_rect_item)
+                    self._crop_rect_item = None
+                if self._crop_overlay_item is not None:
+                    self._scene.removeItem(self._crop_overlay_item)
+                    self._crop_overlay_item = None
+                return
 
             overlay_path = QPainterPath()
-            overlay_path.addRect(QtCore.QRectF(self._photo.pixmap().rect()))
+            overlay_path.addRect(image_rect)
             overlay_path.addRect(selection)
             overlay_path.setFillRule(Qt.FillRule.OddEvenFill)
-            self._crop_overlay_item = self._scene.addPath(
-                overlay_path, QPen(Qt.PenStyle.NoPen), QBrush(QColor(0, 0, 0, 140))
-            )
-            self._crop_overlay_item.setZValue(10)
 
-            self._crop_rect_item = self._scene.addRect(
-                selection, QPen(Qt.GlobalColor.yellow, 0, Qt.PenStyle.DashLine)
-            )
-            self._crop_rect_item.setZValue(11)
+            if self._crop_overlay_item is None:
+                self._crop_overlay_item = self._scene.addPath(
+                    overlay_path,
+                    QPen(Qt.PenStyle.NoPen),
+                    QBrush(QColor(0, 0, 0, 140)),
+                )
+                self._crop_overlay_item.setZValue(10)
+            else:
+                self._crop_overlay_item.setPath(overlay_path)
+
+            if self._crop_rect_item is None:
+                self._crop_rect_item = self._scene.addRect(
+                    selection,
+                    QPen(Qt.GlobalColor.yellow, 0, Qt.PenStyle.DashLine),
+                )
+                self._crop_rect_item.setZValue(11)
+            else:
+                self._crop_rect_item.setRect(selection)
             return
         super().mouseMoveEvent(event)
         self._update_pixel_overlay(event.position().toPoint())
