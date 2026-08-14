@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 import core.hsi_utils as hsi_utils
 from core.hsi_data import HSIData
 from ui.generated.MainWindow import Ui_MainWindow
+from ui.viewer import HSIViewer
 
 
 @dataclass
@@ -142,6 +143,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data = HSIData()
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
+        self._active_viewer: Optional[HSIViewer] = None
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
@@ -369,6 +371,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.highResButton.isChecked()
         )
 
+        self.tabWidget.currentChanged.connect(self._on_tab_changed)
+
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
     # ------------------------------------------------------------------ #
@@ -511,6 +515,27 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.superResViewer,
             self.classificationViewer,
         )
+
+    def _tab_viewers(self) -> tuple:
+        return (
+            self.viewer,
+            self.superResViewer,
+            self.calibrationViewer,
+            self.classificationViewer,
+        )
+
+    def _on_tab_changed(self, index: int) -> None:
+        tab_viewers = self._tab_viewers()
+        if not (0 <= index < len(tab_viewers)):
+            return
+
+        new_viewer = tab_viewers[index]
+        if self._active_viewer is not None and self._active_viewer is not new_viewer:
+            state = self._active_viewer.get_view_state()
+            if state is not None:
+                new_viewer.queue_view_state(state)
+
+        self._active_viewer = new_viewer
 
     def _snapshot_current_state(self) -> _CropSnapshot:
         return _CropSnapshot(
