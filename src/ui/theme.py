@@ -113,10 +113,27 @@ QPushButton[primaryButton="true"]:hover {
 }
 
 QPushButton#unsupervisedClassifyButton:disabled,
-QPushButton#pushButton_2:disabled {
+QPushButton#pushButton_2:disabled,
+QPushButton#runSuperResButton:disabled {
     color: #9ba9a6;
     background: #f0f3f2;
     border-color: #dde5e2;
+}
+
+QGroupBox#superResControls {
+    background: #f7faf9;
+    border: 1px solid #d8e2df;
+    border-radius: 6px;
+}
+
+QLabel[stepLabel="true"] {
+    color: #526662;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#runSuperResButton {
+    padding: 5px 12px;
 }
 
 QLineEdit, QComboBox {

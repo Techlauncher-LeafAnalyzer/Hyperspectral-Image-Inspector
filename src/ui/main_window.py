@@ -231,6 +231,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.pushButton.clicked.connect(self._select_groundtruth_file)
         self.calibrateButton.setEnabled(False)
         self.calibrateButton.setToolTip("Calibration is not implemented yet")
+        self.runSuperResButton.setEnabled(False)
+        self.runSuperResButton.setToolTip(
+            "Super-Resolution processing is not implemented yet"
+        )
 
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
