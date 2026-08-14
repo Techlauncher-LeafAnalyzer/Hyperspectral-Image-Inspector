@@ -229,12 +229,40 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.darkFileButton.clicked.connect(self._select_dark_file)
         self.referenceFileButton.clicked.connect(self._select_reference_file)
         self.pushButton.clicked.connect(self._select_groundtruth_file)
+        self.highResButton.toggled.connect(
+            self._update_super_resolution_view_state
+        )
+        self.lowResButton.setToolTip(
+            "View the original file before Super-Resolution processing"
+        )
+        self.highResButton.setToolTip(
+            "View the processed result after Super-Resolution"
+        )
         self.calibrateButton.setEnabled(False)
         self.calibrateButton.setToolTip("Calibration is not implemented yet")
         self.runSuperResButton.setEnabled(False)
         self.runSuperResButton.setToolTip(
             "Super-Resolution processing is not implemented yet"
         )
+        self._update_super_resolution_view_state(
+            self.highResButton.isChecked()
+        )
+
+    def _update_super_resolution_view_state(
+        self,
+        show_processed: bool,
+    ) -> None:
+        """Describe the selected before/after state when processing is idle."""
+        self.superResStatusStack.setCurrentWidget(self.superResIdlePage)
+
+        if not self._hsi_data.is_loaded():
+            status = "Load an image to compare the original and processed result"
+        elif show_processed:
+            status = "Processed result not generated — run Super-Resolution"
+        else:
+            status = "Showing the original file before processing"
+
+        self.superResStatusText.setText(status)
 
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
@@ -324,6 +352,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.superResFilePath.setToolTip(str(image_path))
         self.classificationFilePath.setText(loaded_file_text)
         self.classificationFilePath.setToolTip(str(image_path))
+        self._update_super_resolution_view_state(
+            self.highResButton.isChecked()
+        )
         self.unsupervisedClassifyButton.setEnabled(True)
         self.pushButton_2.setEnabled(True)
         self.statusbar.showMessage(f"Loaded {image_path.name}")

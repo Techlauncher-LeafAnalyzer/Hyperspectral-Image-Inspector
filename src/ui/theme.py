@@ -132,6 +132,26 @@ QLabel[stepLabel="true"] {
     font-weight: 600;
 }
 
+QLabel[flowArrow="true"] {
+    color: #8a9c98;
+    font-size: 16px;
+    font-weight: 600;
+    padding: 0 2px;
+}
+
+QLabel[statusMessage="true"] {
+    color: #5c6f6b;
+    background: #edf3f1;
+    border: 1px solid #d9e4e1;
+    border-radius: 5px;
+    padding: 3px 9px;
+}
+
+QStackedWidget#superResStatusStack {
+    background: transparent;
+    border: 0;
+}
+
 QPushButton#runSuperResButton {
     padding: 5px 12px;
 }
