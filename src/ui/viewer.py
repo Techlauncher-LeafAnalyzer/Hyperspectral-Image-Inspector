@@ -81,6 +81,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._zoom: int = 0
         self._empty: bool = True
         self._pending_view_state: Optional[tuple[float, QPointF]] = None
+        self._pending_fit: bool = False
         self.rgb: Optional[NDArray[np.uint8]] = None
         self.mask_array: Optional[NDArray[np.uint8]] = None
         self.avatarArray: Optional[NDArray[np.uint8]] = None
@@ -179,6 +180,13 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
             self._photo.setPixmap(QtGui.QPixmap())
         self.fit_in_view()
+        if self.has_photo():
+            # The viewport may not have its final size yet (e.g. right after
+            # startup, or in a tab that has never been shown), so the fit
+            # above can be computed against stale geometry. Keep reapplying
+            # it on resize until the layout settles, mirroring queue_view_state.
+            self._pending_fit = True
+            QtCore.QTimer.singleShot(300, self._clear_pending_fit)
 
     def set_avatar(self, pixmap: QPixmap) -> None:
         self.avatar.setPixmap(pixmap)
@@ -197,7 +205,20 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.resetTransform()
         self.scale(scale_factor, scale_factor)
         self.centerOn(center)
-        self._zoom = 1
+        rect = self._photo.pixmap().rect()
+        viewrect = self.viewport().rect()
+        if rect.width() and rect.height() and viewrect.width() and viewrect.height():
+            fit_scale = min(
+                viewrect.width() / rect.width(),
+                viewrect.height() / rect.height(),
+            )
+            step = 1.125  # keep consistent with wheelEvent()
+            ratio = scale_factor / fit_scale if fit_scale else 1.0
+            steps = float(np.log(ratio) / np.log(step)) if ratio > 0 else 0.0
+            self._zoom = max(0, int(round(steps)))
+        else:
+            # Fall back to a non-zero zoom so wheel-down doesn't immediately snap to fit.
+            self._zoom = 1
 
     def queue_view_state(self, state: tuple[float, QPointF]) -> None:
         """Apply `state` now, and again on every resize for a short window.
@@ -215,12 +236,17 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def _clear_pending_view_state(self) -> None:
         self._pending_view_state = None
 
+    def _clear_pending_fit(self) -> None:
+        self._pending_fit = False
+
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         if self._pending_view_state is not None:
             # The scale was already applied when the state was queued; only
             # the center needs recomputing as the viewport settles.
             self.centerOn(self._pending_view_state[1])
+        elif self._pending_fit:
+            self.fit_in_view()
 
     def set_mask(self, mask: NDArray[np.uint8]) -> None:
         """Accept a new mask array and render it as a blue RGBA overlay."""
