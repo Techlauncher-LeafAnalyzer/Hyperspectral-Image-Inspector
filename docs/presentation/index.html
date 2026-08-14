@@ -61,6 +61,10 @@
   .pr-table .pr-num { color: var(--leaf-grey); }
   .type-table td { padding: 0.25em 0.6em 0.25em 0; }
   .type-table td:last-child { font-weight: 700; color: var(--leaf-green); text-align: right; padding-right: 0.6em; }
+  .ui-compare { align-items: center; }
+  .ui-shot-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .ui-shot-wrap p.caption { font-weight: 700; color: var(--leaf-green); margin-bottom: 0.4em; }
+  .ui-shot { display: block; margin: 0 auto; max-width: 100%; height: 380px; width: auto; object-fit: contain; background: #fff; border: 1px solid #dbe6db; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
 </style>
 </head>
 <body>
@@ -326,6 +330,27 @@
         </ul>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ============ APPENDIX: UI EVOLUTION (Execution & Quality) ============ -->
+<section>
+  <h2>Appendix — UI Evolution <span style="font-size:0.5em; color:var(--leaf-grey);"></span></h2>
+  <div class="content" style="font-size:0.6em;">
+    <p style="margin-bottom:0.5em;">Same four-module tool (Visualization, Super-Resolution, Calibration, Classification), rebuilt with a consistent theme and navigation.</p>
+    <div class="two-col ui-compare">
+      <div class="ui-shot-wrap">
+        <p class="caption">Initial prototype</p>
+        <img class="ui-shot" src="../inital_ui.jpg" alt="Initial UI: stacked sidebar buttons, unthemed grey panels">
+        <p class="src" style="margin-top:0.4em;">Stacked sidebar buttons, unthemed grey panels</p>
+      </div>
+      <div class="ui-shot-wrap">
+        <p class="caption">Sprint 4 build</p>
+        <img class="ui-shot" src="../sprint_4_ui.jpg" alt="Sprint 4 UI: horizontal tab bar, themed, aligned controls">
+        <p class="src" style="margin-top:0.4em;">Horizontal tab bar, consistent theme, aligned controls</p>
+      </div>
+    </div>
+    <p class="src" style="margin-top:0.6em;">PR #5 theme · #6 Tabular UI Foundations · #9 calibration tab · #12 tab interactions &amp; viewer alignment · #13 remove dead panel code · #15 file to nav bar</p>
   </div>
 </section>
 
