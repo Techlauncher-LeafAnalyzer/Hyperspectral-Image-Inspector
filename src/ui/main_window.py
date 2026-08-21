@@ -574,7 +574,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         checkpoint would still emit. Disconnecting removes the callback
         entirely, regardless of timing. The bounded wait gives the thread a
         real chance to finish before this method returns without risking an
-        indefinite hang if a run is stuck on unusually slow I/O.
+        indefinite hang if a run is stuck on unusually slow I/O -- though if
+        it times out, the thread is still alive and the file-read race this
+        method exists to prevent can still recur; that case is logged.
         """
         try:
             worker.cancel()
@@ -585,7 +587,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                     pass  # Already disconnected.
             thread = worker.thread()
             if thread is not None and thread is not QtCore.QThread.currentThread():
-                thread.wait(5000)
+                if not thread.wait(5000):
+                    LOGGER.warning(
+                        "Hypercube worker did not stop within 5s; a new "
+                        "worker may race it against the same underlying file."
+                    )
         except RuntimeError:
             pass  # The worker already finished and deleted itself.
 
