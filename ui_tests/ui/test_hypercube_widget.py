@@ -36,6 +36,19 @@ def test_colorize_slices_handles_uniform_input():
     assert colored[0].dtype == np.uint8
 
 
+def test_side_faces_map_spatial_width_and_spectral_height():
+    view_data = type("ViewData", (), {
+        "top_rgb": np.zeros((3, 5, 3), dtype=np.uint8),
+        "surface_cube": np.arange(3 * 5 * 7, dtype=np.float32).reshape(3, 5, 7),
+    })()
+
+    _, front, right, back, left, _ = HypercubeWidget._build_face_images(view_data)
+
+    # GL texture width is each face's spatial axis and height is depth/bands.
+    assert front.shape == back.shape == (7, 5, 3)
+    assert right.shape == left.shape == (7, 3, 3)
+
+
 def test_set_data_accepts_real_hypercube_view_data(qtbot, hypercube_view_data):
     widget = HypercubeWidget()
     qtbot.addWidget(widget)

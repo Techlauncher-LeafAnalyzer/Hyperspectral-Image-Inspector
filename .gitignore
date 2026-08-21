@@ -231,3 +231,6 @@ __marimo__/
 
 # loacal test files
 local_test_folder/
+/docs/superpowers/plans/2026-08-21-hypercube-visualization.md
+/docs/superpowers/specs/2026-08-21-hypercube-visualization-design.md
+/.codex/config.toml

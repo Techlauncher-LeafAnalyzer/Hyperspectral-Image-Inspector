@@ -178,6 +178,10 @@ class HypercubeWidget(QOpenGLWidget):
 
         images = self._build_face_images(self._view_data)
         texture_ids = [int(value) for value in gl.glGenTextures(len(images))]
+        # NumPy RGB rows are tightly packed (three bytes per pixel), whereas
+        # OpenGL defaults to four-byte row alignment.  Without this, images
+        # whose width is not a multiple of four have corrupted texture rows.
+        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
         for texture_id, image in zip(texture_ids, images):
             gl.glBindTexture(gl.GL_TEXTURE_2D, texture_id)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
@@ -208,7 +212,15 @@ class HypercubeWidget(QOpenGLWidget):
             [front, right, back, left]
         )
         top = np.ascontiguousarray(view_data.top_rgb)
-        return [top, colored_front, colored_right, colored_back, colored_left, top]
+        # A side slice is shaped ``(spatial_samples, spectral_bands)``.  Its
+        # spatial axis must map to the face's horizontal texture axis and its
+        # bands to the cube depth, so transpose it before OpenGL uploads it
+        # as a conventional ``(height, width, channels)`` image.
+        side_images = [
+            np.ascontiguousarray(image.transpose(1, 0, 2))
+            for image in (colored_front, colored_right, colored_back, colored_left)
+        ]
+        return [top, *side_images, top]
 
     def _draw_cube(self) -> None:
         import OpenGL.GL as gl

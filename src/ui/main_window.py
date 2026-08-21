@@ -88,6 +88,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hypercube_error: str | None = None
         self._hypercube_worker: HypercubeWorker | None = None
         self._hypercube_generation: int = 0
+        self._hypercube_refresh_pending = False
+        self._is_closing = False
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
@@ -103,6 +105,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         window's child widgets, crashing with a "wrapped C/C++ object has
         been deleted" error when the callback touches them.
         """
+        self._is_closing = True
+        self._hypercube_refresh_pending = False
         self._detach_hypercube_worker()
         super().closeEvent(event)
 
@@ -520,42 +524,48 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         self.visualizationStack.setCurrentWidget(self.hypercubeWidget)
         self._refresh_hypercube_display()
+        self._start_hypercube_worker()
 
     def _start_hypercube_worker(self) -> None:
-        if self._hypercube_worker is not None:
-            # Wait for the previous run to actually stop before starting a
-            # new one: both workers would otherwise read the same underlying
-            # SPy file object (the dataclass snapshot below is shallow, so
-            # ``spectral_obj`` is shared) concurrently. SPy's file reads are
-            # not thread-safe, and concurrent reads were observed to hang or
-            # raise ``EOFError`` from corrupted reads -- ``cancel()`` alone
-            # only asks the background thread to stop at its next
-            # checkpoint, which is not soon enough to avoid the overlap.
-            self._stop_hypercube_worker(self._hypercube_worker)
-        self._hypercube_generation += 1
+        """Start a lazy hypercube calculation for the current dataset.
+
+        A cube is useful only while its tab is selected.  Deferring the read
+        avoids competing with normal 2D rendering and keeps the common path
+        free of background SPy I/O.
+        """
+        if (
+            self._is_closing
+            or not self._hsi_data.is_loaded()
+            or self._hypercube_view_data is not None
+            or self._hypercube_error is not None
+            or self._hypercube_worker is not None
+        ):
+            return
+
         generation = self._hypercube_generation
-        self._hypercube_view_data = None
-        self._hypercube_error = None
-        if self.modeHyperCube.isChecked():
-            self._refresh_hypercube_display()
 
         snapshot = dataclasses.replace(self._hsi_data)
         worker = HypercubeWorker(self._visualization_service, snapshot)
-        worker.progress.connect(self._on_hypercube_progress)
+        worker.progress.connect(
+            lambda value, message, gen=generation: self._on_hypercube_progress(
+                gen, value, message
+            )
+        )
         worker.finished.connect(
             lambda result, gen=generation: self._on_hypercube_finished(gen, result)
         )
         worker.failed.connect(
             lambda message, gen=generation: self._on_hypercube_failed(gen, message)
         )
+        worker._thread.finished.connect(self._on_hypercube_thread_finished)
         self._hypercube_worker = worker
         worker.start()
 
     def _detach_hypercube_worker(self) -> None:
         """Stop a running worker from calling back into this window.
 
-        This blocks (briefly) until the background ``QThread`` has actually
-        stopped running, so a closed window never leaves a real OS thread
+        This waits for the background ``QThread`` to stop, so a closed window
+        never leaves a real OS thread
         reading this window's (possibly about-to-be-cleaned-up) image data
         in the background -- letting that happen was observed to crash
         unrelated, later tests in this environment.
@@ -563,43 +573,36 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         worker = self._hypercube_worker
         if worker is None:
             return
-        self._stop_hypercube_worker(worker)
+        self._stop_hypercube_worker(worker, wait=True)
 
     @staticmethod
-    def _stop_hypercube_worker(worker: HypercubeWorker) -> None:
-        """Cancel ``worker``, detach its signals, and wait for it to stop.
+    def _stop_hypercube_worker(worker: HypercubeWorker, *, wait: bool) -> bool:
+        """Request cancellation and optionally wait until its thread is gone.
 
-        ``cancel()`` alone is not enough: it only asks the background thread
-        to stop at its next checkpoint, so a run already past its last
-        checkpoint would still emit. Disconnecting removes the callback
-        entirely, regardless of timing. The bounded wait gives the thread a
-        real chance to finish before this method returns without risking an
-        indefinite hang if a run is stuck on unusually slow I/O -- though if
-        it times out, the thread is still alive and the file-read race this
-        method exists to prevent can still recur; that case is logged.
+        Returning ``True`` means the thread is still running.  Callers that
+        need to read the same SPy file defer their work until the controller
+        receives ``_on_hypercube_thread_finished``; they never race a timed
+        out worker against a replacement reader.
         """
         try:
             worker.cancel()
-            for signal in (worker.progress, worker.finished, worker.failed):
-                try:
-                    signal.disconnect()
-                except TypeError:
-                    pass  # Already disconnected.
-            thread = worker.thread()
+            thread = worker._thread
             if thread is not None and thread is not QtCore.QThread.currentThread():
-                if not thread.wait(5000):
-                    LOGGER.warning(
-                        "Hypercube worker did not stop within 5s; a new "
-                        "worker may race it against the same underlying file."
-                    )
+                if wait:
+                    thread.wait()
+                    return False
+                return thread.isRunning()
         except RuntimeError:
-            pass  # The worker already finished and deleted itself.
+            return False  # The worker already finished and deleted itself.
+        return False
 
-    def _on_hypercube_progress(self, _value: int, message: str) -> None:
+    def _on_hypercube_progress(self, generation: int, _value: int, message: str) -> None:
+        if self._is_closing or generation != self._hypercube_generation:
+            return
         self.statusbar.showMessage(f"Hypercube: {message}")
 
     def _on_hypercube_finished(self, generation: int, result: HypercubeViewData) -> None:
-        if generation != self._hypercube_generation:
+        if self._is_closing or generation != self._hypercube_generation:
             return
         self._hypercube_view_data = result
         self._hypercube_error = None
@@ -607,7 +610,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._refresh_hypercube_display()
 
     def _on_hypercube_failed(self, generation: int, message: str) -> None:
-        if generation != self._hypercube_generation:
+        if self._is_closing or generation != self._hypercube_generation:
             return
         self._hypercube_view_data = None
         self._hypercube_error = message
@@ -628,6 +631,24 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         else:
             self.hypercubeWidget.set_data(None)
             self.hypercubeWidget.set_status_message("Computing hypercube…")
+
+    def _on_hypercube_thread_finished(self) -> None:
+        """Release a settled worker and resume the latest queued UI refresh."""
+        finished_thread = self.sender()
+        worker = self._hypercube_worker
+        if worker is not None:
+            try:
+                if worker._thread is not finished_thread:
+                    return
+            except RuntimeError:
+                # A stale QThread wrapper was deleted before its queued
+                # ``finished`` callback reached the GUI thread.
+                return
+        self._hypercube_worker = None
+        if self._is_closing or not self._hypercube_refresh_pending:
+            return
+        self._hypercube_refresh_pending = False
+        self._push_image_to_viewers()
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, object]:
         values: dict[str, object] = {}
@@ -763,16 +784,21 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.statusbar.showMessage("Crop redone")
 
     def _push_image_to_viewers(self) -> None:
-        # Stop any in-flight hypercube worker *before* touching
-        # ``self._hsi_data`` from this (GUI) thread: SPy's file objects are
-        # not thread-safe, and a still-running worker from a previous crop
-        # reads through the same underlying file handle that
-        # ``_recompute_visualizations`` is about to read on this thread
-        # (crop wraps, rather than replaces, that handle). Concurrent reads
-        # were observed to hang or raise ``EOFError`` from corrupted reads.
+        # No GUI-thread Model operation may overlap the lazy worker: crop
+        # views share the same underlying SPy file object.  Queue this refresh
+        # behind cancellation rather than timing out and risking corrupted I/O.
+        self._hypercube_generation += 1
+        self._hypercube_view_data = None
+        self._hypercube_error = None
         if self._hypercube_worker is not None:
-            self._stop_hypercube_worker(self._hypercube_worker)
+            if self._stop_hypercube_worker(self._hypercube_worker, wait=False):
+                self._hypercube_refresh_pending = True
+                if self.modeHyperCube.isChecked():
+                    self._refresh_hypercube_display()
+                return
             self._hypercube_worker = None
         self._recompute_visualizations()
         self._refresh_viewers_display()
-        self._start_hypercube_worker()
+        if self.modeHyperCube.isChecked():
+            self._refresh_hypercube_display()
+            self._start_hypercube_worker()

@@ -114,6 +114,8 @@ class _StubService:
         if self._outcome == "cancel":
             assert is_cancelled is not None and is_cancelled()
             raise CancelledError("cancelled")
+        if self._outcome == "unexpected":
+            raise OSError("disk read failed")
         raise VisualizationError("boom")
 
 
@@ -161,6 +163,17 @@ def test_worker_emits_failed_on_visualization_error(qapp, synthetic_cube_path):
     assert recorder.finished == []
     # The work really did happen off the GUI thread.
     assert service.ran_on_thread_id != int(QThread.currentThreadId())
+
+
+def test_worker_stops_after_an_unexpected_read_error(qapp, synthetic_cube_path):
+    data = HSIReader().open(synthetic_cube_path)
+    worker = HypercubeWorker(_StubService("unexpected"), data)
+    recorder = _Recorder(worker)
+
+    _run_worker_to_completion(worker)
+
+    assert recorder.failed == ["Unable to prepare hypercube: disk read failed"]
+    assert recorder.finished == []
 
 
 def test_worker_cancel_suppresses_finished_and_failed(qapp, synthetic_cube_path):

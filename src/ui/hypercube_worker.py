@@ -53,9 +53,14 @@ class HypercubeWorker(QObject):
             pass
         except (VisualizationError, WavelengthError) as exc:
             self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(f"Unable to prepare hypercube: {exc}")
         else:
             self.finished.emit(result)
-        self._thread.quit()
+        finally:
+            # A disk or decoder failure must not strand the QThread: callers
+            # serialize SPy reads by waiting for this thread to stop.
+            self._thread.quit()
 
     def _prepare_for_deletion(self) -> None:
         """Finalize this run once the background thread is winding down.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF
+from PyQt6.QtCore import QCoreApplication, QEvent, QEventLoop, QRectF
 
 from core import VisualizationService
 
@@ -11,12 +11,25 @@ def test_hypercube_button_is_enabled_before_and_after_load(window, synthetic_cub
     assert window.modeHyperCube.isEnabled()
 
 
-def test_loading_image_starts_a_hypercube_worker(loaded_window):
-    # Synchronous effects only: starting the worker is fire-and-forget.
-    # Whether the background thread has finished by now is not asserted --
-    # end-to-end completion is verified by running the app manually.
+def test_loading_image_defers_hypercube_work_until_its_mode_is_selected(loaded_window):
+    assert loaded_window._hypercube_worker is None
+
+    loaded_window.modeHyperCube.click()
+
     assert loaded_window._hypercube_worker is not None
-    assert loaded_window._hypercube_generation >= 1
+
+
+def test_hypercube_worker_completion_releases_controller_reference(loaded_window):
+    loaded_window.modeHyperCube.click()
+    worker = loaded_window._hypercube_worker
+    assert worker is not None
+
+    assert worker._thread.wait(10_000)
+    QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert loaded_window._hypercube_worker is None
+    assert loaded_window._hypercube_view_data is not None
 
 
 def test_selecting_hypercube_mode_switches_stack_page(loaded_window):
@@ -34,6 +47,7 @@ def test_leaving_hypercube_mode_restores_viewer_page(loaded_window):
 
 
 def test_cropping_starts_a_new_hypercube_generation(loaded_window):
+    loaded_window.modeHyperCube.click()
     first_generation = loaded_window._hypercube_generation
 
     # left=1, top=1, right=5, bottom=5 -> a 4x4 crop out of the 8x8 fixture,
