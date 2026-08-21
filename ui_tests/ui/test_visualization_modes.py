@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from PyQt6.QtCore import QPointF
 
 from core import VisualizationMode
 
@@ -51,3 +52,19 @@ def test_pixel_values_are_reported_for_every_cached_mode(loaded_window):
     values = loaded_window._pixel_values_at(0, 0)
 
     assert set(values) == {mode.value for _, mode in MODE_BUTTONS}
+
+
+def test_switching_visualization_mode_preserves_pan_and_zoom(loaded_window, qtbot):
+    loaded_window.show()
+    qtbot.waitExposed(loaded_window)
+
+    loaded_window.viewer.set_view_state((2.0, QPointF(3.0, 4.0)))
+    expected_scale, expected_center = loaded_window.viewer.get_view_state()
+
+    loaded_window.modeNDVI.click()
+    qtbot.wait(50)  # let the queued view-state / resize-settling timers fire
+
+    got_scale, got_center = loaded_window.viewer.get_view_state()
+    assert got_scale == pytest.approx(expected_scale)
+    assert got_center.x() == pytest.approx(expected_center.x(), abs=1.0)
+    assert got_center.y() == pytest.approx(expected_center.y(), abs=1.0)

@@ -195,7 +195,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         """Return (scale_factor, scene_center) describing the current pan/zoom."""
         if not self.has_photo():
             return None
-        return self.transform().m11(), self.mapToScene(self.viewport().rect().center())
+        return self.transform().m11(), self.mapToScene(self.viewport().rect()).boundingRect().center()
 
     def set_view_state(self, state: tuple[float, QPointF]) -> None:
         """Apply a (scale_factor, scene_center) pair captured via `get_view_state`."""
