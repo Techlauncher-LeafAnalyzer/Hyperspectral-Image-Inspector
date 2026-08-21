@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtTest import QSignalSpy
 
 from core import hsi_utils
 from ui.viewer import HSIViewer
@@ -72,6 +73,77 @@ def test_get_view_state_is_none_without_a_photo(qtbot):
     qtbot.addWidget(view)
 
     assert view.get_view_state() is None
+
+
+def test_viewer_context_menu_keeps_actions_and_polished_identity(
+    viewer_with_photo,
+):
+    viewer_with_photo._pixel_overlay_enabled = True
+
+    menu = viewer_with_photo._build_context_menu(QPointF(2, 3))
+    actions = {action.text(): action for action in menu.actions() if action.text()}
+
+    assert menu.objectName() == "viewerContextMenu"
+    assert menu.minimumWidth() == 252
+    assert {
+        "Spectrum Plot",
+        "Clear Selection",
+        "Index Mean",
+        "Show Pixel Values",
+        "Crop",
+    } <= set(actions)
+    assert actions["Show Pixel Values"].isCheckable()
+    assert actions["Show Pixel Values"].isChecked()
+    assert actions["Index Mean"].menu().objectName() == "viewerIndexMenu"
+    assert [action.text() for action in actions["Index Mean"].menu().actions()] == [
+        "NDVI",
+        "EVI",
+        "MCARI",
+        "MTVI",
+        "OSAVI",
+        "PRI",
+    ]
+    assert all(not action.icon().isNull() for action in actions.values())
+
+
+@pytest.mark.parametrize(
+    "object_name",
+    ("viewer", "superResViewer", "calibrationViewer", "classificationViewer"),
+)
+def test_context_menu_polish_is_shared_by_every_tab(
+    viewer_with_photo,
+    object_name,
+):
+    viewer_with_photo.setObjectName(object_name)
+
+    menu = viewer_with_photo._build_context_menu(QPointF())
+
+    assert menu.objectName() == "viewerContextMenu"
+    assert menu.accessibleName() == "Viewer actions"
+    assert menu.actions()[2].menu().objectName() == "viewerIndexMenu"
+    assert all(
+        not action.icon().isNull()
+        for action in menu.actions()
+        if action.text()
+    )
+
+
+def test_context_menu_actions_keep_existing_signal_wiring(viewer_with_photo):
+    scene_pos = QPointF(2, 3)
+    spectrum_spy = QSignalSpy(viewer_with_photo.spectrumPlotRequested)
+    mean_spy = QSignalSpy(viewer_with_photo.meanIndexRequested)
+    menu = viewer_with_photo._build_context_menu(scene_pos)
+    actions = {action.text(): action for action in menu.actions() if action.text()}
+
+    actions["Spectrum Plot"].trigger()
+    actions["Index Mean"].menu().actions()[0].trigger()
+    actions["Show Pixel Values"].trigger()
+    actions["Crop"].trigger()
+
+    assert list(spectrum_spy[0]) == [scene_pos]
+    assert list(mean_spy[0]) == ["NDVI"]
+    assert viewer_with_photo._pixel_overlay_enabled is True
+    assert viewer_with_photo._cropping is True
 
 
 def _fake_release_event(scene_pos: QPointF):

@@ -471,10 +471,27 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
     def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
         scene_pos = self.mapToScene(event.pos())
+        menu = self._build_context_menu(scene_pos)
+        menu.exec(event.globalPos())
+
+    def _build_context_menu(self, scene_pos: QPointF) -> QMenu:
+        """Build the viewer menu separately so its state remains testable."""
         menu = QMenu(self)
-        menu.addAction("Spectrum Plot", lambda: self.spectrumPlotRequested.emit(scene_pos))
-        menu.addAction("Clear Selection", self._clear_selection)
-        index_menu = QMenu("Index Mean", self)
+        menu.setObjectName("viewerContextMenu")
+        menu.setAccessibleName("Viewer actions")
+        menu.setMinimumWidth(252)
+
+        icon_dir = QtCore.QFileInfo(__file__).absoluteDir().filePath("assets")
+
+        spectrum_action = menu.addAction(
+            "Spectrum Plot", lambda: self.spectrumPlotRequested.emit(scene_pos)
+        )
+        clear_action = menu.addAction("Clear Selection", self._clear_selection)
+
+        index_menu = QMenu("Index Mean", menu)
+        index_menu.setObjectName("viewerIndexMenu")
+        index_menu.setAccessibleName("Vegetation index mean")
+        index_menu.setMinimumWidth(190)
         for name in self.VISUALIZATION_NAMES:
             if name == "RGB":
                 continue
@@ -488,10 +505,19 @@ class HSIViewer(QtWidgets.QGraphicsView):
         pixel_values_action.setChecked(self._pixel_overlay_enabled)
         pixel_values_action.toggled.connect(self._set_pixel_overlay_enabled)
 
+        crop_action = None
         if self.has_photo():
             menu.addSeparator()
-            menu.addAction("Crop", self._begin_crop_mode)
-        menu.exec(event.globalPos())
+            crop_action = menu.addAction("Crop", self._begin_crop_mode)
+
+        spectrum_action.setIcon(QtGui.QIcon(f"{icon_dir}/spectrum_plot.svg"))
+        clear_action.setIcon(QtGui.QIcon(f"{icon_dir}/clear_selection.svg"))
+        index_menu.setIcon(QtGui.QIcon(f"{icon_dir}/index_mean.svg"))
+        pixel_values_action.setIcon(QtGui.QIcon(f"{icon_dir}/pixel_values.svg"))
+        if crop_action is not None:
+            crop_action.setIcon(QtGui.QIcon(f"{icon_dir}/crop.svg"))
+
+        return menu
 
     # ------------------------------------------------------------------ #
     # Private helpers                                                      #
