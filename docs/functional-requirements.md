@@ -1,6 +1,6 @@
 # Design Overview &amp; Functional Requirements
 
-This page synthesizes the answers gathered in the [Hyperspectral Image Planning Document](https://leaf2qr.atlassian.net/wiki/spaces/L/pages/16416770) and [Client meeting #8 (7/08)](https://leaf2qr.atlassian.net/wiki/spaces/L/pages/16580683) into a single design overview with testable functional requirements, cross-referenced against the current state of the codebase. Where the planning document's Phase 3/4 checklists were left blank, this page proposes concrete design decisions rather than leaving them open. See the "Residual Open Questions" section for the short list of items that genuinely still require client input.
+This page synthesizes the answers gathered in the [Hyperspectral Image Planning Document](https://leaf2qr.atlassian.net/wiki/spaces/L/pages/16416770) and [Client meeting #8 (7/08)](https://leaf2qr.atlassian.net/wiki/spaces/L/pages/16580683) into a single design overview with testable functional requirements, cross-referenced against `main` at `fc9440c` (21 August 2026). Where the planning document's Phase 3/4 checklists were left blank, this page proposes concrete design decisions rather than leaving them open. See the "Residual Open Questions" section for the short list of items that genuinely still require client input.
 
 ## 1. Purpose & Problem Statement
 
@@ -10,7 +10,7 @@ The manufacturer's existing tool only performs basic RGB visualization and opera
 
 ## 2. System Overview
 
-Data flow: a `.bil` data file plus its `.hdr` header (native ENVI, or PSI-proprietary, auto-converted to ENVI on load) is opened into a single shared `HSIData` state object. From there, the user invokes one of six functional models against that shared state:
+Data flow: a `.bil` data file plus its `.hdr` header (native ENVI, or PSI-proprietary, auto-converted to ENVI on load) is opened into a single shared `HSIData` state object. From there, the user invokes one of the following functional areas against that shared state:
 
 - Visualization (RGB + vegetation indices + hypercube view)
 - Cropping
@@ -18,21 +18,28 @@ Data flow: a `.bil` data file plus its `.hdr` header (native ENVI, or PSI-propri
 - Segmentation / Classification (unsupervised and supervised)
 - Super Resolution (spectral-aware upscaling)
 
-Results render back through the shared `HSIViewer` widget, which already supports pan/zoom, undo/redo, and point/box prompt annotation.
+Results render through the reusable `HSIViewer` widget. The four tabs each own a viewer instance, while the controller keeps the loaded cube and visualization results as shared application state. The viewer supports pan/zoom, point/box prompt annotation, a per-pixel value overlay, spectrum requests, and rectangular crop requests. Crop undo/redo is connected at the main-window level.
 
-Current UI is a 4-tab `QTabWidget` (Visualization / Super-Resolution / Calibration / Classification). Cropping and the Hypercube view have no dedicated UI yet. `docs/architecture.md` in the repo describes an earlier sidebar/panel-swap design that was superseded by this tab-based layout. Treat it as historical, not current.
+The current UI is a 4-tab `QTabWidget` (Visualization / Super-Resolution / Calibration / Classification). Cropping is available from each viewer's context menu; Hypercube has a disabled Visualization control but no connected renderer. `docs/architecture.md` describes an earlier sidebar/panel-swap design that was superseded by this tab-based layout. Treat that part of the architecture document as historical.
 
 ## 3. Functional Requirements
 
-Requirements are written as Given/When/Then acceptance criteria, per the format the planning document itself prescribes. Status reflects the current codebase audit.
+Requirements are written as Given/When/Then acceptance criteria, per the format the planning document itself prescribes. Status reflects implementation and wiring found on the audited `main` revision:
+
+- **Done** — the user-facing path is implemented and connected.
+- **Partial** — only part of the acceptance criterion or only some architectural layers exist.
+- **UI only / Model only** — the named layer exists but there is no end-to-end workflow.
+- **Not started** — no material implementation was found.
+
+No automated test suite is tracked in the repository. A **Done** status therefore records code-level implementation, not completed stakeholder validation or regression coverage.
 
 ### 3.1 Import & Session
 
 | Requirement | Status |
 | --- | --- |
-| Given a valid `.bil`/`.hdr` pair, when the user selects Load Image, then the cube opens and its RGB composite renders in the viewer within a few seconds. | Done |
-| Given a PSI-format header, when loaded, then it is automatically converted to an ENVI-standard header before opening. | Done |
-| Given a selected image whose paired header is missing or unparseable, when load is attempted, then a clear error dialog appears and the prior session state is preserved, with no crash. | Partial (missing-header case handled; malformed-header case not yet hardened) |
+| Given a valid `.bil`/`.hdr` pair, when the user selects Load Image, then the cube opens and its RGB composite renders in the viewer within a few seconds. | Partial: file selection and RGB rendering are connected, and `--image` supports developer startup loading. The controller then computes all supported index views synchronously on the GUI thread; the "within a few seconds" condition has not been benchmarked. |
+| Given a PSI-format header, when loaded, then it is automatically converted to an ENVI-standard header before opening. | Done: PSI headers are adapted to a temporary ENVI header without modifying the source file. |
+| Given a selected image whose paired header is missing or unparseable, when load is attempted, then a clear error dialog appears and the prior session state is preserved, with no crash. | Done: pair resolution, header parsing, wavelength validation, SPy opening, and truncated-data checks raise user-visible errors; shared state is replaced only after import and initial RGB rendering succeed. |
 | Given a folder containing multiple `.bil`/`.hdr` pairs, when the user chooses batch import, then all valid pairs queue for sequential loading. | Not started |
 | Given a `.bil`/`.hdr` pair dragged onto the main window, when dropped, then it loads exactly as if chosen via File → Load. | Not started |
 
@@ -40,16 +47,16 @@ Requirements are written as Given/When/Then acceptance criteria, per the format 
 
 | Requirement | Status |
 | --- | --- |
-| Given a loaded cube, when the user selects RGB, NDVI, EVI, MCARI, MTVI, OSAVI, or PRI, then the corresponding per-pixel index is computed and rendered as a false-colour image. | UI only: 8 radio buttons exist and are completely unwired; no index-computation functions exist beyond a band-lookup helper that's never called. |
-| Given a loaded cube, when the user selects Hypercube view, then a 3D/stacked representation of the full spectral cube is displayed. | Not started |
+| Given a loaded cube, when the user selects RGB, NDVI, EVI, MCARI, MTVI, OSAVI, or PRI, then the corresponding per-pixel index is computed and rendered as a false-colour image. | Done: the radio buttons are wired to cached Model results, the six index formulas are implemented, and the selected result is rendered in the viewers. |
+| Given a loaded cube, when the user selects Hypercube view, then a 3D/stacked representation of the full spectral cube is displayed. | Model only: renderer-neutral slice data and a downsampled SPy-compatible surface payload are implemented, but the Hypercube radio button is disabled and no 3D View is connected. |
 | Given two computed results (e.g. RGB vs NDVI, or pre/post calibration), when the user toggles split-view, then both render side-by-side in the same viewer. | Not started (the viewer already exposes an `is_split` flag intended for this) |
-| Given a loaded cube, when the user right-clicks a pixel and selects Spectrum Plot, then a reflectance-vs-wavelength plot for that pixel is displayed. | Not started (signal + handler stub already exist) |
+| Given a loaded cube, when the user right-clicks a pixel and selects Spectrum Plot, then a reflectance-vs-wavelength plot for that pixel is displayed. | Done: the context-menu action reads the selected pixel spectrum and opens a wavelength/value plot dialog. |
 
 ### 3.3 Cropping
 
 | Requirement | Status |
 | --- | --- |
-| Given a loaded cube and a user-drawn or specified rectangular region, when the user confirms the crop, then a new cube containing only that region's data (all bands) is produced. | Not started: no UI element exists yet. |
+| Given a loaded cube and a user-drawn or specified rectangular region, when the user confirms the crop, then a new cube containing only that region's data (all bands) is produced. | Done: Crop in the viewer context menu enters a drag-to-select workflow, replaces the current state with a lazy all-band sub-image, recomputes the displayed results, and supports undo/redo. Crop is applied on mouse release rather than through a separate confirmation dialog. |
 
 ### 3.4 Calibration
 
@@ -61,15 +68,15 @@ Requirements are written as Given/When/Then acceptance criteria, per the format 
 
 | Requirement | Status |
 | --- | --- |
-| Given a loaded cube, a target number of classes, and a max-iterations value, when the user runs unsupervised classification, then the image is grouped into that many spectrally-similar segments and rendered as a labeled mask. | Not started: live Classification tab is a completely empty stub; a fully-designed but disconnected panel exists in orphaned code. |
-| Given a loaded cube, a ground-truth file, and a chosen classifier (Gaussian / Mahalanobis Distance / Perceptron), when the user runs supervised classification, then each pixel is labeled according to the trained classifier. | Not started: classifier names exist as UI options only, no implementations. |
-| Given the Segmentation panel is active, when the user Ctrl+clicks to place foreground/background points or Ctrl+drags a box, then those prompts feed the selected classifier as interactive input. | Partial: point/box prompt drawing and undo/redo are already implemented in the viewer; nothing yet consumes the prompts to actually segment. |
+| Given a loaded cube, a target number of classes, and a max-iterations value, when the user runs unsupervised classification, then the image is grouped into that many spectrally-similar segments and rendered as a labeled mask. | UI only: the Classification tab contains class-count and iteration inputs and enables its Classify button after image load, but the button has no handler and no clustering Model exists. |
+| Given a loaded cube, a ground-truth file, and a chosen classifier (Gaussian / Mahalanobis Distance / Perceptron), when the user runs supervised classification, then each pixel is labeled according to the trained classifier. | UI only: the ground-truth picker and classifier choices exist and the Classify button is enabled after image load, but the button has no handler and no classifier implementations exist. |
+| Given the Segmentation panel is active, when the user Ctrl+clicks to place foreground/background points or Ctrl+drags a box, then those prompts feed the selected classifier as interactive input. | Partial: Ctrl+click point drawing and underlying point/box history methods exist in the viewer, but box mode is not exposed or activated by the UI, viewer undo/redo is not connected, and no classifier consumes the prompts. |
 
 ### 3.6 Super Resolution
 
 | Requirement | Status |
 | --- | --- |
-| Given a loaded cube, when the user selects a target resolution and runs Super Resolution, then an ML-accelerated algorithm upscales the image using all spectral bands (not just RGB), with progress shown via a progress bar. | UI only: low/high-res selector and progress bar exist and are unwired; `torch` is a declared dependency but no model/inference code exists. |
+| Given a loaded cube, when the user selects a target resolution and runs Super Resolution, then an ML-accelerated algorithm upscales the image using all spectral bands (not just RGB), with progress shown via a progress bar. | UI demonstration only: the original/processed selector, Run button, and progress bar are connected to a 2.8-second animation after image load. No target-resolution input, ML dependency, inference Model, or high-resolution result exists. |
 
 ### 3.7 Analyse (Cross-Cutting)
 
@@ -77,18 +84,18 @@ Requirements are written as Given/When/Then acceptance criteria, per the format 
 | --- | --- |
 | Given a chosen calibration file pair, visualization mode, and classifier settings, when the user saves a project, then those paths/settings persist to a lightweight JSON project file (not the raw image data, which can exceed 900 MB per capture). | Not started |
 | Given a saved project file, when the user reopens it, then the same file paths and settings are restored (the user must still have the original image files on disk). | Not started |
-| Given a computed visualization, calibration, or segmentation result, when the user selects Export, then the result is written as PNG/TIFF (images) or a labeled mask plus a CSV of per-segment statistics (segmentation). | Not started |
+| Given a computed visualization, calibration, or segmentation result, when the user selects Export, then the result is written as PNG/TIFF (images) or a labeled mask plus a CSV of per-segment statistics (segmentation). | Partial: File → Save Image exports the currently selected RGB/index display as PNG, TIFF, JPEG, or BMP using atomic replacement. Calibration export, labeled-mask export, and per-segment CSV statistics do not exist. |
 
 ## 4. Non-Functional Requirements
 
-| Category | Target |
-| --- | --- |
-| **Reliability** | Zero-crash tolerance on core operations (load, calibrate, visualize, classify, super-resolve). This is the direct pain point named by the client about the previous tool. All I/O and model-inference paths must catch exceptions and surface an error dialog instead of crashing. Session state auto-saves (via the JSON project file) after each significant action so a crash doesn't lose configuration. |
-| **Performance** | Based on the largest real capture on hand (~900 MB, 480 bands, 1971×500 px, VNIR 352–899 nm, 12-bit): long-running operations (load, super-resolution, classification) run off the UI thread with progress feedback. Target: single-tray load completes in under 10 seconds on typical facility hardware. |
-| **GPU Support** | `torch` is already a dependency. Super-resolution should auto-detect CUDA and use it when available, with mandatory CPU fallback (no assumption that deployment hardware has a GPU). |
-| **Accuracy** | Vegetation indices (NDVI, EVI, MCARI, MTVI, OSAVI, PRI) follow standard published formulas; validated via unit tests against hand-calculated reference values on the sample data already in the repository, within 1% numeric tolerance. |
-| **Usability** | Target user is a skilled technical operator, not a programmer. No onboarding flow is required, but every disabled control must show a tooltip explaining why (already the convention used on the Calibrate button). Keyboard shortcuts and multi-monitor polish are nice-to-haves. |
-| **Compatibility** | Primary target OS is Windows (typical facility workstation), with Linux supported for development. PyQt6 is cross-platform, so this is low-cost either way. macOS is explicitly out of scope unless requested later. |
+| Category | Target | Current state on `main` |
+| --- | --- | --- |
+| **Reliability** | Zero-crash tolerance on core operations (load, calibrate, visualize, classify, super-resolve). This is the direct pain point named by the client about the previous tool. All I/O and model-inference paths must catch exceptions and surface an error dialog instead of crashing. Session state auto-saves (via the JSON project file) after each significant action so a crash doesn't lose configuration. | Partial: import, spectrum, and export paths translate known failures into dialogs, and a failed import preserves the previous dataset. Session auto-save is not implemented; the other core operations do not yet exist end to end. |
+| **Performance** | Based on the largest real capture on hand (~900 MB, 480 bands, 1971×500 px, VNIR 352–899 nm, 12-bit): long-running operations (load, super-resolution, classification) run off the UI thread with progress feedback. Target: single-tray load completes in under 10 seconds on typical facility hardware. | Not met or unverified: image opening and eager RGB/index rendering are synchronous on the GUI thread, and no benchmark is tracked. |
+| **GPU Support** | Super-resolution should auto-detect CUDA and use it when available, with mandatory CPU fallback (no assumption that deployment hardware has a GPU). | Not started: no ML framework is declared in `requirements.txt` and no inference code exists. |
+| **Accuracy** | Vegetation indices (NDVI, EVI, MCARI, MTVI, OSAVI, PRI) follow standard published formulas; validated via unit tests against hand-calculated reference values on the sample data already in the repository, within 1% numeric tolerance. | Partial: all six formulas and wavelength-tolerance checks are implemented, but no tracked reference dataset or automated accuracy tests establish the 1% tolerance. Index results can currently be computed from uncalibrated raw data. |
+| **Usability** | Target user is a skilled technical operator, not a programmer. No onboarding flow is required, but every disabled control must show a tooltip explaining why. Keyboard shortcuts and multi-monitor polish are nice-to-haves. | Partial: unavailable Calibration and Hypercube controls explain why they are disabled, and crop undo/redo uses standard shortcuts. Classification controls can become enabled without an implemented action, and several workflows still lack completion/error feedback. |
+| **Compatibility** | Primary target OS is Windows (typical facility workstation), with Linux supported for development. macOS is explicitly out of scope unless requested later. | Unverified: the application uses cross-platform PyQt6 APIs, but no CI matrix or platform-specific validation is tracked. |
 
 ## 5. Phase 2 Backlog (Explicitly Deferred, Not Dropped)
 
@@ -114,4 +121,4 @@ The following items still require client input:
 - [Client meeting #8 (7/08)](https://leaf2qr.atlassian.net/wiki/spaces/L/pages/16580683): source of the six-model functional description.
 - [Hyper Spectral Image MVP](https://leaf2qr.atlassian.net/wiki/spaces/L/pages/15695881): earlier brainstorm and source of the Phase 2 backlog items.
 
-Per the planning document's own instruction, each functional requirement above should still be validated with the stakeholder after implementation and covered by a written test prior to being marked complete.
+Per the planning document's own instruction, each functional requirement above should still be validated with the stakeholder after implementation and covered by a written test before it is accepted as complete for delivery.
