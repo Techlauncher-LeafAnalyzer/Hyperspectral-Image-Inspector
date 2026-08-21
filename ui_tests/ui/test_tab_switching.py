@@ -75,13 +75,5 @@ def test_repeatedly_switching_tabs_does_not_drift_the_view(loaded_window, qtbot)
     qtbot.wait(50)
     _, final_center = loaded_window.viewer.get_view_state()
 
-    # A tolerance this tight (1e-6) chased exact floating-point equality
-    # through several QTimer-settled transform round-trips and was
-    # intermittently flaky (~1-in-3 full-suite runs) purely from Qt event
-    # timing noise unrelated to any real drift; the sibling single-hop test
-    # above already treats `abs=1.0` (a full pixel) as the bar for "carried
-    # correctly", so 0.1px is still a strict, 10x-tighter bound on the
-    # ~1px-per-hop creep this test is actually guarding against, with
-    # comfortable headroom (~20x) over the observed sub-pixel noise.
     assert final_center.x() == pytest.approx(initial_center.x(), abs=0.1)
     assert final_center.y() == pytest.approx(initial_center.y(), abs=0.1)
