@@ -89,6 +89,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hypercube_worker: HypercubeWorker | None = None
         self._hypercube_generation: int = 0
         self._hypercube_refresh_pending = False
+        self._pending_spectrum_request: tuple[int, int, int] | None = None
         self._is_closing = False
         self._configure_tabs()
         self._configure_file_menu()
@@ -107,6 +108,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         """
         self._is_closing = True
         self._hypercube_refresh_pending = False
+        self._pending_spectrum_request = None
         self._detach_hypercube_worker()
         super().closeEvent(event)
 
@@ -633,7 +635,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.hypercubeWidget.set_status_message("Computing hypercube…")
 
     def _on_hypercube_thread_finished(self) -> None:
-        """Release a settled worker and resume the latest queued UI refresh."""
+        """Release a settled worker and resume queued GUI-side reads."""
         finished_thread = self.sender()
         worker = self._hypercube_worker
         if worker is not None:
@@ -645,10 +647,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 # ``finished`` callback reached the GUI thread.
                 return
         self._hypercube_worker = None
-        if self._is_closing or not self._hypercube_refresh_pending:
+        if self._is_closing:
             return
-        self._hypercube_refresh_pending = False
-        self._push_image_to_viewers()
+        if self._hypercube_refresh_pending:
+            self._hypercube_refresh_pending = False
+            self._push_image_to_viewers()
+        self._resume_pending_spectrum_request()
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, object]:
         values: dict[str, object] = {}
@@ -676,6 +680,36 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if not (0 <= row < self._hsi_data.rows and 0 <= column < self._hsi_data.columns):
             return
 
+        worker = self._hypercube_worker
+        if worker is not None:
+            # Both paths access the same lazy SPy file handle.  Defer this
+            # GUI-thread read until cancellation has fully stopped the worker
+            # instead of allowing concurrent seeks against that handle.
+            self._pending_spectrum_request = (
+                self._hypercube_generation,
+                row,
+                column,
+            )
+            if self._stop_hypercube_worker(worker, wait=False):
+                self.statusbar.showMessage("Waiting for HyperCube calculation to stop…")
+                return
+            self._hypercube_worker = None
+
+        self._show_spectrum(row, column)
+
+    def _resume_pending_spectrum_request(self) -> None:
+        """Display a deferred spectrum if its source image is still current."""
+        request = self._pending_spectrum_request
+        self._pending_spectrum_request = None
+        if request is None:
+            return
+
+        generation, row, column = request
+        if generation != self._hypercube_generation or not self._hsi_data.is_loaded():
+            return
+        self._on_spectrum_plot(QPointF(column, row))
+
+    def _show_spectrum(self, row: int, column: int) -> None:
         try:
             result = self._visualization_service.spectrum(self._hsi_data, row, column)
         except HSIError as exc:
