@@ -115,7 +115,7 @@ class HypercubeData:
 
 @dataclass(frozen=True, slots=True)
 class HypercubeViewData:
-    """Downsampled surface payload for the interactive SPy cube View.
+    """Downsampled surface payload for the interactive cube View.
 
     ``surface_cube`` contains real values on four boundaries; its unused
     interior is zero and must not be used for scientific analysis. Index arrays
@@ -259,12 +259,12 @@ class VisualizationService:
     ) -> HypercubeViewData:
         """Prepare a compact cube whose surfaces retain real HSI values.
 
-        SPy's OpenGL cube renders only the top texture and four boundary
+        The interactive cube renders only the top texture and four boundary
         surfaces. Reading those surfaces directly avoids loading the complete
         hyperspectral volume into memory. Spatial sampling preserves the
         source aspect ratio and spectral sampling covers the wavelength range.
 
-        Run this method in a Controller worker. Construct SPy's OpenGL widget
+        Run this method in a Controller worker. Construct the Qt OpenGL widget
         on the GUI thread after receiving the result. Cancellation is checked
         between surface reads; progress is emitted at each completed stage.
 

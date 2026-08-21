@@ -1,27 +1,52 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from matplotlib import colormaps
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QMouseEvent, QResizeEvent, QSurfaceFormat, QWheelEvent
+from matplotlib.colors import LinearSegmentedColormap
+from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtGui import (
+    QColor,
+    QFont,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QResizeEvent,
+    QSurfaceFormat,
+    QWheelEvent,
+)
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-from PyQt6.QtWidgets import QLabel, QWidget
+from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QPushButton, QWidget
 
 from core import HypercubeViewData
 
 
+_BRIGHT_SPECTRAL_COLORS = np.array(
+    (
+        (35, 85, 215),
+        (0, 190, 255),
+        (75, 230, 135),
+        (255, 220, 55),
+        (255, 130, 45),
+        (255, 248, 245),
+    ),
+    dtype=int,
+)
+_SPECTRAL_COLORMAP = LinearSegmentedColormap.from_list(
+    "hypercube_spectral_faces", _BRIGHT_SPECTRAL_COLORS
+)
+
+
 def _colorize_slices(slices: list[np.ndarray]) -> list[np.ndarray]:
-    """Map same-scale float slices to ``uint8`` RGB via one shared stretch.
+    """Map float side slices to a bright, shared ``uint8`` RGB scale.
 
     All slices are stretched together (not independently) so a viewer can
     compare values across the cube's four side faces on one visual scale.
     """
     stacked = np.concatenate([values.ravel() for values in slices])
     finite = stacked[np.isfinite(stacked)]
-    cmap = colormaps["gray"]
     if finite.size == 0:
         return [
             np.zeros((*values.shape, 3), dtype=np.uint8) for values in slices
@@ -34,7 +59,7 @@ def _colorize_slices(slices: list[np.ndarray]) -> list[np.ndarray]:
     colored = []
     for values in slices:
         normalized = np.clip((values - low) / (high - low), 0, 1).astype(np.float32)
-        rgb = np.round(cmap(normalized)[..., :3] * 255).astype(np.uint8)
+        rgb = np.round(_SPECTRAL_COLORMAP(normalized)[..., :3] * 255).astype(np.uint8)
         colored.append(np.ascontiguousarray(rgb))
     return colored
 
@@ -43,9 +68,22 @@ class HypercubeWidget(QOpenGLWidget):
     """Interactive OpenGL cube rendering a :class:`core.HypercubeViewData`.
 
     Left-drag rotates, Ctrl+left-drag zooms, Shift+left-drag pans, and the
-    scroll wheel also zooms. Pure PyQt6 + PyOpenGL: no ``spectral.graphics``
-    or PySide6 import, since this app cannot load a second Qt binding.
+    scroll wheel also zooms. The view ports the presentation behaviour of the
+    SPy reference implementation without importing its PySide6 widget, since
+    this application must use one Qt binding (PyQt6) per process.
     """
+
+    AXIS_COLORS = {
+        "Rows": (0.78, 0.16, 0.16),
+        "Columns": (0.10, 0.50, 0.20),
+        "Wavelength": (0.08, 0.34, 0.74),
+    }
+    BACKGROUND_COLOR = (1.0, 1.0, 1.0, 1.0)
+    MIN_CAMERA_DISTANCE = 2.0
+    MAX_CAMERA_DISTANCE = 9.0
+    # Rotate the reference view one quarter-turn around the wavelength axis
+    # so its default presentation matches the application's axis convention.
+    DEFAULT_CAMERA = (7.0, 55.0, 135.0)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -57,9 +95,7 @@ class HypercubeWidget(QOpenGLWidget):
         self._textures: Optional[list[int]] = None
         self._textures_dirty = False
 
-        self._camera_distance = 5.0
-        self._camera_theta = 55.0
-        self._camera_phi = 35.0
+        self._camera_distance, self._camera_theta, self._camera_phi = self.DEFAULT_CAMERA
         self._target = [0.0, 0.0, 0.0]
 
         self._drag_start: Optional[QPoint] = None
@@ -81,6 +117,14 @@ class HypercubeWidget(QOpenGLWidget):
         self._status_label.hide()
         self.set_status_message("Load an image to view its hypercube.")
 
+        self._reset_button = QPushButton("Reset view", self)
+        self._reset_button.setObjectName("hypercubeResetButton")
+        self._reset_button.clicked.connect(self.reset_view)
+        self._export_button = QPushButton("Export current view…", self)
+        self._export_button.setObjectName("hypercubeExportButton")
+        self._export_button.clicked.connect(self._choose_export)
+        self._position_controls()
+
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
@@ -100,6 +144,20 @@ class HypercubeWidget(QOpenGLWidget):
             self._status_label.hide()
         self._status_label.raise_()
 
+    def reset_view(self) -> None:
+        """Restore the reference view's initial camera position."""
+        self._camera_distance, self._camera_theta, self._camera_phi = self.DEFAULT_CAMERA
+        self._target = [0.0, 0.0, 0.0]
+        self.update()
+
+    def export_current_view(self, path: str | Path) -> bool:
+        """Save the current framebuffer as PNG (by default) or another Qt format."""
+        output_path = Path(path)
+        if not output_path.suffix:
+            output_path = output_path.with_suffix(".png")
+        image = self.grabFramebuffer()
+        return not image.isNull() and image.save(str(output_path))
+
     # ------------------------------------------------------------------ #
     # QOpenGLWidget overrides                                              #
     # ------------------------------------------------------------------ #
@@ -110,7 +168,7 @@ class HypercubeWidget(QOpenGLWidget):
         gl.glEnable(gl.GL_TEXTURE_2D)
         gl.glEnable(gl.GL_DEPTH_TEST)
         gl.glDepthFunc(gl.GL_LEQUAL)
-        gl.glClearColor(0.12, 0.12, 0.12, 1.0)
+        gl.glClearColor(*self.BACKGROUND_COLOR)
         gl.glShadeModel(gl.GL_FLAT)
 
     def resizeGL(self, width: int, height: int) -> None:
@@ -125,22 +183,40 @@ class HypercubeWidget(QOpenGLWidget):
     def paintGL(self) -> None:
         import OpenGL.GL as gl
 
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
-        if self._textures_dirty:
-            self._rebuild_textures()
-        if self._textures is None:
-            return
+        # Qt requires raw OpenGL commands to be enclosed by
+        # beginNativePainting/endNativePainting when they are mixed with a
+        # QPainter overlay on a QOpenGLWidget.  The painter then renders the
+        # axis text reliably after the 3D scene has completed.
+        painter = QPainter(self)
+        painter.beginNativePainting()
+        axis_overlay = None
+        try:
+            gl.glEnable(gl.GL_TEXTURE_2D)
+            gl.glEnable(gl.GL_DEPTH_TEST)
+            gl.glDepthFunc(gl.GL_LEQUAL)
+            gl.glDisable(gl.GL_BLEND)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+            if self._textures_dirty:
+                self._rebuild_textures()
+            if self._textures is not None:
+                gl.glLoadIdentity()
+                gl.glTranslatef(0.0, 0.0, -self._camera_distance)
+                gl.glRotatef(self._camera_theta - 90.0, 1.0, 0.0, 0.0)
+                gl.glRotatef(-self._camera_phi, 0.0, 0.0, 1.0)
+                gl.glTranslatef(-self._target[0], -self._target[1], -self._target[2])
+                self._draw_cube()
+                axis_overlay = self._draw_axes()
+        finally:
+            painter.endNativePainting()
 
-        gl.glLoadIdentity()
-        gl.glTranslatef(0.0, 0.0, -self._camera_distance)
-        gl.glRotatef(self._camera_theta - 90.0, 1.0, 0.0, 0.0)
-        gl.glRotatef(-self._camera_phi, 0.0, 0.0, 1.0)
-        gl.glTranslatef(-self._target[0], -self._target[1], -self._target[2])
-        self._draw_cube()
+        if axis_overlay is not None:
+            self._draw_axis_labels(painter, *axis_overlay)
+        painter.end()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._position_status_label()
+        self._position_controls()
 
     # ------------------------------------------------------------------ #
     # Cube construction                                                    #
@@ -226,26 +302,215 @@ class HypercubeWidget(QOpenGLWidget):
         import OpenGL.GL as gl
 
         assert self._textures is not None
-        top, front, right, back, left, bottom = self._textures
-        hw = hh = 1.0
-        hz = 0.6
-
-        faces = (
-            (top, ((-hw, -hh, hz), (hw, -hh, hz), (hw, hh, hz), (-hw, hh, hz))),
-            (front, ((-hw, -hh, -hz), (hw, -hh, -hz), (hw, -hh, hz), (-hw, -hh, hz))),
-            (right, ((hw, -hh, -hz), (hw, hh, -hz), (hw, hh, hz), (hw, -hh, hz))),
-            (back, ((hw, hh, -hz), (-hw, hh, -hz), (-hw, hh, hz), (hw, hh, hz))),
-            (left, ((-hw, hh, -hz), (-hw, -hh, -hz), (-hw, -hh, hz), (-hw, hh, hz))),
-            (bottom, ((-hw, hh, -hz), (hw, hh, -hz), (hw, -hh, -hz), (-hw, -hh, -hz))),
-        )
+        assert self._view_data is not None
+        faces = self._cube_faces(self._view_data)
         tex_coords = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
-        for texture_id, vertices in faces:
+        for texture_id, (_, vertices) in zip(self._textures, faces):
             gl.glBindTexture(gl.GL_TEXTURE_2D, texture_id)
             gl.glBegin(gl.GL_QUADS)
             for (tx, ty), (vx, vy, vz) in zip(tex_coords, vertices):
                 gl.glTexCoord2f(tx, ty)
                 gl.glVertex3f(vx, vy, vz)
             gl.glEnd()
+
+    def _draw_axes(
+        self,
+    ) -> tuple[
+        tuple[float, float, float],
+        dict[str, tuple[float, float, float]],
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+    ]:
+        """Draw the model's row, column, and wavelength axes over the cube."""
+        import OpenGL.GL as gl
+
+        assert self._view_data is not None
+        origin, endpoints = self.axis_geometry(self._view_data)
+        gl.glDisable(gl.GL_TEXTURE_2D)
+        gl.glDisable(gl.GL_LIGHTING)
+        gl.glDisable(gl.GL_BLEND)
+        gl.glEnable(gl.GL_DEPTH_TEST)
+        gl.glDepthMask(gl.GL_TRUE)
+        gl.glDepthFunc(gl.GL_LEQUAL)
+        gl.glLineWidth(3.0)
+        gl.glBegin(gl.GL_LINES)
+        for label, endpoint in endpoints.items():
+            gl.glColor3f(*self.AXIS_COLORS[label])
+            gl.glVertex3f(*origin)
+            gl.glVertex3f(*endpoint)
+            for tip, wing in self.axis_arrowhead_vertices(label, endpoint):
+                gl.glVertex3f(*tip)
+                gl.glVertex3f(*wing)
+        gl.glEnd()
+
+        model = np.asarray(gl.glGetDoublev(gl.GL_MODELVIEW_MATRIX), dtype=float)
+        projection = np.asarray(gl.glGetDoublev(gl.GL_PROJECTION_MATRIX), dtype=float)
+        viewport = np.asarray(gl.glGetIntegerv(gl.GL_VIEWPORT), dtype=float)
+        gl.glDepthFunc(gl.GL_LEQUAL)
+        gl.glEnable(gl.GL_TEXTURE_2D)
+        gl.glColor4f(1.0, 1.0, 1.0, 1.0)
+        return origin, endpoints, model, projection, viewport
+
+    @staticmethod
+    def _cube_half_extents(view_data: HypercubeViewData) -> tuple[float, float, float]:
+        row_span = max(
+            int(view_data.row_indices[-1] - view_data.row_indices[0]) + 1,
+            1,
+        )
+        column_span = max(
+            int(view_data.column_indices[-1] - view_data.column_indices[0]) + 1, 1
+        )
+        longest_spatial_span = max(row_span, column_span)
+        return (
+            column_span / longest_spatial_span,
+            row_span / longest_spatial_span,
+            0.6,
+        )
+
+    @classmethod
+    def axis_geometry(
+        cls, view_data: HypercubeViewData
+    ) -> tuple[tuple[float, float, float], dict[str, tuple[float, float, float]]]:
+        """Return the axis origin and positive row/column/wavelength tips."""
+        half_columns, half_rows, half_spectral = cls._cube_half_extents(view_data)
+        extension = 0.5
+        origin = (-half_columns, -half_rows, -half_spectral)
+        return origin, {
+            "Rows": (origin[0], half_rows + extension, origin[2]),
+            "Columns": (half_columns + extension, origin[1], origin[2]),
+            "Wavelength": (origin[0], origin[1], half_spectral + extension),
+        }
+
+    @staticmethod
+    def _project_point(
+        point: tuple[float, float, float],
+        model: np.ndarray,
+        projection: np.ndarray,
+        viewport: np.ndarray,
+    ) -> tuple[float, float] | None:
+        """Project one OpenGL point without depending on optional GLU."""
+        # OpenGL returns column-major matrices; transpose after NumPy's
+        # row-major reshape before multiplying a conventional column vector.
+        model_matrix = model.reshape(4, 4).T
+        projection_matrix = projection.reshape(4, 4).T
+        clip = projection_matrix @ model_matrix @ np.array((*point, 1.0))
+        if abs(clip[3]) < np.finfo(float).eps:
+            return None
+        normalized = clip[:3] / clip[3]
+        if not (-1.0 <= normalized[0] <= 1.0 and -1.0 <= normalized[1] <= 1.0):
+            return None
+        return (
+            viewport[0] + (normalized[0] + 1.0) * viewport[2] / 2.0,
+            viewport[1] + (normalized[1] + 1.0) * viewport[3] / 2.0,
+        )
+
+    @staticmethod
+    def screen_arrowhead_points(
+        tip: tuple[float, float], anchor: tuple[float, float]
+    ) -> tuple[tuple[float, float], tuple[float, float]]:
+        """Return camera-facing arrowhead wings for a projected axis line."""
+        dx = tip[0] - anchor[0]
+        dy = tip[1] - anchor[1]
+        magnitude = max(math.hypot(dx, dy), 1e-6)
+        unit_x, unit_y = dx / magnitude, dy / magnitude
+        perpendicular_x, perpendicular_y = -unit_y, unit_x
+        base_x = tip[0] - unit_x * 14.0
+        base_y = tip[1] - unit_y * 14.0
+        return (
+            (base_x + perpendicular_x * 6.5, base_y + perpendicular_y * 6.5),
+            (base_x - perpendicular_x * 6.5, base_y - perpendicular_y * 6.5),
+        )
+
+    @staticmethod
+    def axis_arrowhead_vertices(
+        label: str, endpoint: tuple[float, float, float]
+    ) -> tuple[
+        tuple[tuple[float, float, float], tuple[float, float, float]],
+        tuple[tuple[float, float, float], tuple[float, float, float]],
+    ]:
+        """Return two 3D arrowhead edges pointing along one positive axis."""
+        x, y, z = endpoint
+        length = 0.18
+        half_width = 0.08
+        if label == "Rows":
+            wings = ((x - half_width, y - length, z), (x + half_width, y - length, z))
+        elif label == "Columns":
+            wings = ((x - length, y - half_width, z), (x - length, y + half_width, z))
+        elif label == "Wavelength":
+            wings = ((x - half_width, y, z - length), (x + half_width, y, z - length))
+        else:
+            raise ValueError(f"Unknown axis label: {label}")
+        return ((endpoint, wings[0]), (endpoint, wings[1]))
+
+    def _draw_axis_labels(
+        self,
+        painter: QPainter,
+        origin: tuple[float, float, float],
+        endpoints: dict[str, tuple[float, float, float]],
+        model: np.ndarray,
+        projection: np.ndarray,
+        viewport: np.ndarray,
+    ) -> None:
+        projected_origin = self._project_point(origin, model, projection, viewport)
+        projected = {
+            label: self._project_point(endpoint, model, projection, viewport)
+            for label, endpoint in endpoints.items()
+        }
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont(painter.font())
+        font.setBold(True)
+        font.setPointSize(10)
+        painter.setFont(font)
+        for label, position in projected.items():
+            if position is None:
+                continue
+            x, y = position
+            color = QColor.fromRgbF(*self.AXIS_COLORS[label])
+            pen = QPen(color)
+            pen.setWidthF(3.0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            tip = QPointF(x, self.height() - y)
+            origin_tip = (
+                (projected_origin[0], self.height() - projected_origin[1])
+                if projected_origin is not None
+                else (tip.x() - 24.0, tip.y())
+            )
+            left, right = self.screen_arrowhead_points((tip.x(), tip.y()), origin_tip)
+            painter.drawLine(tip, QPointF(*left))
+            painter.drawLine(tip, QPointF(*right))
+            label_text = f"{label}{' (nm)' if label == 'Wavelength' else ''}"
+            text_width = painter.fontMetrics().horizontalAdvance(label_text)
+            text_x = x - text_width - 26.0 if label == "Rows" else x + 7.0
+            painter.drawText(round(text_x), self.height() - round(y) - 5, label_text)
+            painter.drawEllipse(tip, 2.5, 2.5)
+
+    @staticmethod
+    def _cube_faces(
+        view_data: HypercubeViewData,
+    ) -> tuple[tuple[str, tuple[tuple[float, float, float], ...]], ...]:
+        """Build textured face geometry from the model payload's axes.
+
+        ``prepare_hypercube_view`` stores ordinary image rows in ascending
+        order: row 0 is the back surface and the final row is the front.
+        Columns similarly run from the left surface to the right.  Keeping
+        that ordering in both the top texture and side-face vertices prevents
+        a rotated cube from showing a mirrored dataset.
+        """
+        hw, hh, hz = HypercubeWidget._cube_half_extents(view_data)
+
+        # Texture coordinates are shared by every face: u advances along the
+        # model's first spatial axis and v from the first to final band.  The
+        # vertex order below maps u/v directly onto those same axes.
+        return (
+            ("top", ((-hw, -hh, hz), (hw, -hh, hz), (hw, hh, hz), (-hw, hh, hz))),
+            ("front", ((-hw, hh, -hz), (hw, hh, -hz), (hw, hh, hz), (-hw, hh, hz))),
+            ("right", ((hw, -hh, -hz), (hw, hh, -hz), (hw, hh, hz), (hw, -hh, hz))),
+            ("back", ((-hw, -hh, -hz), (hw, -hh, -hz), (hw, -hh, hz), (-hw, -hh, hz))),
+            ("left", ((-hw, -hh, -hz), (-hw, hh, -hz), (-hw, hh, hz), (-hw, -hh, hz))),
+            ("bottom", ((-hw, -hh, -hz), (hw, -hh, -hz), (hw, hh, -hz), (-hw, hh, -hz))),
+        )
 
     # ------------------------------------------------------------------ #
     # Mouse / wheel interaction                                            #
@@ -282,9 +547,25 @@ class HypercubeWidget(QOpenGLWidget):
         self.update()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
-        factor = 1.1 if event.angleDelta().y() > 0 else 1 / 1.1
-        self._camera_distance = max(1.5, min(20.0, self._camera_distance / factor))
-        self.update()
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        if delta:
+            self._camera_distance = self.zoomed_camera_distance(
+                self._camera_distance, delta
+            )
+            self.update()
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    @classmethod
+    def zoomed_camera_distance(cls, distance: float, wheel_delta: int) -> float:
+        """Return the reference view's bounded zoom radius for a wheel delta."""
+        steps = wheel_delta / 120.0
+        zoom_factor = 0.85**steps
+        return min(
+            cls.MAX_CAMERA_DISTANCE,
+            max(cls.MIN_CAMERA_DISTANCE, float(distance) * zoom_factor),
+        )
 
     # ------------------------------------------------------------------ #
     # Private helpers                                                      #
@@ -296,3 +577,27 @@ class HypercubeWidget(QOpenGLWidget):
         x = (self.width() - self._status_label.width()) // 2
         y = (self.height() - self._status_label.height()) // 2
         self._status_label.move(max(0, x), max(0, y))
+
+    def _position_controls(self) -> None:
+        """Keep the ported reset/export controls in the lower-right corner."""
+        margin = 12
+        self._export_button.adjustSize()
+        self._reset_button.adjustSize()
+        export_x = max(margin, self.width() - self._export_button.width() - margin)
+        export_y = max(margin, self.height() - self._export_button.height() - margin)
+        self._export_button.move(export_x, export_y)
+        self._reset_button.move(
+            max(margin, export_x - self._reset_button.width() - 8), export_y
+        )
+
+    def _choose_export(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export current hypercube view",
+            "hypercube-view.png",
+            "PNG image (*.png);;JPEG image (*.jpg *.jpeg)",
+        )
+        if not filename:
+            return
+        if not self.export_current_view(filename):
+            QMessageBox.critical(self, "Hypercube", "Could not capture the cube view.")
