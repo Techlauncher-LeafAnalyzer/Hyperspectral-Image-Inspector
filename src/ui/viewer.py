@@ -475,8 +475,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
         menu.addAction("Spectrum Plot", lambda: self.spectrumPlotRequested.emit(scene_pos))
         menu.addAction("Clear Selection", self._clear_selection)
         index_menu = QMenu("Index Mean", self)
-        index_menu.addAction("NDVI", lambda: self.meanIndexRequested.emit("NDVI"))
-        index_menu.addAction("EVI", lambda: self.meanIndexRequested.emit("EVI"))
+        for name in self.VISUALIZATION_NAMES:
+            if name == "RGB":
+                continue
+            index_menu.addAction(
+                name, lambda checked=False, name=name: self.meanIndexRequested.emit(name)
+            )
         menu.addMenu(index_menu)
 
         pixel_values_action = menu.addAction("Show Pixel Values")

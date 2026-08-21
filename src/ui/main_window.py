@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -16,13 +16,35 @@ from core import (
     HSIData,
     HSIError,
     HSIReader,
+    VisualizationError,
+    VisualizationExportError,
+    VisualizationExportRequest,
+    VisualizationExportService,
     VisualizationMode,
     VisualizationRequest,
+    VisualizationResult,
     VisualizationService,
+    WavelengthError,
 )
 from ui.generated.MainWindow import Ui_MainWindow
+from ui.spectrum_dialog import SpectrumDialog
 from ui.tab_transition.handler import TabTransitionHandler
 from ui.viewer import HSIViewer
+
+
+# Modes rendered eagerly after every image change so hover tooltips, mode
+# switching, and index-mean lookups can read cached results instead of
+# recomputing on demand. BAND is excluded (no band-index selector exists in
+# the UI) and HyperCube is excluded (no hypercube view is wired up yet).
+_CACHED_VISUALIZATION_MODES = (
+    VisualizationMode.RGB,
+    VisualizationMode.NDVI,
+    VisualizationMode.EVI,
+    VisualizationMode.MCARI,
+    VisualizationMode.MTVI,
+    VisualizationMode.OSAVI,
+    VisualizationMode.PRI,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -53,6 +75,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data = HSIData()
         self._hsi_reader = HSIReader()
         self._visualization_service = VisualizationService()
+        self._visualization_export_service = VisualizationExportService()
+        self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
+        self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
         self._configure_tabs()
@@ -194,6 +219,26 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         for viewer in self._all_viewers():
             viewer.cropRequested.connect(self._on_crop_requested)
+            viewer.spectrumPlotRequested.connect(self._on_spectrum_plot)
+            viewer.meanIndexRequested.connect(self._on_mean_index)
+            viewer.pixel_value_provider = self._pixel_values_at
+
+        mode_buttons = (
+            (self.modeRGB, VisualizationMode.RGB),
+            (self.modeNDVI, VisualizationMode.NDVI),
+            (self.modeEVI, VisualizationMode.EVI),
+            (self.modeMCARI, VisualizationMode.MCARI),
+            (self.modeMTVI, VisualizationMode.MTVI),
+            (self.modeOSAVI, VisualizationMode.OSAVI),
+            (self.modePRI, VisualizationMode.PRI),
+        )
+        for button, mode in mode_buttons:
+            button.toggled.connect(
+                lambda checked, mode=mode: self._on_visualization_mode_toggled(mode, checked)
+            )
+        self.modeRGB.setChecked(True)
+        self.modeHyperCube.setEnabled(False)
+        self.modeHyperCube.setToolTip("Hypercube view is not implemented yet")
 
         QtGui.QShortcut(
             QtGui.QKeySequence.StandardKey.Undo,
@@ -380,21 +425,127 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.statusbar.showMessage(f"Loaded {loaded_path.name}")
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
+        self._active_visualization_mode = VisualizationMode.RGB
+        self.modeRGB.setChecked(True)
         self._push_image_to_viewers()
         self._reset_super_resolution_simulation()
 
     def _save_image(self) -> None:
-        pass
+        if not self._hsi_data.is_loaded():
+            QMessageBox.information(self, "Nothing to save", "Load an image first.")
+            return
+
+        result = self._visualization_results.get(self._active_visualization_mode)
+        display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
+
+        extensions = " ".join(
+            f"*{ext}" for ext in self._visualization_export_service.supported_extensions
+        )
+        file_path_str, _ = QFileDialog.getSaveFileName(
+            self, "Save Image", "", f"Images ({extensions})"
+        )
+        if not file_path_str:
+            return
+
+        output_path = Path(file_path_str)
+        try:
+            saved = self._visualization_export_service.save_display(
+                display_rgb,
+                VisualizationExportRequest(
+                    output_path, overwrite=output_path.exists()
+                ),
+            )
+        except VisualizationExportError as exc:
+            QMessageBox.critical(self, "Unable to save image", str(exc))
+            return
+
+        self.statusbar.showMessage(f"Saved {saved.output_path.name}")
+
+    # ------------------------------------------------------------------ #
+    # Private: visualization mode / pixel values                          #
+    # ------------------------------------------------------------------ #
+
+    def _on_visualization_mode_toggled(self, mode: VisualizationMode, checked: bool) -> None:
+        if not checked:
+            return
+        self._active_visualization_mode = mode
+        if self._hsi_data.is_loaded():
+            self._refresh_viewers_display()
+
+    def _recompute_visualizations(self) -> None:
+        self._visualization_results = {}
+        for mode in _CACHED_VISUALIZATION_MODES:
+            try:
+                self._visualization_results[mode] = self._visualization_service.render(
+                    self._hsi_data, VisualizationRequest(mode=mode)
+                )
+            except (VisualizationError, WavelengthError) as exc:
+                LOGGER.info("Skipping %s visualization: %s", mode.value, exc)
+
+    def _refresh_viewers_display(self) -> None:
+        result = self._visualization_results.get(self._active_visualization_mode)
+        display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
+        pixmap = hsi_utils.numpy_to_qpixmap(display_rgb)
+        for viewer in self._all_viewers():
+            viewer.rgb        = self._hsi_data.rgb_array
+            viewer.mask_array = self._hsi_data.mask_array
+            viewer.set_photo(pixmap)
+
+    def _pixel_values_at(self, row: int, column: int) -> Mapping[str, object]:
+        values: dict[str, object] = {}
+        for mode, result in self._visualization_results.items():
+            height, width = result.display_rgb.shape[:2]
+            if not (0 <= row < height and 0 <= column < width):
+                continue
+            if mode is VisualizationMode.RGB:
+                values[mode.value] = tuple(
+                    int(channel) for channel in result.display_rgb[row, column]
+                )
+            elif result.values is not None:
+                values[mode.value] = float(result.values[row, column])
+        return values
 
     # ------------------------------------------------------------------ #
     # Private: viewer signal handlers                                      #
     # ------------------------------------------------------------------ #
 
     def _on_spectrum_plot(self, pos: QPointF) -> None:
-        pass
+        if not self._hsi_data.is_loaded():
+            return
+
+        row, column = int(pos.y()), int(pos.x())
+        if not (0 <= row < self._hsi_data.rows and 0 <= column < self._hsi_data.columns):
+            return
+
+        try:
+            result = self._visualization_service.spectrum(self._hsi_data, row, column)
+        except HSIError as exc:
+            QMessageBox.critical(self, "Unable to plot spectrum", str(exc))
+            return
+
+        dialog = SpectrumDialog(result, parent=self)
+        dialog.exec()
 
     def _on_mean_index(self, index_name: str) -> None:
-        pass
+        if not self._hsi_data.is_loaded():
+            return
+
+        try:
+            mode = VisualizationMode(index_name)
+        except ValueError:
+            return
+
+        result = self._visualization_results.get(mode)
+        if result is None or result.values is None:
+            QMessageBox.information(
+                self,
+                "Index unavailable",
+                f"{index_name} could not be computed for this image.",
+            )
+            return
+
+        mean_value = float(np.nanmean(result.values))
+        self.statusbar.showMessage(f"{index_name} mean: {mean_value:.4f}", 8000)
 
     def _on_crop_requested(self, rect: QtCore.QRectF) -> None:
         if not self._hsi_data.is_loaded():
@@ -474,8 +625,5 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.statusbar.showMessage("Crop redone")
 
     def _push_image_to_viewers(self) -> None:
-        pixmap = hsi_utils.numpy_to_qpixmap(self._hsi_data.rgb_array)
-        for viewer in self._all_viewers():
-            viewer.rgb        = self._hsi_data.rgb_array
-            viewer.mask_array = self._hsi_data.mask_array
-            viewer.set_photo(pixmap)
+        self._recompute_visualizations()
+        self._refresh_viewers_display()
