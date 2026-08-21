@@ -454,8 +454,8 @@ QMenu#fileMenu::icon {
     height: 18px;
 }
 
-QMenu#visualizationContextMenu,
-QMenu#visualizationIndexMenu {
+QMenu#viewerContextMenu,
+QMenu#viewerIndexMenu {
     background: #fbfdfc;
     color: #263735;
     border: 1px solid #bdcec9;
@@ -463,8 +463,8 @@ QMenu#visualizationIndexMenu {
     padding: 7px 6px;
 }
 
-QMenu#visualizationContextMenu::item,
-QMenu#visualizationIndexMenu::item {
+QMenu#viewerContextMenu::item,
+QMenu#viewerIndexMenu::item {
     min-height: 22px;
     padding: 8px 38px 8px 38px;
     margin: 1px 0;
@@ -474,69 +474,69 @@ QMenu#visualizationIndexMenu::item {
     font-weight: 500;
 }
 
-QMenu#visualizationContextMenu::item:selected,
-QMenu#visualizationIndexMenu::item:selected {
+QMenu#viewerContextMenu::item:selected,
+QMenu#viewerIndexMenu::item:selected {
     background: #e3f1ee;
     color: #173f39;
     border-color: #c9e0db;
 }
 
-QMenu#visualizationContextMenu::item:pressed,
-QMenu#visualizationIndexMenu::item:pressed {
+QMenu#viewerContextMenu::item:pressed,
+QMenu#viewerIndexMenu::item:pressed {
     background: #d5eae5;
     color: #123e37;
     border-color: #9fcac1;
 }
 
-QMenu#visualizationContextMenu::item:checked,
-QMenu#visualizationIndexMenu::item:checked {
+QMenu#viewerContextMenu::item:checked,
+QMenu#viewerIndexMenu::item:checked {
     background: #edf7f4;
     color: #126f62;
     font-weight: 600;
 }
 
-QMenu#visualizationContextMenu::item:checked:selected,
-QMenu#visualizationIndexMenu::item:checked:selected {
+QMenu#viewerContextMenu::item:checked:selected,
+QMenu#viewerIndexMenu::item:checked:selected {
     background: #d9ede8;
     color: #105f55;
     border-color: #afd2ca;
 }
 
-QMenu#visualizationContextMenu::item:disabled,
-QMenu#visualizationIndexMenu::item:disabled {
+QMenu#viewerContextMenu::item:disabled,
+QMenu#viewerIndexMenu::item:disabled {
     background: transparent;
     color: #9ba9a6;
     border-color: transparent;
 }
 
-QMenu#visualizationContextMenu::separator,
-QMenu#visualizationIndexMenu::separator {
+QMenu#viewerContextMenu::separator,
+QMenu#viewerIndexMenu::separator {
     height: 1px;
     background: #dbe5e2;
     margin: 6px 10px;
 }
 
-QMenu#visualizationContextMenu::icon,
-QMenu#visualizationIndexMenu::icon {
+QMenu#viewerContextMenu::icon,
+QMenu#viewerIndexMenu::icon {
     left: 11px;
     width: 18px;
     height: 18px;
 }
 
-QMenu#visualizationContextMenu::indicator,
-QMenu#visualizationIndexMenu::indicator {
+QMenu#viewerContextMenu::indicator,
+QMenu#viewerIndexMenu::indicator {
     left: 12px;
     width: 16px;
     height: 16px;
 }
 
-QMenu#visualizationContextMenu::indicator:checked,
-QMenu#visualizationIndexMenu::indicator:checked {
+QMenu#viewerContextMenu::indicator:checked,
+QMenu#viewerIndexMenu::indicator:checked {
     image: url(__MENU_CHECK__);
 }
 
-QMenu#visualizationContextMenu::right-arrow,
-QMenu#visualizationIndexMenu::right-arrow {
+QMenu#viewerContextMenu::right-arrow,
+QMenu#viewerIndexMenu::right-arrow {
     image: url(__MENU_CHEVRON__);
     width: 6px;
     height: 10px;

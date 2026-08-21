@@ -477,11 +477,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def _build_context_menu(self, scene_pos: QPointF) -> QMenu:
         """Build the viewer menu separately so its state remains testable."""
         menu = QMenu(self)
-        is_visualization_viewer = self.objectName() == "viewer"
-        if is_visualization_viewer:
-            menu.setObjectName("visualizationContextMenu")
-            menu.setAccessibleName("Visualization actions")
-            menu.setMinimumWidth(252)
+        menu.setObjectName("viewerContextMenu")
+        menu.setAccessibleName("Viewer actions")
+        menu.setMinimumWidth(252)
 
         icon_dir = QtCore.QFileInfo(__file__).absoluteDir().filePath("assets")
 
@@ -491,10 +489,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         clear_action = menu.addAction("Clear Selection", self._clear_selection)
 
         index_menu = QMenu("Index Mean", menu)
-        if is_visualization_viewer:
-            index_menu.setObjectName("visualizationIndexMenu")
-            index_menu.setAccessibleName("Vegetation index mean")
-            index_menu.setMinimumWidth(190)
+        index_menu.setObjectName("viewerIndexMenu")
+        index_menu.setAccessibleName("Vegetation index mean")
+        index_menu.setMinimumWidth(190)
         for name in self.VISUALIZATION_NAMES:
             if name == "RGB":
                 continue
@@ -513,13 +510,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
             menu.addSeparator()
             crop_action = menu.addAction("Crop", self._begin_crop_mode)
 
-        if is_visualization_viewer:
-            spectrum_action.setIcon(QtGui.QIcon(f"{icon_dir}/spectrum_plot.svg"))
-            clear_action.setIcon(QtGui.QIcon(f"{icon_dir}/clear_selection.svg"))
-            index_menu.setIcon(QtGui.QIcon(f"{icon_dir}/index_mean.svg"))
-            pixel_values_action.setIcon(QtGui.QIcon(f"{icon_dir}/pixel_values.svg"))
-            if crop_action is not None:
-                crop_action.setIcon(QtGui.QIcon(f"{icon_dir}/crop.svg"))
+        spectrum_action.setIcon(QtGui.QIcon(f"{icon_dir}/spectrum_plot.svg"))
+        clear_action.setIcon(QtGui.QIcon(f"{icon_dir}/clear_selection.svg"))
+        index_menu.setIcon(QtGui.QIcon(f"{icon_dir}/index_mean.svg"))
+        pixel_values_action.setIcon(QtGui.QIcon(f"{icon_dir}/pixel_values.svg"))
+        if crop_action is not None:
+            crop_action.setIcon(QtGui.QIcon(f"{icon_dir}/crop.svg"))
 
         return menu
 

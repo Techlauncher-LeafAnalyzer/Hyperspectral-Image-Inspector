@@ -75,16 +75,15 @@ def test_get_view_state_is_none_without_a_photo(qtbot):
     assert view.get_view_state() is None
 
 
-def test_visualization_context_menu_keeps_actions_and_polished_identity(
+def test_viewer_context_menu_keeps_actions_and_polished_identity(
     viewer_with_photo,
 ):
-    viewer_with_photo.setObjectName("viewer")
     viewer_with_photo._pixel_overlay_enabled = True
 
     menu = viewer_with_photo._build_context_menu(QPointF(2, 3))
     actions = {action.text(): action for action in menu.actions() if action.text()}
 
-    assert menu.objectName() == "visualizationContextMenu"
+    assert menu.objectName() == "viewerContextMenu"
     assert menu.minimumWidth() == 252
     assert {
         "Spectrum Plot",
@@ -95,7 +94,7 @@ def test_visualization_context_menu_keeps_actions_and_polished_identity(
     } <= set(actions)
     assert actions["Show Pixel Values"].isCheckable()
     assert actions["Show Pixel Values"].isChecked()
-    assert actions["Index Mean"].menu().objectName() == "visualizationIndexMenu"
+    assert actions["Index Mean"].menu().objectName() == "viewerIndexMenu"
     assert [action.text() for action in actions["Index Mean"].menu().actions()] == [
         "NDVI",
         "EVI",
@@ -107,13 +106,26 @@ def test_visualization_context_menu_keeps_actions_and_polished_identity(
     assert all(not action.icon().isNull() for action in actions.values())
 
 
-def test_context_menu_polish_is_scoped_to_visualization_viewer(viewer_with_photo):
-    viewer_with_photo.setObjectName("superResViewer")
+@pytest.mark.parametrize(
+    "object_name",
+    ("viewer", "superResViewer", "calibrationViewer", "classificationViewer"),
+)
+def test_context_menu_polish_is_shared_by_every_tab(
+    viewer_with_photo,
+    object_name,
+):
+    viewer_with_photo.setObjectName(object_name)
 
     menu = viewer_with_photo._build_context_menu(QPointF())
 
-    assert menu.objectName() == ""
-    assert menu.actions()[2].menu().objectName() == ""
+    assert menu.objectName() == "viewerContextMenu"
+    assert menu.accessibleName() == "Viewer actions"
+    assert menu.actions()[2].menu().objectName() == "viewerIndexMenu"
+    assert all(
+        not action.icon().isNull()
+        for action in menu.actions()
+        if action.text()
+    )
 
 
 def test_context_menu_actions_keep_existing_signal_wiring(viewer_with_photo):
