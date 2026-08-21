@@ -32,10 +32,13 @@
        </attribute>
        <layout class="QVBoxLayout" name="verticalLayout">
         <item>
-         <widget class="HSIViewer" name="viewer">
-          <property name="layoutDirection">
-           <enum>Qt::LayoutDirection::LeftToRight</enum>
-          </property>
+         <widget class="QStackedWidget" name="visualizationStack">
+          <widget class="HSIViewer" name="viewer">
+           <property name="layoutDirection">
+            <enum>Qt::LayoutDirection::LeftToRight</enum>
+           </property>
+          </widget>
+          <widget class="HypercubeWidget" name="hypercubeWidget"/>
          </widget>
         </item>
         <item>
@@ -675,6 +678,11 @@
    <class>HSIViewer</class>
    <extends>QGraphicsView</extends>
    <header>ui.viewer</header>
+  </customwidget>
+  <customwidget>
+   <class>HypercubeWidget</class>
+   <extends>QWidget</extends>
+   <header>ui.hypercube_widget</header>
   </customwidget>
  </customwidgets>
  <resources>
