@@ -115,17 +115,15 @@ class HypercubeWidget(QOpenGLWidget):
 
     def resizeGL(self, width: int, height: int) -> None:
         import OpenGL.GL as gl
-        import OpenGL.GLU as glu
 
         gl.glViewport(0, 0, max(width, 1), max(height, 1))
         gl.glMatrixMode(gl.GL_PROJECTION)
         gl.glLoadIdentity()
-        glu.gluPerspective(45.0, width / max(height, 1), 0.1, 100.0)
+        self._apply_perspective(45.0, width / max(height, 1), 0.1, 100.0)
         gl.glMatrixMode(gl.GL_MODELVIEW)
 
     def paintGL(self) -> None:
         import OpenGL.GL as gl
-        import OpenGL.GLU as glu
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
         if self._textures_dirty:
@@ -134,12 +132,10 @@ class HypercubeWidget(QOpenGLWidget):
             return
 
         gl.glLoadIdentity()
-        eye = self._camera_position()
-        glu.gluLookAt(
-            eye[0], eye[1], eye[2],
-            self._target[0], self._target[1], self._target[2],
-            0.0, 0.0, 1.0,
-        )
+        gl.glTranslatef(0.0, 0.0, -self._camera_distance)
+        gl.glRotatef(self._camera_theta - 90.0, 1.0, 0.0, 0.0)
+        gl.glRotatef(-self._camera_phi, 0.0, 0.0, 1.0)
+        gl.glTranslatef(-self._target[0], -self._target[1], -self._target[2])
         self._draw_cube()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -150,14 +146,25 @@ class HypercubeWidget(QOpenGLWidget):
     # Cube construction                                                    #
     # ------------------------------------------------------------------ #
 
-    def _camera_position(self) -> tuple[float, float, float]:
-        theta = math.radians(self._camera_theta)
-        phi = math.radians(self._camera_phi)
-        r = self._camera_distance
-        x = r * math.sin(theta) * math.cos(phi)
-        y = r * math.sin(theta) * math.sin(phi)
-        z = r * math.cos(theta)
-        return (x, y, z)
+    @staticmethod
+    def _apply_perspective(fovy_deg: float, aspect: float, z_near: float, z_far: float) -> None:
+        """Apply a perspective projection without OpenGL.GLU.
+
+        gluPerspective lives in libGLU, a separate, optional legacy library
+        not guaranteed to be installed alongside OpenGL itself (confirmed
+        absent on this machine) -- importing OpenGL.GLU succeeds either way,
+        but calling an unresolved GLU function raises
+        OpenGL.error.NullFunctionError, which is fatal when it happens inside
+        a Qt virtual method override (PyQt aborts the process; it cannot be
+        caught as an ordinary exception). glFrustum is core (non-GLU) OpenGL
+        and produces the identical projection matrix from the same
+        field-of-view/aspect/near/far inputs.
+        """
+        import OpenGL.GL as gl
+
+        top = z_near * math.tan(math.radians(fovy_deg) / 2.0)
+        right = top * max(aspect, 1e-6)
+        gl.glFrustum(-right, right, -top, top, z_near, z_far)
 
     def _rebuild_textures(self) -> None:
         import OpenGL.GL as gl

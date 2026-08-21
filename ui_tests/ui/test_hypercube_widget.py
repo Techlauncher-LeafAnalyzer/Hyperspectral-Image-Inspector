@@ -73,10 +73,16 @@ def test_set_status_message_toggles_label(qtbot):
     assert widget._status_label.isHidden()
 
 
-def test_widget_repaint_does_not_raise(qtbot, hypercube_view_data):
+def test_widget_shows_and_repaints_without_raising(qtbot, hypercube_view_data):
     widget = HypercubeWidget()
     qtbot.addWidget(widget)
     widget.resize(200, 200)
     widget.set_data(hypercube_view_data)
 
-    widget.repaint()  # exercises initializeGL/resizeGL/paintGL end to end
+    # show() is what actually triggers resizeGL/paintGL under Qt (a bare
+    # repaint() on a never-shown widget does not) -- this is the regression
+    # check for OpenGL.GLU: gluPerspective/gluLookAt raised
+    # OpenGL.error.NullFunctionError and aborted the process on a machine
+    # without libGLU installed, and only surfaced via an actual show().
+    widget.show()
+    widget.repaint()
