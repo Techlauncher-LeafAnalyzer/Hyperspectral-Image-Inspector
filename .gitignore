@@ -215,6 +215,12 @@ tempCodeRunnerFile.py
 /dev_tools/visualization_harness/
 /pytest.ini
 
+# Real hyperspectral sample captures for the optional ui_tests/ suite.
+# Too large to commit; testers supply their own locally (see
+# ui_tests/resources/README.md). The suite auto-skips when absent.
+/ui_tests/resources/*
+!/ui_tests/resources/README.md
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
