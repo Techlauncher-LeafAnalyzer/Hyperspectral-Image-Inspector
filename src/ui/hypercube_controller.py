@@ -99,11 +99,22 @@ class HypercubeController(QObject):
         self._worker = None
         if worker is None:
             return
+        # Ignore progress/results already queued by the cancelled reader.
+        self._generation += 1
         try:
             worker.cancel()
             worker._thread.wait()
         except RuntimeError:
             pass  # The worker already finished and deleted itself.
+
+    def resume(self, hsi_data: HSIData) -> None:
+        """Resume an interrupted build after another feature releases the source.
+
+        Cached results/errors remain valid when the source has not changed;
+        only an unfinished build needs to be restarted.
+        """
+        if self._worker is None and self._view_data is None and self._error is None:
+            self.refresh(hsi_data)
 
     def shutdown(self) -> None:
         """Detach any in-flight worker before the owning window closes."""

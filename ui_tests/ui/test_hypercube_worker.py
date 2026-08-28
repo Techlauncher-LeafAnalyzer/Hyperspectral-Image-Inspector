@@ -1,60 +1,14 @@
 """Tests for :class:`HypercubeWorker`'s real background-thread behaviour.
 
-These tests drive an actual ``QThread``: the work runs off the GUI thread and
-``progress``/``finished``/``failed`` arrive over genuine queued (cross-thread)
-connections. They deliberately do **not** use ``qtbot.waitSignal``.
-
-Why not ``qtbot.waitSignal``
----------------------------
-``HypercubeWorker`` self-destructs: ``_thread.finished`` is wired to both
-``_thread.deleteLater()`` and ``_prepare_for_deletion()`` (which calls
-``self.deleteLater()``). Those ``DeferredDelete`` events sit on the GUI
-thread's queue and are dispatched the moment the GUI thread runs an event
-loop.
-
-``qtbot.waitSignal`` runs a nested ``QEventLoop.exec()`` on the GUI thread for
-the whole duration of the run. So the deletions get dispatched *while the
-background thread is still winding down*, which is a use-after-free race on
-two fronts:
-
-1. ``~QThread`` runs while ``QThreadPrivate::finish()`` has emitted
-   ``finished`` but not yet cleared ``running`` -- Qt's own
-   "Destroyed while thread is still running" abort, or a deadlock on the
-   thread's internal mutex.
-2. pytest-qt's ``SignalBlocker._cleanup`` then calls ``_silent_disconnect``
-   on signals whose sender C++ object has just been freed.
-
-Reproduced here at 10/10 fresh ``pytest`` invocations with the ``waitSignal``
-formulation: 7 native crashes (``SIGABRT``/``SIGSEGV``, the faulthandler trace
-bottoming out in ``pytestqt/wait_signal.py`` ``_silent_disconnect`` -> sip)
-and 3 indefinite hangs.
-
-What makes these tests reliable instead
----------------------------------------
-``_run_worker_to_completion`` enforces a strict ordering:
-
-1. ``worker.start()``.
-2. ``thread.wait(...)`` -- a *blocking* wait that runs **no** event loop, so
-   nothing can be deleted while the thread is alive. When it returns, the OS
-   thread has fully exited, making both teardown races above impossible by
-   construction.
-3. Only then pump the GUI thread, delivering the already-queued signal
-   payloads and finally the ``DeferredDelete`` events, at a point where
-   deleting the worker and its thread is unambiguously safe.
-
-Signals are captured by a plain-Python ``_Recorder`` connected before
-``start()``, so no pytest-qt machinery ever holds a connection to an object
-that is about to be destroyed. These tests use the ``qapp`` fixture rather
-than ``qtbot`` for the same reason.
-
-Measured: 20/20 fresh ``pytest`` invocations of this file green, plus repeated
-full ``ui_tests`` suite runs. Removing the pump in step 3 makes all three
-delivery assertions fail (nothing arrives), which confirms the payloads really
-do travel over the cross-thread event queue rather than a direct call.
+The service runs on a real QThread and signals return to the GUI. The helper
+waits for completion before draining signals for deterministic assertions;
+the lifecycle regression additionally pumps a live event loop throughout
+the run and cleanup, as the application does during SR/tab interactions.
 """
 
 from __future__ import annotations
 
+from PyQt6 import sip
 from PyQt6.QtCore import QCoreApplication, QEvent, QEventLoop, QThread
 
 from core import HSIReader, VisualizationError, VisualizationService
@@ -81,13 +35,7 @@ class _Recorder:
 
 
 def _run_worker_to_completion(worker: HypercubeWorker) -> None:
-    """Run ``worker`` on its real thread and settle it, crash-free.
-
-    The ordering is load-bearing -- see this module's docstring. In short:
-    block on ``QThread.wait()`` (which runs no event loop, so the worker's own
-    ``deleteLater()`` calls cannot fire mid-teardown), and only pump the GUI
-    thread afterwards.
-    """
+    """Run the real worker, then drain its queued signals and cleanup."""
     thread = worker._thread
     worker.start()
 
@@ -188,3 +136,24 @@ def test_worker_cancel_suppresses_finished_and_failed(qapp, synthetic_cube_path)
     assert recorder.finished == []
     assert recorder.failed == []
     assert service.ran_on_thread_id != int(QThread.currentThreadId())
+
+
+def test_worker_cleanup_with_live_event_loop_stays_on_gui_thread(qapp, qtbot, synthetic_cube_path):
+    data = HSIReader().open(synthetic_cube_path)
+    gui_thread_id = int(QThread.currentThreadId())
+    for _ in range(10):
+        service = _StubService("fail")
+        worker = HypercubeWorker(service, data)
+        thread = worker._thread
+        recorder = _Recorder(worker)
+        destroyed_on = []
+        worker.destroyed.connect(lambda: destroyed_on.append(int(QThread.currentThreadId())))
+        assert worker.thread() is qapp.thread()
+        worker.start()
+        # Exercise normal event dispatch during teardown, not a blocking wait
+        # that would hide the former background-thread QObject deletion race.
+        qtbot.waitUntil(lambda: sip.isdeleted(worker), timeout=_TIMEOUT_MS)
+        assert sip.isdeleted(thread)
+        assert destroyed_on == [gui_thread_id]
+        assert service.ran_on_thread_id != gui_thread_id
+        assert recorder.failed == ["boom"]

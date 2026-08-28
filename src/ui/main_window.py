@@ -16,6 +16,9 @@ from core import (
     HSIData,
     HSIError,
     HSIReader,
+    SuperResolutionRequest,
+    SuperResolutionResult,
+    SuperResolutionService,
     VisualizationError,
     VisualizationExportError,
     VisualizationExportRequest,
@@ -30,6 +33,7 @@ from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
 from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
+from ui.super_resolution_worker import SuperResolutionWorker
 from ui.tab_transition.handler import TabTransitionHandler
 from ui.viewer import HSIViewer, PixelValueEntry
 
@@ -79,6 +83,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_reader = HSIReader()
         self._visualization_service = VisualizationService()
         self._visualization_export_service = VisualizationExportService()
+        self._super_resolution_service = SuperResolutionService()
+        self._super_resolution_request = SuperResolutionRequest()
+        self._super_res_worker: SuperResolutionWorker | None = None
+        self._super_res_result: SuperResolutionResult | None = None
+        self._super_res_error: str | None = None
+        self._sr_view_scale = 1
+        self._close_after_sr = False
         self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
         self._crop_undo_stack: list[_CropSnapshot] = []
@@ -94,10 +105,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._configure_file_menu()
         self._connect_signals()
         self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
-
-    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        self._hypercube_controller.shutdown()
-        super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
@@ -206,36 +213,17 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         self.calibrateButton.setEnabled(False)
         self.calibrateButton.setToolTip("Calibration is not implemented yet")
-        self.runSuperResButton.setEnabled(False)
-        self.runSuperResButton.setToolTip(
-            "Load an image to test the Super-Resolution workflow"
-        )
-        self.runSuperResButton.clicked.connect(
-            self._run_super_resolution_simulation
-        )
-        self._super_res_progress_animation = QtCore.QPropertyAnimation(
-            self.superResProgressBar,
-            b"value",
-            self,
-        )
-        self._super_res_progress_animation.setDuration(2800)
-        self._super_res_progress_animation.setStartValue(0)
-        self._super_res_progress_animation.setEndValue(100)
-        self._super_res_progress_animation.setEasingCurve(
-            QtCore.QEasingCurve.Type.Linear
-        )
-        self._super_res_progress_animation.finished.connect(
-            self._finish_super_resolution_simulation
-        )
-        self._update_super_resolution_view_state(
-            self.highResButton.isChecked()
-        )
+        self.runSuperResButton.clicked.connect(self._run_super_resolution)
+        self._set_super_resolution_ready()
+        self._update_super_resolution_view_state(self.highResButton.isChecked())
+        self.tabWidget.currentChanged.connect(self._on_tab_changed)
 
         for viewer in self._all_viewers():
             viewer.cropRequested.connect(self._on_crop_requested)
             viewer.spectrumPlotRequested.connect(self._on_spectrum_plot)
             viewer.meanIndexRequested.connect(self._on_mean_index)
             viewer.pixel_value_provider = self._pixel_values_at
+        self.superResViewer.pixel_value_provider = self._sr_pixel_values_at
 
         mode_buttons = (
             (self.modeRGB, VisualizationMode.RGB),
@@ -263,84 +251,172 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._redo_crop,
         )
 
-    def _update_super_resolution_view_state(
-        self,
-        show_processed: bool,
-    ) -> None:
-        """Describe the selected before/after state when processing is idle."""
+    def _update_super_resolution_view_state(self, show_processed: bool) -> None:
+        if self._super_res_worker is not None:
+            return
+        self._refresh_super_resolution_display()
         self.superResStatusStack.setCurrentWidget(self.superResIdlePage)
-
         if not self._hsi_data.is_loaded():
             status = "Load an image to compare the original and processed result"
-        elif show_processed:
+        elif show_processed and self._super_res_result is None:
             status = "Processed result not generated — run Super-Resolution"
         else:
-            status = "Showing the original file before processing"
-
+            data = self._sr_display_data()
+            label = "MSDformer 2×" if show_processed else "Original"
+            status = f"{label}: {data.columns} × {data.rows} pixels, {data.bands} bands"
+            if show_processed and self._super_res_result.tiled:
+                status += " · tiled inference"
         self.superResStatusText.setText(status)
 
-    def _run_super_resolution_simulation(self) -> None:
-        """Temporarily exercise the processing UI without running inference."""
-        if (
-            not self._hsi_data.is_loaded()
-            or self._super_res_progress_animation.state()
-            == QtCore.QAbstractAnimation.State.Running
-        ):
-            return
+    def _sr_display_data(self) -> HSIData:
+        if self.highResButton.isChecked() and self._super_res_result is not None:
+            return self._super_res_result.data
+        return self._hsi_data
 
-        self.highResButton.setChecked(True)
+    def _refresh_super_resolution_display(self) -> None:
+        previous_size = self.superResViewer.photo_size()
+        state = self.superResViewer.get_view_state()
+        if self.highResButton.isChecked() and self._super_res_result is None:
+            self.superResViewer.rgb = None
+            self.superResViewer.mask_array = None
+            self.superResViewer.set_photo()
+            return
+        data = self._sr_display_data()
+        if data.rgb_array is None:
+            return
+        new_scale = 2 if data is not self._hsi_data else 1
+        self.superResViewer.rgb = data.rgb_array
+        self.superResViewer.mask_array = data.mask_array
+        pixmap = hsi_utils.numpy_to_qpixmap(data.rgb_array)
+        self.superResViewer.set_photo(pixmap)
+        factor = new_scale / self._sr_view_scale
+        # Preserve comparison framing for LR/HR toggles, but refit after a
+        # source crop/resize just like the other viewers (LEAF-153).
+        if (
+            state is not None
+            and previous_size is not None
+            and previous_size * factor == pixmap.size()
+        ):
+            self.superResViewer.queue_view_state((state[0] / factor, state[1] * factor))
+        self._sr_view_scale = new_scale
+
+    def _sr_pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
+        data = self._sr_display_data()
+        if self.highResButton.isChecked() and self._super_res_result is None:
+            return {}
+        rgb = data.rgb_array
+        if rgb is None or not (0 <= row < rgb.shape[0] and 0 <= column < rgb.shape[1]):
+            return {}
+        color = tuple(int(value) for value in rgb[row, column])
+        return {"RGB": PixelValueEntry(value=color, color=color)}
+
+    def _run_super_resolution(self) -> None:
+        if self._super_res_worker is not None:
+            self._cancel_super_resolution()
+            return
+        if not self._hsi_data.is_loaded():
+            return
+        try:
+            self._super_resolution_service.validate(self._hsi_data, self._super_resolution_request)
+        except HSIError as exc:
+            QMessageBox.critical(self, "Unable to run Super-Resolution", str(exc))
+            self.superResStatusText.setText(str(exc))
+            return
+        self._super_res_error = None
         self.lowResButton.setEnabled(False)
         self.highResButton.setEnabled(False)
-        self.lowResButton.setToolTip(
-            "View selection is locked while the simulation runs"
-        )
-        self.highResButton.setToolTip(
-            "View selection is locked while the simulation runs"
-        )
-        self.runSuperResButton.setEnabled(False)
-        self.runSuperResButton.setText("Processing…")
-        self.runSuperResButton.setToolTip(
-            "Super-Resolution progress simulation is running"
-        )
+        self.actionLoadImage.setEnabled(False)
+        self.runSuperResButton.setText("Cancel")
+        self.runSuperResButton.setToolTip("Cancel after the current inference tile")
         self.superResProgressBar.setValue(0)
         self.superResStatusStack.setCurrentWidget(self.superResProgressPage)
-        self.statusbar.showMessage("Simulating Super-Resolution processing…")
-        self._super_res_progress_animation.start()
+        # Both features read the same SpyFile. Finish cancellation of any
+        # hypercube read before handing the source to the SR worker.
+        self._hypercube_controller.stop_and_wait()
+        worker = SuperResolutionWorker(self._super_resolution_service, self._hsi_data,
+                                       self._super_resolution_request, parent=self)
+        self._super_res_worker = worker
+        worker.progress.connect(self._on_super_resolution_progress)
+        worker.result_ready.connect(self._on_super_resolution_result)
+        worker.failed.connect(self._on_super_resolution_failed)
+        worker.cancelled.connect(self._on_super_resolution_cancelled)
+        worker.finished.connect(self._finish_super_resolution)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
-    def _finish_super_resolution_simulation(self) -> None:
-        """Restore controls while leaving the completed progress visible."""
-        self._set_super_resolution_simulation_ready()
-        self.statusbar.showMessage(
-            "Super-Resolution progress simulation complete",
-            5000,
-        )
+    def _cancel_super_resolution(self) -> None:
+        if self._super_res_worker is not None:
+            self._super_res_worker.requestInterruption()
+            self.runSuperResButton.setEnabled(False)
+            self.runSuperResButton.setText("Cancelling…")
+            self.statusbar.showMessage("Cancelling after the current SR operation…")
 
-    def _set_super_resolution_simulation_ready(self) -> None:
-        """Enable the temporary workflow and restore its idle labels."""
+    def _on_super_resolution_progress(self, value: int, message: str) -> None:
+        self.superResProgressBar.setValue(value)
+        self.superResProgressBar.setToolTip(message)
+        self.statusbar.showMessage(message)
+
+    def _on_super_resolution_result(self, result, display) -> None:
+        if self._super_res_worker.isInterruptionRequested():
+            self._on_super_resolution_cancelled()
+            return
+        result.data.rgb_array = display.display_rgb
+        result.data.mask_array = np.zeros(display.display_rgb.shape[:2], dtype=np.uint8)
+        self._super_res_result = result
+        self.highResButton.setChecked(True)
+        self._refresh_super_resolution_display()
+        self.superResProgressBar.setValue(100)
+        self.statusbar.showMessage("Super-Resolution complete", 5000)
+
+    def _on_super_resolution_failed(self, message: str) -> None:
+        self._super_res_error = f"SR failed: {message}"
+        LOGGER.error("%s", self._super_res_error)
+        if not self._close_after_sr:
+            QMessageBox.critical(self, "Unable to run Super-Resolution", message)
+
+    def _on_super_resolution_cancelled(self) -> None:
+        self._super_res_error = "Super-Resolution cancelled; previous image retained"
+
+    def _finish_super_resolution(self) -> None:
+        self._super_res_worker = None
+        self._set_super_resolution_ready()
+        self._update_super_resolution_view_state(self.highResButton.isChecked())
+        if self._super_res_error:
+            self.superResStatusText.setText(self._super_res_error)
+            self.statusbar.showMessage(self._super_res_error)
+        if self._close_after_sr:
+            QtCore.QTimer.singleShot(0, self.close)
+        else:
+            # A cube build cancelled to make room for SR must not remain stuck
+            # at "Computing hypercube". The original source is still unchanged.
+            self._hypercube_controller.resume(self._hsi_data)
+
+    def _set_super_resolution_ready(self) -> None:
+        self.actionLoadImage.setEnabled(True)
         self.lowResButton.setEnabled(True)
         self.highResButton.setEnabled(True)
-        self.lowResButton.setToolTip(
-            "View the original file before Super-Resolution processing"
-        )
-        self.highResButton.setToolTip(
-            "View the processed result after Super-Resolution"
-        )
-        self.runSuperResButton.setEnabled(True)
+        self.runSuperResButton.setEnabled(self._hsi_data.is_loaded())
         self.runSuperResButton.setText("Run Super-Resolution")
-        self.runSuperResButton.setToolTip(
-            "Temporarily simulate Super-Resolution processing progress"
-        )
+        self.runSuperResButton.setToolTip("Run the 480-band MSDformer model at 2× spatial resolution")
 
-    def _reset_super_resolution_simulation(self) -> None:
-        """Prepare the temporary workflow after an image is loaded."""
-        self._super_res_progress_animation.stop()
+    def _reset_super_resolution(self) -> None:
+        self._super_res_result = None
+        self._super_res_error = None
+        self.lowResButton.setChecked(True)
         self.superResProgressBar.setValue(0)
-        self._set_super_resolution_simulation_ready()
-        self._update_super_resolution_view_state(
-            self.highResButton.isChecked()
-        )
+        self._set_super_resolution_ready()
+        self._update_super_resolution_view_state(False)
 
-        self.tabWidget.currentChanged.connect(self._on_tab_changed)
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._hypercube_controller.shutdown()
+        # Never destroy a running QThread or block Qt waiting for inference.
+        if self._super_res_worker is not None:
+            self._close_after_sr = True
+            self._cancel_super_resolution()
+            event.ignore()
+            return
+        self._super_res_result = None
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
     # Private: image I/O                                                   #
@@ -387,6 +463,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.statusbar.showMessage(f"Selected {file_path.name}")
 
     def _load_image(self) -> None:
+        if self._super_res_worker is not None:
+            return
         image_path_str, _ = QFileDialog.getOpenFileName(
             self,
             "Open Hyperspectral Image",
@@ -399,6 +477,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.load_image_from_path(Path(image_path_str))
 
     def load_image_from_path(self, image_path: Path) -> None:
+        if self._super_res_worker is not None:
+            self.statusbar.showMessage("Cancel or finish SR before loading another image")
+            return
         try:
             candidate = self._hsi_reader.open(image_path)
             result = self._visualization_service.render(
@@ -440,7 +521,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._active_visualization_mode = VisualizationMode.RGB
         self.modeRGB.setChecked(True)
         self._push_image_to_viewers()
-        self._reset_super_resolution_simulation()
 
     def _save_image(self) -> None:
         if not self._hsi_data.is_loaded():
@@ -449,6 +529,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
+        if self.tabWidget.currentWidget() is self.SuperResolution:
+            if self.highResButton.isChecked() and self._super_res_result is None:
+                QMessageBox.information(self, "Nothing to save", "Run Super-Resolution first.")
+                return
+            display_rgb = self._sr_display_data().rgb_array
 
         extensions = " ".join(
             f"*{ext}" for ext in self._visualization_export_service.supported_extensions
@@ -486,6 +571,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._refresh_viewers_display()
 
     def _recompute_visualizations(self) -> None:
+        self._hypercube_controller.stop_and_wait()
         self._visualization_results = {}
         for mode in _CACHED_VISUALIZATION_MODES:
             try:
@@ -495,11 +581,19 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             except (VisualizationError, WavelengthError) as exc:
                 LOGGER.info("Skipping %s visualization: %s", mode.value, exc)
 
+        # Keep Original consumers (including SR) on the same RGB stretch as
+        # Visualization. After a crop, the previous RGB array has stale limits.
+        rgb_result = self._visualization_results.get(VisualizationMode.RGB)
+        if rgb_result is not None:
+            self._hsi_data.rgb_array = rgb_result.display_rgb
+
     def _refresh_viewers_display(self) -> None:
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
         pixmap = hsi_utils.numpy_to_qpixmap(display_rgb)
         for viewer in self._all_viewers():
+            if viewer is self.superResViewer:
+                continue
             previous_size = viewer.photo_size()
             state = viewer.get_view_state()
             viewer.rgb        = self._hsi_data.rgb_array
@@ -511,6 +605,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             # view actually rescales to the new image size.
             if state is not None and previous_size == pixmap.size():
                 viewer.queue_view_state(state)
+        self._refresh_super_resolution_display()
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
         values: dict[str, PixelValueEntry] = {}
@@ -535,8 +630,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if not self._hsi_data.is_loaded():
             return
 
+        if self._super_res_worker is not None:
+            self.statusbar.showMessage("Spectrum reads are paused during SR")
+            return
+        data = self._sr_display_data() if self.sender() is self.superResViewer else self._hsi_data
+        if self.sender() is self.superResViewer and not self.superResViewer.has_photo():
+            return
         row, column = int(pos.y()), int(pos.x())
-        if not (0 <= row < self._hsi_data.rows and 0 <= column < self._hsi_data.columns):
+        if not (0 <= row < data.rows and 0 <= column < data.columns):
             return
 
         # A hypercube worker still in flight reads the same underlying
@@ -544,7 +645,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         # a concurrent read of a non-thread-safe file object.
         self._hypercube_controller.stop_and_wait()
         try:
-            result = self._visualization_service.spectrum(self._hsi_data, row, column)
+            result = self._visualization_service.spectrum(data, row, column)
         except HSIError as exc:
             QMessageBox.critical(self, "Unable to plot spectrum", str(exc))
             return
@@ -553,6 +654,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         dialog.exec()
 
     def _on_mean_index(self, index_name: str) -> None:
+        if self.sender() is self.superResViewer and self.highResButton.isChecked():
+            self.statusbar.showMessage("Index means are available for the original image in Visualization", 5000)
+            return
         if not self._hsi_data.is_loaded():
             return
 
@@ -583,6 +687,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         dialog.activateWindow()
 
     def _on_crop_requested(self, rect: QtCore.QRectF) -> None:
+        if self._super_res_worker is not None:
+            self.statusbar.showMessage("Cancel or finish SR before cropping")
+            return
+        if self.sender() is self.superResViewer and self.highResButton.isChecked():
+            self.statusbar.showMessage("Select Original before cropping, then rerun SR", 5000)
+            return
         if not self._hsi_data.is_loaded():
             return
 
@@ -628,7 +738,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._active_viewer is not None and self._active_viewer is not new_viewer:
             state = self._active_viewer.get_view_state()
             if state is not None:
-                new_viewer.queue_view_state(state)
+                source_scale = self._sr_view_scale if self._active_viewer is self.superResViewer else 1
+                target_scale = self._sr_view_scale if new_viewer is self.superResViewer else 1
+                factor = target_scale / source_scale
+                new_viewer.queue_view_state((state[0] / factor, state[1] * factor))
 
         self._active_viewer = new_viewer
 
@@ -646,20 +759,21 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._push_image_to_viewers()
 
     def _undo_crop(self) -> None:
-        if not self._crop_undo_stack:
+        if self._super_res_worker is not None or not self._crop_undo_stack:
             return
         self._crop_redo_stack.append(self._snapshot_current_state())
         self._restore_snapshot(self._crop_undo_stack.pop())
         self.statusbar.showMessage("Crop undone")
 
     def _redo_crop(self) -> None:
-        if not self._crop_redo_stack:
+        if self._super_res_worker is not None or not self._crop_redo_stack:
             return
         self._crop_undo_stack.append(self._snapshot_current_state())
         self._restore_snapshot(self._crop_redo_stack.pop())
         self.statusbar.showMessage("Crop redone")
 
     def _push_image_to_viewers(self) -> None:
+        self._reset_super_resolution()
         self._recompute_visualizations()
         self._refresh_viewers_display()
         self._hypercube_controller.refresh(self._hsi_data)

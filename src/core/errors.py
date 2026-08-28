@@ -36,3 +36,7 @@ class CancelledError(HSIError):
     Treat this as a neutral outcome: clear busy state, retain the previous
     visualization, and do not show an error dialog.
     """
+
+
+class SuperResolutionError(HSIError):
+    """The SR input, checkpoint, dependencies, or inference are invalid."""

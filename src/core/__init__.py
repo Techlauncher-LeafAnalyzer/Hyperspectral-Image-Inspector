@@ -5,12 +5,18 @@ from .errors import (
     HSIError,
     HSIFileError,
     HSIHeaderError,
+    SuperResolutionError,
     VisualizationError,
     VisualizationExportError,
     WavelengthError,
 )
 from .hsi_data import Functionality, HSIData, ImageFormat
 from .hsi_reader import HSIReader
+from .super_resolution_model import (
+    SuperResolutionRequest,
+    SuperResolutionResult,
+    SuperResolutionService,
+)
 from .visualization_model import (
     DisplayStretch,
     HypercubeData,
@@ -42,6 +48,10 @@ __all__ = [
     "ImageFormat",
     "ImageExportFormat",
     "SpectrumResult",
+    "SuperResolutionError",
+    "SuperResolutionRequest",
+    "SuperResolutionResult",
+    "SuperResolutionService",
     "VisualizationError",
     "VisualizationExportError",
     "VisualizationExportRequest",

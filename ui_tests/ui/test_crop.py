@@ -84,25 +84,32 @@ def test_save_after_crop_reflects_cropped_dimensions(loaded_window, tmp_path, fi
     assert Image.open(target).size == (4, 4)
 
 
-def test_crop_rescales_view_to_fit_the_cropped_image(loaded_window, qtbot):
+@pytest.mark.parametrize("viewer_name", ["viewer", "superResViewer"])
+def test_crop_rescales_view_to_fit_the_cropped_image(loaded_window, qtbot, viewer_name):
     """Regression for LEAF-153: after a crop, the viewport must recompute
     fit-to-viewport for the new (smaller) image, not keep the pre-crop
     pan/zoom."""
+    viewer = getattr(loaded_window, viewer_name)
+    for index in range(loaded_window.tabWidget.count()):
+        if loaded_window._viewer_for_tab(index) is viewer:
+            loaded_window.tabWidget.setCurrentIndex(index)
+            break
     loaded_window.show()
     qtbot.waitExposed(loaded_window)
+    qtbot.wait(50)
 
     stale_scale = 999.0
     # Force an obviously non-fit scale/center, so a stale pre-crop view state
     # is easy to tell apart from a freshly recomputed fit-to-viewport scale.
-    loaded_window.viewer.set_view_state((stale_scale, QPointF(4.0, 4.0)))
+    viewer.set_view_state((stale_scale, QPointF(4.0, 4.0)))
 
-    loaded_window.viewer.cropRequested.emit(CROP_RECT)
+    viewer.cropRequested.emit(CROP_RECT)
     qtbot.wait(50)  # let the queued view-state / resize-settling timers fire
 
-    got_scale, got_center = loaded_window.viewer.get_view_state()
+    got_scale, got_center = viewer.get_view_state()
 
-    viewport_rect = loaded_window.viewer.viewport().rect()
-    cropped_size = loaded_window.viewer.photo_size()
+    viewport_rect = viewer.viewport().rect()
+    cropped_size = viewer.photo_size()
     assert (cropped_size.width(), cropped_size.height()) == (4, 4)
     expected_scale = min(
         viewport_rect.width() / cropped_size.width(),

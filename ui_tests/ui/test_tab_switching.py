@@ -1,7 +1,38 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6.QtCore import QPointF
+import numpy as np
+from PyQt6.QtCore import QPointF, QRectF
+
+from core import VisualizationMode
+
+
+def test_cropped_original_keeps_identical_pixels_across_tabs(loaded_window, qtbot, monkeypatch):
+    window = loaded_window
+    window.show()
+    qtbot.waitExposed(window)
+    window._on_crop_requested(QRectF(1, 1, 6, 6))
+
+    # Cropping recomputes display limits. SR must not retain the old full-image
+    # stretch while Visualization/Calibration/Classification use the new one.
+    rgb = window._visualization_results[VisualizationMode.RGB].display_rgb
+    np.testing.assert_array_equal(window._hsi_data.rgb_array, rgb)
+    expected = window.viewer._photo.pixmap().toImage()
+    cube_before = window._hsi_data.read_bands(range(window._hsi_data.bands)).copy()
+
+    def unexpected_processing(*args, **kwargs):
+        pytest.fail("Switching tabs must not re-render or process the Original")
+
+    monkeypatch.setattr(window._visualization_service, "render", unexpected_processing)
+    monkeypatch.setattr(window._super_resolution_service, "run", unexpected_processing)
+    for index in (1, 2, 1, 3, 1, 0, 1, 0):
+        window.tabWidget.setCurrentIndex(index)
+        qtbot.wait(200)  # Allow the existing tab fade to finish.
+        assert window._viewer_for_tab(index)._photo.pixmap().toImage() == expected
+        assert window._hsi_data.rgb_array is rgb
+    np.testing.assert_array_equal(
+        window._hsi_data.read_bands(range(window._hsi_data.bands)), cube_before
+    )
 
 
 def test_on_tab_changed_forwards_pan_zoom_to_the_new_viewer(loaded_window, monkeypatch):

@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from PyQt6.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from core import HSIData, VisualizationError, WavelengthError
 from core.errors import CancelledError
+
+
+class _HypercubeThread(QThread):
+    def __init__(self, worker: HypercubeWorker) -> None:
+        super().__init__(worker)
+        self._worker = worker
+
+    def run(self) -> None:
+        self._worker._run()
 
 
 class HypercubeWorker(QObject):
@@ -28,10 +37,9 @@ class HypercubeWorker(QObject):
         self._data = data
         self._cancelled = False
 
-        self._thread = QThread()
-        self.moveToThread(self._thread)
-        self._thread.started.connect(self._run)
-        self._thread.finished.connect(self._thread.deleteLater)
+        # Keep the public QObject and its cleanup on the GUI thread. Only the
+        # computation runs in the child thread, as in SuperResolutionWorker.
+        self._thread = _HypercubeThread(self)
         self._thread.finished.connect(self._prepare_for_deletion)
 
     def start(self) -> None:
@@ -57,38 +65,11 @@ class HypercubeWorker(QObject):
             self.failed.emit(f"Unable to prepare hypercube: {exc}")
         else:
             self.finished.emit(result)
-        finally:
-            # A disk or decoder failure must not strand the QThread: callers
-            # serialize SPy reads by waiting for this thread to stop.
-            self._thread.quit()
 
+    @pyqtSlot()
     def _prepare_for_deletion(self) -> None:
-        """Finalize this run once the background thread is winding down.
-
-        ``_thread.finished`` fires on the background thread just as it
-        exits, invoking this method directly (same-thread connection). Two
-        things need care here:
-
-        1. ``self._thread`` and ``self`` hold references to each other (this
-           object stores its own thread, and the ``started``/``finished``
-           connections above keep bound methods of ``self`` alive on the
-           thread's side), forming a reference cycle. Left alone, that cycle
-           would only be broken by Python's periodic cyclic garbage
-           collector, whose timing is unpredictable relative to the
-           background thread's own OS-level teardown -- collecting these
-           QObjects mid-teardown can crash. Disconnecting here drops the
-           thread's references back to ``self``, letting ordinary
-           (deterministic) reference counting reclaim both objects as soon
-           as the caller drops its own reference.
-        2. ``self.deleteLater()`` on an object still affined to the
-           (about-to-vanish) background thread posts to that thread's own
-           queue, which is a similarly fragile race. Reparenting to the GUI
-           thread first makes it a normal cross-thread queued call instead.
-        """
-        self._thread.started.disconnect(self._run)
+        """Release QObjects on the GUI thread after OS-thread teardown."""
+        self._thread.wait()
         self._thread.finished.disconnect(self._prepare_for_deletion)
-
-        app = QCoreApplication.instance()
-        if app is not None:
-            self.moveToThread(app.thread())
+        self._thread._worker = None
         self.deleteLater()
