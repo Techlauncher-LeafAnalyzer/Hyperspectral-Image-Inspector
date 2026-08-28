@@ -32,11 +32,7 @@ class PixelValueEntry(NamedTuple):
     color: tuple[int, int, int]
 
 
-# Signature for the callback that supplies visualization values for a single
-# hovered pixel. Keyed by the visualization names in VISUALIZATION_NAMES.
-# This is the seam a future visualization model plugs into: assign
-# `viewer.pixel_value_provider = ...` the same way the controller already
-# assigns `viewer.rgb`/`viewer.mask_array` after loading an image.
+# Signature for the callback that supplies visualization values for a single hovered pixel.
 PixelValueProvider = Callable[[int, int], Mapping[str, PixelValueEntry]]
 
 
