@@ -28,6 +28,7 @@ from core import (
 )
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
+from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
 from ui.tab_transition.handler import TabTransitionHandler
 from ui.viewer import HSIViewer
@@ -36,7 +37,8 @@ from ui.viewer import HSIViewer
 # Modes rendered eagerly after every image change so hover tooltips, mode
 # switching, and index-mean lookups can read cached results instead of
 # recomputing on demand. BAND is excluded (no band-index selector exists in
-# the UI) and HyperCube is excluded (no hypercube view is wired up yet).
+# the UI) and HyperCube is excluded (it has its own dedicated background
+# worker, driven by HypercubeController).
 _CACHED_VISUALIZATION_MODES = (
     VisualizationMode.RGB,
     VisualizationMode.NDVI,
@@ -81,10 +83,21 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
+        self._hypercube_controller = HypercubeController(
+            self.modeHyperCube,
+            self.visualizationStack,
+            self.hypercubeWidget,
+            self.statusbar,
+            self._visualization_service,
+        )
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
         self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._hypercube_controller.shutdown()
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
@@ -238,8 +251,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 lambda checked, mode=mode: self._on_visualization_mode_toggled(mode, checked)
             )
         self.modeRGB.setChecked(True)
-        self.modeHyperCube.setEnabled(False)
-        self.modeHyperCube.setToolTip("Hypercube view is not implemented yet")
 
         QtGui.QShortcut(
             QtGui.QKeySequence.StandardKey.Undo,
@@ -469,6 +480,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _on_visualization_mode_toggled(self, mode: VisualizationMode, checked: bool) -> None:
         if not checked:
             return
+        self.visualizationStack.setCurrentWidget(self.viewer)
         self._active_visualization_mode = mode
         if self._hsi_data.is_loaded():
             self._refresh_viewers_display()
@@ -488,11 +500,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
         pixmap = hsi_utils.numpy_to_qpixmap(display_rgb)
         for viewer in self._all_viewers():
+            previous_size = viewer.photo_size()
             state = viewer.get_view_state()
             viewer.rgb        = self._hsi_data.rgb_array
             viewer.mask_array = self._hsi_data.mask_array
             viewer.set_photo(pixmap)
-            if state is not None:
+            # Only restore the previous pan/zoom when the image dimensions are
+            # unchanged (e.g. switching visualization mode). Otherwise (e.g.
+            # after a crop) let set_photo's fresh fit_in_view() stand, so the
+            # view actually rescales to the new image size.
+            if state is not None and previous_size == pixmap.size():
                 viewer.queue_view_state(state)
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, object]:
@@ -521,6 +538,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if not (0 <= row < self._hsi_data.rows and 0 <= column < self._hsi_data.columns):
             return
 
+        # A hypercube worker still in flight reads the same underlying
+        # SpyFile handle; serialize this read behind it rather than risking
+        # a concurrent read of a non-thread-safe file object.
+        self._hypercube_controller.stop_and_wait()
         try:
             result = self._visualization_service.spectrum(self._hsi_data, row, column)
         except HSIError as exc:
@@ -640,3 +661,4 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _push_image_to_viewers(self) -> None:
         self._recompute_visualizations()
         self._refresh_viewers_display()
+        self._hypercube_controller.refresh(self._hsi_data)

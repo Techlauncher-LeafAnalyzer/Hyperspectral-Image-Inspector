@@ -152,6 +152,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def has_photo(self) -> bool:
         return not self._empty
 
+    def photo_size(self) -> Optional[QtCore.QSize]:
+        """Pixel dimensions of the currently displayed photo, or None if empty."""
+        return self._photo.pixmap().size() if self.has_photo() else None
+
     def fit_in_view(self) -> None:
         rect = QtCore.QRectF(self._photo.pixmap().rect())
         if not rect.isNull():

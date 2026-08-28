@@ -47,6 +47,23 @@ class _CroppedSpyFile(SubImage):
             )
         )
 
+    def read_subimage(
+        self,
+        rows: Sequence[int],
+        cols: Sequence[int],
+        bands: Optional[Sequence[int]] = None,
+    ) -> np.ndarray:
+        """Read arbitrary rows/cols/bands, offset into the parent file.
+
+        SPy 0.25's default ``SpyFile.read_subimage`` (inherited otherwise)
+        calls ``array.array(rows)`` without the required type-code argument,
+        raising ``TypeError`` unconditionally. This override applies the
+        crop offset directly and delegates to the parent file instead.
+        """
+        offset_rows = [row + self.row_offset for row in rows]
+        offset_cols = [col + self.col_offset for col in cols]
+        return np.asarray(self.parent.read_subimage(offset_rows, offset_cols, bands))
+
 
 class ImageFormat(Enum):
     """Header format used to open the current dataset."""
