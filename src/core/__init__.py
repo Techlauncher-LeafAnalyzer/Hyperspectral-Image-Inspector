@@ -22,6 +22,13 @@ from .classification_model import (
     UnsupervisedClassificationResult,
     load_binary_training_mask,
 )
+from .classification_layer_model import (
+    ClassIndexStatistics,
+    ClassificationIndexAnalysis,
+    ClassificationLayer,
+    ClassificationLayerComposite,
+    ClassificationLayerModel,
+)
 from .hsi_data import Functionality, HSIData, ImageFormat
 from .hsi_reader import HSIReader
 from .super_resolution_model import (
@@ -49,7 +56,12 @@ from .visualization_export_model import (
 __all__ = [
     "CancelledError",
     "ClassificationError",
+    "ClassificationIndexAnalysis",
+    "ClassificationLayer",
+    "ClassificationLayerComposite",
+    "ClassificationLayerModel",
     "ClassificationService",
+    "ClassIndexStatistics",
     "DisplayStretch",
     "Functionality",
     "HSIData",
