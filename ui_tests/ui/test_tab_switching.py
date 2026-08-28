@@ -90,20 +90,26 @@ def test_switching_tabs_carries_real_pan_zoom_to_the_newly_active_viewer(loaded_
 
 def test_repeatedly_switching_tabs_does_not_drift_the_view(loaded_window, qtbot):
     """Bouncing between two tabs must not creep the pan by ~1px each hop."""
+    # HSIViewer.queue_view_state keeps recentring on every resize for 300ms
+    # (see viewer.py's `_pending_view_state`) to absorb late layout settling;
+    # each hop must clear that window before the next one, otherwise an
+    # in-flight recentre from hop N can land after hop N+1 has already begun.
+    SETTLE_MS = 350
+
     loaded_window.show()
     qtbot.waitExposed(loaded_window)
 
     loaded_window.viewer.set_view_state((10.0, QPointF(4.0, 4.0)))
-    qtbot.wait(50)
+    qtbot.wait(SETTLE_MS)
     _, initial_center = loaded_window.viewer.get_view_state()
 
     for i in range(8):
         target_index = 1 if loaded_window.tabWidget.currentIndex() == 0 else 0
         loaded_window.tabWidget.setCurrentIndex(target_index)
-        qtbot.wait(50)
+        qtbot.wait(SETTLE_MS)
 
     loaded_window.tabWidget.setCurrentIndex(0)
-    qtbot.wait(50)
+    qtbot.wait(SETTLE_MS)
     _, final_center = loaded_window.viewer.get_view_state()
 
     assert final_center.x() == pytest.approx(initial_center.x(), abs=1e-6)

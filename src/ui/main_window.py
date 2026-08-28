@@ -89,6 +89,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._super_res_result: SuperResolutionResult | None = None
         self._super_res_error: str | None = None
         self._sr_view_scale = 1
+        self._viz_view_scale = 1
+        self._high_res_notice_shown = False
         self._close_after_sr = False
         self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
@@ -261,14 +263,24 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         elif show_processed and self._super_res_result is None:
             status = "Processed result not generated — run Super-Resolution"
         else:
-            data = self._sr_display_data()
+            data = self._display_data()
             label = "MSDformer 2×" if show_processed else "Original"
             status = f"{label}: {data.columns} × {data.rows} pixels, {data.bands} bands"
             if show_processed and self._super_res_result.tiled:
                 status += " · tiled inference"
         self.superResStatusText.setText(status)
+        # A result already exists: every tab must reflect the low/high choice,
+        # not just the Super-Resolution tab's own comparison viewer.
+        if self._super_res_result is not None:
+            self._refresh_visualization_pipeline()
 
-    def _sr_display_data(self) -> HSIData:
+    def _display_data(self) -> HSIData:
+        """Return the dataset every tab should currently render.
+
+        Once Super-Resolution has produced a result, the high/low toggle
+        chooses between it and the original for the whole application, not
+        just the Super-Resolution tab's own comparison viewer.
+        """
         if self.highResButton.isChecked() and self._super_res_result is not None:
             return self._super_res_result.data
         return self._hsi_data
@@ -281,7 +293,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.superResViewer.mask_array = None
             self.superResViewer.set_photo()
             return
-        data = self._sr_display_data()
+        data = self._display_data()
         if data.rgb_array is None:
             return
         new_scale = 2 if data is not self._hsi_data else 1
@@ -301,7 +313,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._sr_view_scale = new_scale
 
     def _sr_pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
-        data = self._sr_display_data()
+        data = self._display_data()
         if self.highResButton.isChecked() and self._super_res_result is None:
             return {}
         rgb = data.rgb_array
@@ -389,7 +401,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         else:
             # A cube build cancelled to make room for SR must not remain stuck
             # at "Computing hypercube". The original source is still unchanged.
-            self._hypercube_controller.resume(self._hsi_data)
+            self._hypercube_controller.resume(self._display_data())
 
     def _set_super_resolution_ready(self) -> None:
         self.actionLoadImage.setEnabled(True)
@@ -528,12 +540,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
 
         result = self._visualization_results.get(self._active_visualization_mode)
-        display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
+        display_rgb = result.display_rgb if result is not None else self._display_data().rgb_array
         if self.tabWidget.currentWidget() is self.SuperResolution:
             if self.highResButton.isChecked() and self._super_res_result is None:
                 QMessageBox.information(self, "Nothing to save", "Run Super-Resolution first.")
                 return
-            display_rgb = self._sr_display_data().rgb_array
+            display_rgb = self._display_data().rgb_array
 
         extensions = " ".join(
             f"*{ext}" for ext in self._visualization_export_service.supported_extensions
@@ -573,38 +585,45 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _recompute_visualizations(self) -> None:
         self._hypercube_controller.stop_and_wait()
         self._visualization_results = {}
+        data = self._display_data()
         for mode in _CACHED_VISUALIZATION_MODES:
             try:
                 self._visualization_results[mode] = self._visualization_service.render(
-                    self._hsi_data, VisualizationRequest(mode=mode)
+                    data, VisualizationRequest(mode=mode)
                 )
             except (VisualizationError, WavelengthError) as exc:
                 LOGGER.info("Skipping %s visualization: %s", mode.value, exc)
 
-        # Keep Original consumers (including SR) on the same RGB stretch as
-        # Visualization. After a crop, the previous RGB array has stale limits.
+        # Keep the active source on the same RGB stretch as Visualization.
+        # After a crop, the previous RGB array has stale limits.
         rgb_result = self._visualization_results.get(VisualizationMode.RGB)
         if rgb_result is not None:
-            self._hsi_data.rgb_array = rgb_result.display_rgb
+            data.rgb_array = rgb_result.display_rgb
 
     def _refresh_viewers_display(self) -> None:
+        data = self._display_data()
         result = self._visualization_results.get(self._active_visualization_mode)
-        display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
+        display_rgb = result.display_rgb if result is not None else data.rgb_array
         pixmap = hsi_utils.numpy_to_qpixmap(display_rgb)
+        new_scale = 2 if data is not self._hsi_data else 1
+        factor = new_scale / self._viz_view_scale
         for viewer in self._all_viewers():
             if viewer is self.superResViewer:
                 continue
             previous_size = viewer.photo_size()
             state = viewer.get_view_state()
-            viewer.rgb        = self._hsi_data.rgb_array
-            viewer.mask_array = self._hsi_data.mask_array
+            viewer.rgb        = data.rgb_array
+            viewer.mask_array = data.mask_array
             viewer.set_photo(pixmap)
-            # Only restore the previous pan/zoom when the image dimensions are
-            # unchanged (e.g. switching visualization mode). Otherwise (e.g.
-            # after a crop) let set_photo's fresh fit_in_view() stand, so the
-            # view actually rescales to the new image size.
-            if state is not None and previous_size == pixmap.size():
-                viewer.queue_view_state(state)
+            # Restore the previous pan/zoom, rescaled by `factor`, when the
+            # image dimensions changed only because of a low/high-res swap
+            # (factor==1 covers the unchanged-size case, e.g. switching
+            # visualization mode). Otherwise (e.g. after a crop) let
+            # set_photo's fresh fit_in_view() stand, so the view actually
+            # rescales to the new image size.
+            if state is not None and previous_size is not None and previous_size * factor == pixmap.size():
+                viewer.queue_view_state((state[0] / factor, state[1] * factor))
+        self._viz_view_scale = new_scale
         self._refresh_super_resolution_display()
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
@@ -633,7 +652,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Spectrum reads are paused during SR")
             return
-        data = self._sr_display_data() if self.sender() is self.superResViewer else self._hsi_data
+        data = self._display_data()
         if self.sender() is self.superResViewer and not self.superResViewer.has_photo():
             return
         row, column = int(pos.y()), int(pos.x())
@@ -690,7 +709,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Cancel or finish SR before cropping")
             return
-        if self.sender() is self.superResViewer and self.highResButton.isChecked():
+        if self.highResButton.isChecked() and self._super_res_result is not None:
+            # Every viewer displays the SR result at 2x; crop rectangles are
+            # only valid against the Original the rest of the pipeline crops.
             self.statusbar.showMessage("Select Original before cropping, then rerun SR", 5000)
             return
         if not self._hsi_data.is_loaded():
@@ -730,6 +751,18 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         page = self.tabWidget.widget(index)
         return page.findChild(HSIViewer) if page is not None else None
 
+    def _resolution_scale_for(self, viewer: HSIViewer) -> int:
+        """Return 2 if `viewer` is currently showing the SR result, else 1.
+
+        Visualization/Calibration/Classification track the same toggle as
+        the Super-Resolution tab, so a tab switch can land on either side
+        of a low/high-res swap independently of the Super-Resolution tab's
+        own comparison view.
+        """
+        if viewer is self.superResViewer:
+            return self._sr_view_scale
+        return self._viz_view_scale
+
     def _on_tab_changed(self, index: int) -> None:
         new_viewer = self._viewer_for_tab(index)
         if new_viewer is None:
@@ -738,10 +771,24 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._active_viewer is not None and self._active_viewer is not new_viewer:
             state = self._active_viewer.get_view_state()
             if state is not None:
-                source_scale = self._sr_view_scale if self._active_viewer is self.superResViewer else 1
-                target_scale = self._sr_view_scale if new_viewer is self.superResViewer else 1
+                source_scale = self._resolution_scale_for(self._active_viewer)
+                target_scale = self._resolution_scale_for(new_viewer)
                 factor = target_scale / source_scale
                 new_viewer.queue_view_state((state[0] / factor, state[1] * factor))
+
+        if (
+            not self._high_res_notice_shown
+            and self.tabWidget.widget(index) is self.Visualization
+            and self.highResButton.isChecked()
+            and self._super_res_result is not None
+        ):
+            self._high_res_notice_shown = True
+            QMessageBox.information(
+                self,
+                "Viewing Super-Resolution image",
+                "Visualization is now showing the Super-Resolution (high-res) "
+                "result instead of the original image.",
+            )
 
         self._active_viewer = new_viewer
 
@@ -774,6 +821,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _push_image_to_viewers(self) -> None:
         self._reset_super_resolution()
+        self._refresh_visualization_pipeline()
+
+    def _refresh_visualization_pipeline(self) -> None:
         self._recompute_visualizations()
         self._refresh_viewers_display()
-        self._hypercube_controller.refresh(self._hsi_data)
+        self._hypercube_controller.refresh(self._display_data())
