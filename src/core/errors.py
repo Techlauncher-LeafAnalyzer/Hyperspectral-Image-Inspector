@@ -30,6 +30,10 @@ class VisualizationExportError(VisualizationError):
     """A displayed visualization could not be validated or saved."""
 
 
+class ClassificationError(HSIError):
+    """A classification request is invalid or could not be computed."""
+
+
 class CancelledError(HSIError):
     """A Controller-requested cancellation stopped Model processing.
 
