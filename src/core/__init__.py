@@ -2,6 +2,7 @@
 
 from .errors import (
     CancelledError,
+    ClassificationError,
     HSIError,
     HSIFileError,
     HSIHeaderError,
@@ -9,6 +10,24 @@ from .errors import (
     VisualizationError,
     VisualizationExportError,
     WavelengthError,
+)
+from .classification_model import (
+    ClassificationService,
+    SupervisedClassificationRequest,
+    SupervisedClassificationResult,
+    SupervisedClassifierType,
+    TrainingFilePair,
+    TrainingPairResolver,
+    UnsupervisedClassificationRequest,
+    UnsupervisedClassificationResult,
+    load_binary_training_mask,
+)
+from .classification_layer_model import (
+    ClassIndexStatistics,
+    ClassificationIndexAnalysis,
+    ClassificationLayer,
+    ClassificationLayerComposite,
+    ClassificationLayerModel,
 )
 from .hsi_data import Functionality, HSIData, ImageFormat
 from .hsi_reader import HSIReader
@@ -36,6 +55,13 @@ from .visualization_export_model import (
 
 __all__ = [
     "CancelledError",
+    "ClassificationError",
+    "ClassificationIndexAnalysis",
+    "ClassificationLayer",
+    "ClassificationLayerComposite",
+    "ClassificationLayerModel",
+    "ClassificationService",
+    "ClassIndexStatistics",
     "DisplayStretch",
     "Functionality",
     "HSIData",
@@ -52,6 +78,11 @@ __all__ = [
     "SuperResolutionRequest",
     "SuperResolutionResult",
     "SuperResolutionService",
+    "SupervisedClassificationRequest",
+    "SupervisedClassificationResult",
+    "SupervisedClassifierType",
+    "TrainingFilePair",
+    "TrainingPairResolver",
     "VisualizationError",
     "VisualizationExportError",
     "VisualizationExportRequest",
@@ -61,5 +92,8 @@ __all__ = [
     "VisualizationRequest",
     "VisualizationResult",
     "VisualizationService",
+    "UnsupervisedClassificationRequest",
+    "UnsupervisedClassificationResult",
     "WavelengthError",
+    "load_binary_training_mask",
 ]

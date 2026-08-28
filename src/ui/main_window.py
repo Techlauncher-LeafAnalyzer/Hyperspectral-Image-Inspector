@@ -13,12 +13,14 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
 from core import (
+    ClassificationService,
     HSIData,
     HSIError,
     HSIReader,
     SuperResolutionRequest,
     SuperResolutionResult,
     SuperResolutionService,
+    TrainingPairResolver,
     VisualizationError,
     VisualizationExportError,
     VisualizationExportRequest,
@@ -29,6 +31,7 @@ from core import (
     VisualizationService,
     WavelengthError,
 )
+from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
 from ui.hypercube_controller import HypercubeController
@@ -103,6 +106,24 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.statusbar,
             self._visualization_service,
         )
+        self._classification_controller = ClassificationController(
+            self._hsi_data,
+            ClassificationService(),
+            TrainingPairResolver(),
+            self.classificationViewer,
+            self.statusbar,
+            self.unsupervisedClassifyButton,
+            self.pushButton_2,
+            self.pushButton,
+            self.comboBox,
+            self.numOfClassesEdit,
+            self.maxIterationsEdit,
+            self.lineEdit,
+            self.actionLoadImage,
+            lambda: self._hypercube_controller.stop_and_wait(),
+            self,
+        )
+        self._classification_controller.readyToClose.connect(self.close)
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
@@ -203,7 +224,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.actionSaveImage.triggered.connect(self._save_image)
         self.darkFileButton.clicked.connect(self._select_dark_file)
         self.referenceFileButton.clicked.connect(self._select_reference_file)
-        self.pushButton.clicked.connect(self._select_groundtruth_file)
         self.highResButton.toggled.connect(
             self._update_super_resolution_view_state
         )
@@ -226,6 +246,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             viewer.meanIndexRequested.connect(self._on_mean_index)
             viewer.pixel_value_provider = self._pixel_values_at
         self.superResViewer.pixel_value_provider = self._sr_pixel_values_at
+        self.classificationViewer.pixel_value_provider = (
+            self._classification_pixel_values_at
+        )
 
         mode_buttons = (
             (self.modeRGB, VisualizationMode.RGB),
@@ -421,6 +444,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._hypercube_controller.shutdown()
+        if self._classification_controller.request_close():
+            event.ignore()
+            return
         # Never destroy a running QThread or block Qt waiting for inference.
         if self._super_res_worker is not None:
             self._close_after_sr = True
@@ -444,12 +470,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._select_supporting_file(
             self.referenceFileEdit,
             "Open Reference File",
-        )
-
-    def _select_groundtruth_file(self) -> None:
-        self._select_supporting_file(
-            self.lineEdit,
-            "Open Groundtruth File",
         )
 
     def _select_supporting_file(
@@ -492,6 +512,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Cancel or finish SR before loading another image")
             return
+        if self._classification_controller.is_running():
+            QMessageBox.information(
+                self,
+                "Classification in progress",
+                "Cancel the current classification before loading another image.",
+            )
+            return
         try:
             candidate = self._hsi_reader.open(image_path)
             result = self._visualization_service.render(
@@ -516,6 +543,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         candidate.rgb_array = rgb_array
         candidate.mask_array = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
         self._hsi_data.update_from(candidate)
+        self._classification_controller.clear_result()
         loaded_path = self._hsi_data.data_path
 
         loaded_file_text = f"File Loaded: {loaded_path}"
@@ -525,8 +553,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.superResFilePath.setToolTip(str(loaded_path))
         self.classificationFilePath.setText(loaded_file_text)
         self.classificationFilePath.setToolTip(str(loaded_path))
-        self.unsupervisedClassifyButton.setEnabled(True)
-        self.pushButton_2.setEnabled(True)
+        self._classification_controller.set_image_loaded(True)
         self.statusbar.showMessage(f"Loaded {loaded_path.name}")
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
@@ -541,6 +568,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else self._display_data().rgb_array
+        if (
+            self._active_viewer is self.classificationViewer
+            and self._classification_controller.rgb is not None
+        ):
+            display_rgb = self._classification_controller.rgb
         if self.tabWidget.currentWidget() is self.SuperResolution:
             if self.highResButton.isChecked() and self._super_res_result is None:
                 QMessageBox.information(self, "Nothing to save", "Run Super-Resolution first.")
@@ -604,7 +636,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         data = self._display_data()
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else data.rgb_array
-        pixmap = hsi_utils.numpy_to_qpixmap(display_rgb)
         new_scale = 2 if data is not self._hsi_data else 1
         factor = new_scale / self._viz_view_scale
         for viewer in self._all_viewers():
@@ -612,8 +643,19 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 continue
             previous_size = viewer.photo_size()
             state = viewer.get_view_state()
-            viewer.rgb        = data.rgb_array
-            viewer.mask_array = data.mask_array
+            use_classification = (
+                viewer is self.classificationViewer
+                and self._classification_controller.rgb is not None
+            )
+            viewer_display = (
+                self._classification_controller.rgb
+                if use_classification
+                else display_rgb
+            )
+            viewer_data = self._hsi_data if use_classification else data
+            viewer.rgb        = viewer_data.rgb_array
+            viewer.mask_array = viewer_data.mask_array
+            pixmap = hsi_utils.numpy_to_qpixmap(viewer_display)
             viewer.set_photo(pixmap)
             # Restore the previous pan/zoom, rescaled by `factor`, when the
             # image dimensions changed only because of a low/high-res swap
@@ -621,8 +663,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             # visualization mode). Otherwise (e.g. after a crop) let
             # set_photo's fresh fit_in_view() stand, so the view actually
             # rescales to the new image size.
-            if state is not None and previous_size is not None and previous_size * factor == pixmap.size():
-                viewer.queue_view_state((state[0] / factor, state[1] * factor))
+            viewer_factor = 1.0 if use_classification else factor
+            if (
+                state is not None
+                and previous_size is not None
+                and previous_size * viewer_factor == pixmap.size()
+            ):
+                viewer.queue_view_state(
+                    (state[0] / viewer_factor, state[1] * viewer_factor)
+                )
         self._viz_view_scale = new_scale
         self._refresh_super_resolution_display()
 
@@ -641,12 +690,29 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 )
         return values
 
+    def _classification_pixel_values_at(
+        self, row: int, column: int
+    ) -> Mapping[str, object]:
+        """Add the zero-based K-means class ID to classification hover data."""
+
+        values = dict(self._pixel_values_at(row, column))
+        class_id = self._classification_controller.class_id_at(row, column)
+        if class_id is not None:
+            values["Class"] = class_id
+        return values
+
     # ------------------------------------------------------------------ #
     # Private: viewer signal handlers                                      #
     # ------------------------------------------------------------------ #
 
     def _on_spectrum_plot(self, pos: QPointF) -> None:
         if not self._hsi_data.is_loaded():
+            return
+        if self._classification_controller.is_running():
+            self.statusbar.showMessage(
+                "Spectrum reads are unavailable while classification is running",
+                5000,
+            )
             return
 
         if self._super_res_worker is not None:
@@ -716,6 +782,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         if not self._hsi_data.is_loaded():
             return
+        if self._classification_controller.is_running():
+            self.statusbar.showMessage(
+                "Cancel classification before changing the image crop",
+                5000,
+            )
+            return
 
         self._crop_undo_stack.append(self._snapshot_current_state())
         self._crop_redo_stack.clear()
@@ -730,6 +802,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._crop_undo_stack.pop()
             return
 
+        self._classification_controller.clear_result()
         self._push_image_to_viewers()
         self.statusbar.showMessage(
             f"Cropped to {cropped_size[0]}x{cropped_size[1]}"
@@ -803,17 +876,26 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data.rgb_array    = snapshot.rgb_array
         self._hsi_data.mask_array   = snapshot.mask_array
         self._hsi_data.spectral_obj = snapshot.spectral_obj
+        self._classification_controller.clear_result()
         self._push_image_to_viewers()
 
     def _undo_crop(self) -> None:
-        if self._super_res_worker is not None or not self._crop_undo_stack:
+        if (
+            self._super_res_worker is not None
+            or self._classification_controller.is_running()
+            or not self._crop_undo_stack
+        ):
             return
         self._crop_redo_stack.append(self._snapshot_current_state())
         self._restore_snapshot(self._crop_undo_stack.pop())
         self.statusbar.showMessage("Crop undone")
 
     def _redo_crop(self) -> None:
-        if self._super_res_worker is not None or not self._crop_redo_stack:
+        if (
+            self._super_res_worker is not None
+            or self._classification_controller.is_running()
+            or not self._crop_redo_stack
+        ):
             return
         self._crop_undo_stack.append(self._snapshot_current_state())
         self._restore_snapshot(self._crop_redo_stack.pop())

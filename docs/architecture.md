@@ -316,15 +316,24 @@ Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as
 | `classificationFilePath` | `QLabel` | Loaded file path, Classification tab |
 | `classificationModeTabs` | `QTabWidget` | Nested Unsupervised / Supervised sub-tabs |
 | `numOfClassesEdit`, `maxIterationsEdit` | `QLineEdit` | Unsupervised tab inputs (K-means params) |
-| `unsupervisedClassifyButton` | `QPushButton` | Enabled once an image is loaded; not yet wired to a handler |
+| `unsupervisedClassifyButton` | `QPushButton` | Starts/cancels worker-thread SPy K-means after image load |
 | `lineEdit` | `QLineEdit` | Supervised tab — groundtruth file path |
-| `comboBox` | `QComboBox` | Supervised tab — classifier choice (Gaussian / Mahalanobis / Perceptron / TBD) |
-| `pushButton` | `QPushButton` | Supervised tab — groundtruth file picker |
-| `pushButton_2` | `QPushButton` | Supervised tab — Classify; enabled once an image is loaded, not yet wired |
+| `comboBox` | `QComboBox` | Supervised tab — Model-backed classifier choice. The Controller populates it from `SupervisedClassifierType` and stores each enum as item data (Gaussian / Mahalanobis). |
+| `pushButton` | `QPushButton` | Supervised tab — mask picker with automatic reference-cube pairing |
+| `pushButton_2` | `QPushButton` | Runs/cancels Gaussian or Mahalanobis reference-example classification |
 | `actionLoadImage` | `QAction` | File dropdown — load |
 | `actionSaveImage` | `QAction` | File dropdown — save |
 
 There is no `menubar`/`menuFile` anymore — `MainWindow.ui` no longer declares a `QMenuBar`. `_configure_file_menu` (in `main_window.py`) builds the File `QMenu` from the two actions above at runtime and installs it as a `QToolButton` in `tabWidget`'s top-left corner (see below).
+
+Classification layer UI should be backed by one
+`core.ClassificationLayerModel` per current classification result. The
+Controller owns mutable layer visibility/names and passes only Model-produced
+RGB/RGBA arrays or statistics to widgets. The layer Model is invalidated with
+the classification result after load, crop, crop undo/redo, or
+reclassification. See `docs/model_classification_api.md` for the integration
+contract and `docs/classification_layer_api.md` for the detailed PyQt6
+handoff.
 
 ---
 
@@ -390,5 +399,5 @@ are intentionally ignored and are not part of the shared production tree.
 Carried over from the current rubric self-assessment / sprint-1 backlog, listed here because they're structural rather than just "unfinished feature":
 
 - **Calibration is permanently disabled.** `calibrateButton` is disabled unconditionally in `_connect_signals` and nothing re-enables it after image load. Tracked by `LEAF-116`.
-- **Unsupervised/Supervised classify buttons are enabled but unwired** — `unsupervisedClassifyButton` and `pushButton_2` flip to enabled on image load but have no click handler. Tracked by `LEAF-119`/`LEAF-120`.
+- **Perceptron classification is not integrated.** The selector intentionally exposes only the reference-example Gaussian and Mahalanobis workflows connected through `pushButton_2`; SPy's perceptron still requires dimensionality-reduction and training-policy decisions.
 - **`_save_image` is a stub** with no format decided yet.
