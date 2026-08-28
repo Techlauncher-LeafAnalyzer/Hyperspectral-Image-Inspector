@@ -31,7 +31,7 @@ from ui.index_mean_dialog import IndexMeanDialog
 from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
 from ui.tab_transition.handler import TabTransitionHandler
-from ui.viewer import HSIViewer
+from ui.viewer import HSIViewer, PixelValueEntry
 
 
 # Modes rendered eagerly after every image change so hover tooltips, mode
@@ -512,18 +512,19 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             if state is not None and previous_size == pixmap.size():
                 viewer.queue_view_state(state)
 
-    def _pixel_values_at(self, row: int, column: int) -> Mapping[str, object]:
-        values: dict[str, object] = {}
+    def _pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
+        values: dict[str, PixelValueEntry] = {}
         for mode, result in self._visualization_results.items():
             height, width = result.display_rgb.shape[:2]
             if not (0 <= row < height and 0 <= column < width):
                 continue
+            color = tuple(int(channel) for channel in result.display_rgb[row, column])
             if mode is VisualizationMode.RGB:
-                values[mode.value] = tuple(
-                    int(channel) for channel in result.display_rgb[row, column]
-                )
+                values[mode.value] = PixelValueEntry(value=color, color=color)
             elif result.values is not None:
-                values[mode.value] = float(result.values[row, column])
+                values[mode.value] = PixelValueEntry(
+                    value=float(result.values[row, column]), color=color
+                )
         return values
 
     # ------------------------------------------------------------------ #

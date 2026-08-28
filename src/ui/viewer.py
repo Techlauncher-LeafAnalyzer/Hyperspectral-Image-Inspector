@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import Callable, Mapping, Optional
+from typing import Callable, Mapping, NamedTuple, Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -19,12 +19,23 @@ class PromptMode(Enum):
     BOXES  = auto()
 
 
+class PixelValueEntry(NamedTuple):
+    """A single visualization's reading at one pixel.
+
+    ``color`` is the on-screen RGB colour for that visualization at that
+    pixel (i.e. ``display_rgb[row, column]``), used to draw the swatch tile
+    beside the numeric/tuple ``value`` in the overlay.
+    """
+    value: object
+    color: tuple[int, int, int]
+
+
 # Signature for the callback that supplies visualization values for a single
 # hovered pixel. Keyed by the visualization names in VISUALIZATION_NAMES.
 # This is the seam a future visualization model plugs into: assign
 # `viewer.pixel_value_provider = ...` the same way the controller already
 # assigns `viewer.rgb`/`viewer.mask_array` after loading an image.
-PixelValueProvider = Callable[[int, int], Mapping[str, object]]
+PixelValueProvider = Callable[[int, int], Mapping[str, PixelValueEntry]]
 
 
 class HSIViewer(QtWidgets.QGraphicsView):
@@ -44,14 +55,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
     VISUALIZATION_NAMES = ("RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI")
 
     # Placeholder values used until a real pixel_value_provider is wired in.
-    _DUMMY_PIXEL_VALUES: Mapping[str, object] = {
-        "RGB": (128, 128, 128),
-        "NDVI": 0.42,
-        "EVI": 0.31,
-        "MCARI": 0.55,
-        "MTVI": 0.67,
-        "OSAVI": 0.38,
-        "PRI": -0.05,
+    _DUMMY_PIXEL_VALUES: Mapping[str, PixelValueEntry] = {
+        "RGB": PixelValueEntry((128, 128, 128), (128, 128, 128)),
+        "NDVI": PixelValueEntry(0.42, (145, 207, 96)),
+        "EVI": PixelValueEntry(0.31, (166, 217, 106)),
+        "MCARI": PixelValueEntry(0.55, (94, 201, 98)),
+        "MTVI": PixelValueEntry(0.67, (33, 145, 140)),
+        "OSAVI": PixelValueEntry(0.38, (215, 173, 96)),
+        "PRI": PixelValueEntry(-0.05, (94, 79, 162)),
     }
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
@@ -102,6 +113,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             "}"
         )
         self._pixel_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._pixel_overlay.setTextFormat(Qt.TextFormat.RichText)
         self._pixel_overlay.hide()
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
@@ -183,6 +195,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._empty = True
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
             self._photo.setPixmap(QtGui.QPixmap())
+        self._apply_idle_cursor()
         self.fit_in_view()
         if self.has_photo():
             # The viewport may not have its final size yet (e.g. right after
@@ -414,10 +427,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
             return
 
         super().mouseReleaseEvent(event)
-        clicked_pos = self.mapToScene(event.position().toPoint())
 
         if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            # Qt's own ScrollHandDrag release handling just reset the cursor
+            # to its default open-hand grab icon; reapply ours on top of it.
+            self._apply_idle_cursor()
             return
+
+        clicked_pos = self.mapToScene(event.position().toPoint())
 
         if self.prompt_mode == PromptMode.POINTS:
             input_point = np.array(
@@ -469,6 +486,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Control:
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
+            self._apply_idle_cursor()
         if event.key() == Qt.Key.Key_Shift:
             self.newInputBoxList = []
             self._render_mask()
@@ -555,9 +573,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._crop_overlay_item = None
         self._cropping = False
         self._crop_start = None
-        self.setCursor(Qt.CursorShape.ArrowCursor)
         if self.has_photo():
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
+        self._apply_idle_cursor()
 
     def _render_mask(self) -> None:
         if self.mask_array is None:
@@ -574,6 +592,28 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._pixel_overlay_enabled = enabled
         if not enabled:
             self._pixel_overlay.hide()
+        self._apply_idle_cursor()
+
+    def _apply_idle_cursor(self) -> None:
+        """Set the viewport cursor for the current (non-dragging) state.
+
+        Left untouched while cropping or while Ctrl-crosshair mode is active,
+        since those manage their own cursor. Otherwise shows a pointer while
+        pixel-value inspection is on, or the usual pan/grab cursor.
+
+        Targets the viewport specifically, not the view itself: ScrollHandDrag
+        sets an explicit cursor on the viewport widget, which takes priority
+        over whatever cursor the enclosing view has while the mouse is over
+        it, so overriding self.setCursor() here would have no visible effect.
+        """
+        if self._cropping:
+            return
+        if self._pixel_overlay_enabled:
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        elif self.has_photo():
+            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
 
     def _update_pixel_overlay(self, view_pos: QtCore.QPoint) -> None:
         if not self._pixel_overlay_enabled or not self.has_photo():
@@ -602,21 +642,35 @@ class HSIViewer(QtWidgets.QGraphicsView):
         target.setY(min(target.y(), max(0, bounds.height() - self._pixel_overlay.height())))
         self._pixel_overlay.move(target)
 
-    def _format_pixel_values(self, values: Mapping[str, object]) -> str:
-        lines: list[str] = []
+    def _format_pixel_values(self, values: Mapping[str, PixelValueEntry]) -> str:
+        rows: list[str] = []
         for name in self.VISUALIZATION_NAMES:
-            value = values.get(name)
-            if isinstance(value, tuple):
-                formatted = ", ".join(f"{component:.0f}" for component in value)
-                lines.append(f"{name}: ({formatted})")
-            elif isinstance(value, (int, float)):
-                lines.append(f"{name}: {value:.3f}")
+            entry = values.get(name)
+            if entry is None:
+                swatch_color = None
+                text = "—"
             else:
-                lines.append(f"{name}: —")
-        return "\n".join(lines)
+                swatch_color = entry.color
+                if isinstance(entry.value, tuple):
+                    formatted = ", ".join(f"{component:.0f}" for component in entry.value)
+                    text = f"({formatted})"
+                elif isinstance(entry.value, (int, float)):
+                    text = f"{entry.value:.3f}"
+                else:
+                    text = "—"
+            if swatch_color is not None:
+                hex_color = "#{:02x}{:02x}{:02x}".format(*swatch_color)
+                swatch = f'<td width="10" height="10" bgcolor="{hex_color}"></td>'
+            else:
+                swatch = '<td width="10" height="10"></td>'
+            rows.append(
+                f'<tr>{swatch}'
+                f'<td style="padding-left:6px;">{name}: {text}</td></tr>'
+            )
+        return f'<table cellspacing="3" cellpadding="0">{"".join(rows)}</table>'
 
     @classmethod
-    def _dummy_pixel_values(cls, row: int, column: int) -> Mapping[str, object]:
+    def _dummy_pixel_values(cls, row: int, column: int) -> Mapping[str, PixelValueEntry]:
         """Placeholder provider; real per-pixel values arrive with the
         visualization model integration."""
         return cls._DUMMY_PIXEL_VALUES
