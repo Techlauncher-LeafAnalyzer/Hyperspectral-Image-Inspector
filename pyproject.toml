@@ -2,3 +2,4 @@
 pythonpath = ["src"]
 testpaths = ["ui_tests"]
 qt_api = "pyqt6"
+markers = ["sr_model: runs real inference when the optional checkpoint and dependencies exist"]
