@@ -1,5 +1,5 @@
 SLIDE 1
-This review shows what we changed after the Sprint 4 feedback, what we delivered, and what the evidence proves. We focus on useful features, testing, task records and reflection. This is a snapshot through 28 August, not a claim that every Sprint 5 item is finished. Jira still shows Sprint 5 as active, with a scheduled end on 4 September in Sydney time. The latest code checked is ac71613, including today’s classification merge.
+This is our Sprint 5 review. We will show the main features we finished, how we used last sprint’s feedback, and what we want to do next. The evidence is from Jira, GitHub and our weekly reports and reflections. This is our progress as of 28 August. Sprint 5 is still active, so we are not saying that every task is finished.
 
 [Sources]
 - https://leaf2qr.atlassian.net/browse/LEAF-150 (Sprint field: Sprint 5, started 21 August; scheduled end 4 September AEST)
@@ -11,7 +11,7 @@ This review shows what we changed after the Sprint 4 feedback, what we delivered
 ========================================================================
 
 SLIDE 2
-The biggest result is a more connected workflow. We linked the seven 2D modes to the interface, completed the interactive Hypercube, and replaced simulated super-resolution with real model inference. The processed result can also be used in other visualizations while the original stays unchanged. Classification was merged later today in PR 36. The visualization models and basic cropping had earlier foundations; this sprint’s contribution includes their integration and fixes. Merged functionality is not the same as scientific validation or client acceptance.
+We connected RGB and six vegetation index views to the interface. We can inspect pixel values, plot a spectrum and save the view. Hypercube and real super resolution are also connected. Classification was merged on 28 August. Some of the model code and basic cropping existed before this sprint. This sprint added integration work and fixes. We still need to check scientific accuracy and get the client’s review.
 
 [Sources]
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/pull/24
@@ -21,12 +21,13 @@ The biggest result is a more connected workflow. We linked the seven 2D modes to
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/pull/36
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/18284545
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/19726337
+- Screenshots: real project UI or browser captures taken 28 August 2026; cropped only for placement. Actual application with the real tray capture loaded in RGB view.
 [/Sources]
 
 ========================================================================
 
 SLIDE 3
-These changes support specific user tasks. Pixel values can be related to their colours, index statistics stay visible, and cropping now refits the image. Hypercube controls expose the spatial and spectral structure. SR works on all 480 bands rather than only an RGB preview. Classification adds K-means plus Gaussian and Mahalanobis methods; Perceptron is still rejected with an explanation. Do not claim new basic cropping this sprint: its original UI PR merged on 14 August. The new work here is the crop-scaling fix. Dedicated classification test files were not included in PR 36.
+These are real screenshots of the app, using a local hyperspectral capture. Hypercube lets us rotate and zoom the cube and save the view. Super resolution uses the existing 480-band model and doubles the image width and height. We can compare the original and processed image. The SR screenshot uses a small crop to keep the demo manageable. These pictures show that the features run; they do not prove that the output is scientifically accurate.
 
 [Sources]
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/pull/18
@@ -40,12 +41,13 @@ These changes support specific user tasks. Pixel values can be related to their 
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/pull/36
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/blob/ac7161342dbb661c9f5efbfd9de5a554ee4c6141/docs/model_classification_api.md
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/blob/ac7161342dbb661c9f5efbfd9de5a554ee4c6141/docs/super-resolution.md
+- Screenshots: real project UI or browser captures taken 28 August 2026; cropped only for placement. Actual interactive Hypercube view of the real tray capture. Actual super-resolution result from a crop of the real 480-band capture.
 [/Sources]
 
 ========================================================================
 
 SLIDE 4
-The client’s earlier feedback gave us a clear direction: a more professional tool, fewer crashes, and super-resolution that uses all bands. We can trace these needs through Jira, merged PRs and the weekly report. These are requirement-to-delivery links, not proof that the client approved each result. The latest client meeting page found is 7 August. The 31 July notes say the client would be away for two weeks in August, so we should not claim new weekly client meetings during this period. Our next client check should confirm the results and close the acceptance loop.
+Last sprint, we were asked to track meeting actions more clearly. The client had asked for a better interface and more reliable super resolution using all the bands. We linked that work to Jira tasks and reported progress in the backlog and Week 5 report. The menu, statistics window and colour values also make the app easier to use. These needs came from earlier client records. We have not found a new client sign-off for the finished changes.
 
 [Sources]
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/16580683
@@ -63,7 +65,7 @@ The client’s earlier feedback gave us a clear direction: a more professional t
 ========================================================================
 
 SLIDE 5
-This is our clearest example of a recorded feedback loop. On 21 August the tutor asked for Jira time records, weekly reflections and regular risk updates. LEAF 157 gives Guochen a named reporting task and links the documents. The Week 5 report points back to the reflection and risk review. The task checklist records progress, while this presentation completes the slide deliverable. We are showing a written follow-up available to the tutor; we are not claiming that the tutor has already accepted the improvements. Time logging has improved but is still incomplete.
+The tutor asked us to log our time, reflect each week and update the risk plan. Guochen’s Jira task, LEAF-157, has a checklist and links to the project documents. The Week 5 report records the progress. This makes it easier for the tutor to open the task and find the related work. The written follow-up is there, but we should still record the final outcome of each action.
 
 [Sources]
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/18645003
@@ -73,12 +75,13 @@ This is our clearest example of a recorded feedback loop. On 21 August the tutor
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/6193171
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/18284545
 - Sprint 4 stakeholder feedback supplied in the brief.
+- Screenshots: real project UI or browser captures taken 28 August 2026; cropped only for placement. Actual LEAF-157 Jira task with its documentation checklist and owner.
 [/Sources]
 
 ========================================================================
 
 SLIDE 6
-The work was split between models, interface integration and reporting, and the backlog names the owners. These are assigned responsibilities, not a calculation of each person’s contribution. The Week 5 reflection flags that some supervised-classification worklogs were entered under Pengyun’s account even though Jingyi was assigned, so that needs reconciliation. Hypercube shows real replanning: it reached review on 21 August, returned to In Progress, and was repaired and merged on 28 August. The lesson is to give integration and review their own checkpoints, rather than count a component as a finished user flow.
+Each person had assigned tasks in Jira. Ryan worked mainly on the UI and integration fixes. Guochen worked on SR, UI changes and reporting. Jingyi worked on models and supervised classification. Pengyun worked on Hypercube components and classification. Hypercube needed another pass before the model and interface worked together. It moved back to In Progress on 21 August, then the working version was merged on 28 August. We need to plan time for this kind of integration.
 
 [Sources]
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/18284545
@@ -93,7 +96,7 @@ The work was split between models, interface integration and reporting, and the 
 ========================================================================
 
 SLIDE 7
-We now have real numbers to compare. Hypercube records five hours estimated and six logged; SR records five estimated and seven logged. The smaller crop fix and colour swatches took less logged time than their current estimates. These are Jira records, not measured stopwatch time. History matters: SR’s estimate changed from three to four to five hours, and the Hypercube estimate was added after work had reached review. So this shows better tracking, but not yet reliable forecasting. At the snapshot, 10 of 45 Sprint 5 issues have an original estimate and 29 have logged time. For Sprint 6 we propose preserving the first estimate and recording why it changes.
+We can now compare estimates with logged time for some tasks. Hypercube shows five hours estimated and six logged. SR shows five and seven. The menu task matched its estimate, and two smaller UI fixes took less time than estimated. There is a limit to this comparison: SR’s estimate changed from three to five hours, and Hypercube was estimated during review. Next sprint, we should keep the first estimate, record changes and include integration and testing time.
 
 [Sources]
 - https://leaf2qr.atlassian.net/browse/LEAF-150 (estimate, worklog and history)
@@ -103,12 +106,13 @@ We now have real numbers to compare. Hypercube records five hours estimated and 
 - https://leaf2qr.atlassian.net/browse/LEAF-155
 - Jira query: project = LEAF AND sprint = "Sprint 5"; 45 returned issues; snapshot 28 August 2026.
 - Differences computed as logged actual minus the current original-estimate field; not an independently recorded retrospective metric.
+- Screenshots: real project UI or browser captures taken 28 August 2026; cropped only for placement. Actual LEAF-152 Jira time tracking showing 5h estimate and 7h logged.
 [/Sources]
 
 ========================================================================
 
 SLIDE 8
-The risk plan was updated on both 21 and 28 August. It now records priority, trend, controls, triggers, contingencies and owners. As more features were connected, data consistency and scientific validity became more important. Large-file performance remains critical: the roughly seven GiB figure is an estimated temporary output size, not a full-capture measurement. Workers and tiling are implemented controls; Windows checks and scientific validation are future evidence. The register uses some role-based owners and explicitly asks the Program Manager to name accountable people at the next review. All listed risks remain open.
+We updated the risk plan on 21 and 28 August. Large files may use too much memory or disk space. The app runs long tasks in the background, and SR processes smaller tiles. We also need to check whether the scientific results are correct and whether the app works on the client’s Windows PC. Ubuntu CI does not answer those questions. Next, we need real measurements, reference tests and a named person for each risk.
 
 [Sources]
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/6193171 (R2, R3, R4, R11; next-review actions)
@@ -119,7 +123,7 @@ The risk plan was updated on both 21 and 28 August. It now records priority, tre
 ========================================================================
 
 SLIDE 9
-PR 25 introduced pytest, pytest-qt, shared fixtures and a tracked UI suite. The suite checks both small components and connected workflows, such as cropping, undo, tab switching and saving. Later SR tests check cancellation, errors, coordinates and safe shutdown. A real-checkpoint test compares the service with a direct network call, but it needs the optional runtime. Our local rerun at ecdac34 passed 114 tests and skipped 11 because PyTorch was absent. That is not a fresh inference validation. Dedicated classification test files and numeric index-reference tests are still missing from the reviewed tracked suite.
+Last sprint’s feedback asked for unit and integration tests. LEAF-147 and PR 25 added the test setup, and later work added more checks. The suite covers loading, cropping, undoing, switching views and saving. It also checks SR and Hypercube behaviour. These tests help us catch old bugs when the code changes. We still need more dedicated classification tests and checks against known scientific results. We also reran the full local suite in pytorch_env for this review: all 125 tests passed.
 
 [Sources]
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/pull/25
@@ -130,12 +134,15 @@ PR 25 introduced pytest, pytest-qt, shared fixtures and a tracked UI suite. The 
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/pull/36
 - https://leaf2qr.atlassian.net/browse/LEAF-113
 - Local verification 28 August: .venv/bin/python -m pytest -q -rs at ecdac34; 114 passed, 11 skipped (PyTorch unavailable).
+- Local verification on 28 August 2026: conda pytorch_env; QT_QPA_PLATFORM=offscreen python -m pytest -q; 125 passed in 10.14s.
+- https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/tree/ac7161342dbb661c9f5efbfd9de5a554ee4c6141/ui_tests/ui
+- Screenshots: real project UI or browser captures taken 28 August 2026; cropped only for placement. Actual GitHub test directory with crop, load, save, SR, Hypercube and mode tests.
 [/Sources]
 
 ========================================================================
 
 SLIDE 10
-The GitHub workflow runs on pull requests, pushes to main and manual dispatch. It installs the Qt runtime and development requirements, then runs pytest. The latest main run at ac71613 succeeded with 105 passed and 20 skipped. Eleven skips are SR tests that need PyTorch; nine need real captures that are not stored in the repository. A temporary checkout rerun reproduced these counts. This is CI, not automated deployment: no deployment job is configured. A green run helps catch covered regressions, but it does not prove Windows graphics, real-model performance, scientific accuracy or complete classification coverage. We have not verified branch-protection enforcement.
+GitHub Actions runs our tests for pull requests and pushes to main. The main run after the classification merge passed: 105 tests passed and 20 were skipped. Eleven skipped tests need PyTorch, and nine need real sample files that are not in the repository. So a green check is useful, but it does not mean every feature was tested. We have CI now; automatic deployment is not set up.
 
 [Sources]
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/pull/25
@@ -144,12 +151,13 @@ The GitHub workflow runs on pull requests, pushes to main and manual dispatch. I
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/blob/ac7161342dbb661c9f5efbfd9de5a554ee4c6141/requirements-dev.txt
 - Latest CI log: collected 125 items; 105 passed, 20 skipped in 8.08s.
 - Temporary checkout verification at ac71613 on 28 August: 105 passed, 20 skipped; no PyTorch and no real samples.
+- Screenshots: real project UI or browser captures taken 28 August 2026; cropped only for placement. Actual successful GitHub Actions UI Tests run at ac71613 on 28 August.
 [/Sources]
 
 ========================================================================
 
 SLIDE 11
-This example shows review changing the implementation. Ryan requested that the classification worker be separated from the main window, following the SR worker pattern. A later commit extracted the classification controller, and the review was approved before the merge at 15:42 Sydney time. CI passed on the PR and on main. Earlier reports still describe this PR as open because they were written before the merge, so we have updated this presentation using the later GitHub evidence. Jira marks classification testing tickets complete, but this PR added no dedicated test files. That is a tracking and coverage gap to close next.
+This is one example of code review changing our work. Ryan asked us to move the classification worker out of the main window. The code was moved into a separate controller, then the review was approved and PR 36 was merged. The main CI run also passed. Earlier reports said this PR was still open because they were written before the merge. The PR did not add dedicated classification test files, so that still needs attention.
 
 [Sources]
 - https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/pull/36
@@ -165,7 +173,7 @@ This example shows review changing the implementation. Ryan requested that the c
 ========================================================================
 
 SLIDE 12
-We now have two consecutive weekly reflection logs, each with a team section and four individual sections. The first identifies the unfinished Hypercube integration, shared UI-state problems and inconsistent records. The following week records the Hypercube merge, crop fix and SR integration. Tutor feedback also led to regular reflections and risk updates linked through LEAF 157. These are useful examples of reflection leading to follow-up work. Two logs are a start, not proof of a long-established process. We should keep adding owner, due date and outcome links and verify them against the merged revision.
+We have weekly reflection pages for 21 and 28 August, with team notes and each person’s reflection. They record problems such as unfinished Hypercube integration, crop scaling and flaky tests. Later pull requests show the fixes. The tutor’s feedback also led to regular reflection and risk updates. This is a useful start. We should keep adding an owner and a result link to each action, rather than only marking it done.
 
 [Sources]
 - https://leaf2qr.atlassian.net/wiki/spaces/L/pages/18448410
@@ -181,7 +189,7 @@ We now have two consecutive weekly reflection logs, each with a team section and
 ========================================================================
 
 SLIDE 13
-This is the direct answer to last sprint’s feedback. Action traceability improved through linked records. Effort tracking now supports comparisons, but some estimates were entered late or revised. Testing and CI are the strongest verified process change: the repository contains the suite and the run history. Reflection is more consistent across the two weekly logs and points to later work. We should present these as evidence of improvement, not claim that every HD requirement is fully met. The remaining steps are client acceptance, stable estimate baselines and broader scientific and platform validation.
+This slide brings the four areas together. We linked meeting actions to tasks and reports, added time records, introduced automated tests and CI, and kept weekly reflection logs. Testing and CI have the clearest evidence because the code and run history are available. The other areas improved too, but we still need client review, better first estimates and clearer action outcomes. We should keep working on these next sprint.
 
 [Sources]
 - Sprint 4 feedback and HD criteria: supplied by the team in the presentation brief.
@@ -200,7 +208,7 @@ This is the direct answer to last sprint’s feedback. Action traceability impro
 ========================================================================
 
 SLIDE 14
-These are proposed Sprint 6 priorities based on the remaining Jira work and Week 5 report, not an already approved sprint commitment. First, finish calibration with Jingyi on the algorithm and Guochen on the interface. Second, give the newly merged classification work explicit model and UI regression coverage. Third, verify vegetation-index reference values and the assumptions behind SR outputs. Fourth, test real inference and the Windows environment and measure representative data sizes. Finally, demonstrate the results to the client and record decisions, owners and outcomes. We should agree the order and effort before the sprint starts.
+For Sprint 6, we propose five goals. Finish calibration, add classification tests, check results against reference data, test on the target hardware, and show the app to the client. The existing calibration tasks name Jingyi for the algorithm and Guochen for the UI. The other priorities come from remaining work and the Week 5 report. Before we start, we should confirm the order, owners and estimates with the team and client.
 
 [Sources]
 - https://leaf2qr.atlassian.net/browse/LEAF-105
