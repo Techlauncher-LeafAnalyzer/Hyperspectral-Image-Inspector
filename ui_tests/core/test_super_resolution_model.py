@@ -2,7 +2,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from spectral.io import envi
 
 from core import (
     CancelledError, HSIData, HSIReader, SuperResolutionError,
@@ -10,17 +9,6 @@ from core import (
     VisualizationService,
 )
 from core.super_resolution_model import DEFAULT_CHECKPOINT
-
-
-@pytest.fixture
-def sr_source(tmp_path):
-    # Band-dependent, signed values detect lost/reordered bands and unintended
-    # per-band normalization. Odd, rectangular dimensions exercise reconstruction.
-    cube = (np.arange(7 * 9 * 480).reshape(7, 9, 480) / 1000 - 2).astype(np.float32)
-    path = tmp_path / "source.hdr"
-    envi.save_image(str(path), cube, ext=".bip", interleave="bip",
-                    metadata={"wavelength": np.linspace(352.49, 898.81, 480).tolist()})
-    return HSIReader().open(path), cube
 
 
 @pytest.fixture
@@ -132,7 +120,7 @@ def test_actual_checkpoint_pipeline(sr_source):
         pytest.skip("Supply model/fin_msdformer.pth to test actual inference")
     source, cube = sr_source
     service = SuperResolutionService()
-    result = service.run(source)
+    result = service.run(source, SuperResolutionRequest(device="cpu"))
     actual = result.data.read_bands(range(480))
     assert actual.shape == (14, 18, 480)
     assert actual.dtype == np.float32 and np.isfinite(actual).all()

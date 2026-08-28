@@ -2,7 +2,7 @@
 
 ## Model provenance and contract
 
-The local, Git-ignored `model/fin_msdformer.pth` is byte-identical to
+The existing tracked `model/fin_msdformer.pth` is byte-identical to
 [`Software/GUI/weights/fin_msdformer.pth`](https://github.com/squashking/TechLauncher-HSISR/blob/98388e034e02e4e049a0816c7c9dcce74aa10683/Software/GUI/weights/fin_msdformer.pth)
 in the previous project. SHA-256:
 `e00fa2c87cbacc5b60a1752710e49e16f62f465514ec66d53bf2b730ce96ee81`.
@@ -40,7 +40,7 @@ python -m pip install -r requirements.txt -r requirements-sr.txt -r requirements
 python src/main.py
 ```
 
-Keep the checkpoint at `model/fin_msdformer.pth`; it is intentionally not committed.
+Keep the checkpoint at `model/fin_msdformer.pth`; its existing binary is unchanged.
 The path is resolved relative to the repository, not the launch directory.
 PyTorch/SciPy are optional and loaded on Run, so non-SR functionality still works
 without them. Loading uses `weights_only=True`, strict parameter matching, and
@@ -78,6 +78,23 @@ with image dimensions. Temporary output is not a permanent saved HSI export.
 
 ## Validation
 
+The existing SR tab now runs a `SuperResolutionWorker` (`QThread`). Both inference
+and RGB rendering happen off the GUI thread; Qt signals deliver progress,
+completion, cancellation, and errors. Qt pixmaps are constructed only on the GUI
+thread. Run becomes Cancel while busy. Source loading, crop/undo/redo, and
+spectrum disk reads are paused to serialize source access, while tabs, cached
+visualization modes, and pan/zoom remain interactive. Closing requests cancellation
+and waits asynchronously for the worker to finish.
+
+The original `HSIData` remains unchanged. The SR tab shows RGB from the selected
+Original/Processed dataset; other tabs retain original data. Pan/zoom coordinates
+are scaled when switching between resolutions. SR pixel RGB, spectrum lookup,
+and File → Save Image use the displayed dataset. Save Image exports the preview,
+not the complete 480-band cube. Index means remain available on the original
+image; crop the original and rerun SR instead of applying HR coordinates to LR.
+Loading or cropping/undoing a source invalidates the old SR result. Failures and
+cancellation retain the previous successful result.
+
 ```sh
 OMP_NUM_THREADS=2 python -m pytest -q
 OMP_NUM_THREADS=2 python -m pytest -q -m sr_model
@@ -91,6 +108,31 @@ invalid checkpoints. The `sr_model` test runs actual weights and compares the
 service output against a direct network call. It skips explicitly if the local
 checkpoint or optional dependencies are absent; synthetic test fixtures are
 generated locally and never uploaded.
+
+### Local verification (2026-08-28)
+
+Executed in `pytorch_env` (Python 3.12.12, PyTorch 2.10.0, SciPy 1.17.1) on CPU:
+
+- All 883 checkpoint entries load with strict matching. Actual 5×7, 32×32,
+  and 64×64 network inputs yield finite `(1,480,2H,2W)` outputs.
+- A real plant ROI from `2025-04-17--12-51-23_round-0_cam-1_tray-1.hdr`, rows
+  900:1092 and columns 175:367, runs through nine tiles: 192×192×480 →
+  384×384×480 in 24.4 seconds, including preview rendering/validation, with
+  `OMP_NUM_THREADS=2`. All wavelength entries are unchanged.
+- Input range: 5–2627; prediction range: approximately −42.4–2816.4.
+  Approximately 0.007% of predicted values are negative. Mean-spectrum
+  correlation with the source is 0.999985; this is a sanity check, not a
+  ground-truth quality metric. LR/SR previews show consistent structure and
+  sharper leaf boundaries, with some edge ringing.
+- Desktop PyQt Run/progress/completion and Original/Processed switching were
+  inspected on that crop. Automated Qt tests also verify event-loop ticks during
+  actual model execution, preview saving, cancellation, failure recovery,
+  stale-result invalidation, and safe shutdown.
+- Full suite: 79 passed with the real crop supplied in the ignored test resources
+  directory. The existing `.venv` without SR dependencies passes 68 tests with
+  11 dependency-dependent SR tests skipped. Compile and diff-whitespace checks pass.
+- The full 1971×500 capture has not been run end-to-end. Testing used a real
+  crop to exercise tiling without generating a 7 GiB temporary result.
 
 ## Scientific limitations
 

@@ -16,3 +16,8 @@ from core import HSIReader, VisualizationRequest, VisualizationService
 
 See [the Visualization Model API](docs/model_visualization_api.md) and
 [Model development workflow](docs/model-development-workflow.md).
+
+Super-Resolution uses the existing `model/fin_msdformer.pth` checkpoint for
+480-band, 2× spatial inference. Install `requirements-sr.txt` in the environment
+used to launch the app, load a compatible capture, and click **Run Super-Resolution**.
+See [SR setup, model contract, and limitations](docs/super-resolution.md).

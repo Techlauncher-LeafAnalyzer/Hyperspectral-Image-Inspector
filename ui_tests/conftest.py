@@ -12,6 +12,7 @@ import pytest
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from spectral.io import envi
 
+from core import HSIReader
 from ui.main_window import MainWindowController
 
 # Wavelengths (nm) covering every band VisualizationService needs: RGB
@@ -97,3 +98,14 @@ def window(qtbot, dialogs):
 def loaded_window(window, synthetic_cube_path):
     window.load_image_from_path(synthetic_cube_path)
     return window
+
+
+@pytest.fixture
+def sr_source(tmp_path):
+    # Band-dependent, signed values detect lost/reordered bands and unintended
+    # per-band normalization. Odd, rectangular dimensions exercise reconstruction.
+    cube = (np.arange(7 * 9 * 480).reshape(7, 9, 480) / 1000 - 2).astype(np.float32)
+    path = tmp_path / "source.hdr"
+    envi.save_image(str(path), cube, ext=".bip", interleave="bip",
+                    metadata={"wavelength": np.linspace(352.49, 898.81, 480).tolist()})
+    return HSIReader().open(path), cube
