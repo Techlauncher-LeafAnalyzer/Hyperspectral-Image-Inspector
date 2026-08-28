@@ -85,13 +85,19 @@ def test_background_run_comparison_and_export(loaded_window, stub_sr, qtbot, fil
     assert window._super_res_result.data.shape == (16, 16, 8)
     assert window.actionLoadImage.isEnabled()
     np.testing.assert_array_equal(window._hsi_data.read_bands(range(8)), original)
+    # Visualization/Calibration/Classification follow the high-res selection
+    # once a result exists.
     for viewer in (window.viewer, window.calibrationViewer, window.classificationViewer):
-        assert viewer.rgb.shape == (8, 8, 3)
+        assert viewer.rgb.shape == (16, 16, 3)
+    assert window._visualization_results[VisualizationMode.RGB].display_rgb.shape == (16, 16, 3)
     window.lowResButton.setChecked(True)
     assert window.superResViewer.rgb.shape == (8, 8, 3)
+    for viewer in (window.viewer, window.calibrationViewer, window.classificationViewer):
+        assert viewer.rgb.shape == (8, 8, 3)
     window.highResButton.setChecked(True)
     window.modeNDVI.setChecked(True)
     assert window.superResViewer.rgb.shape == (16, 16, 3)
+    assert window.viewer.rgb.shape == (16, 16, 3)
     window.tabWidget.setCurrentWidget(window.SuperResolution)
     path = tmp_path / "sr.png"
     file_dialog.save_return = (str(path), "")
@@ -184,7 +190,11 @@ def test_sr_spectrum_uses_hr_coordinates(loaded_window, stub_sr, qtbot, monkeypa
     np.testing.assert_array_equal(received[0].values, loaded_window._super_res_result.data.read_pixel(14, 15))
 
 
-def test_sr_tab_transfers_view_coordinates_at_correct_scale(loaded_window, stub_sr, qtbot, monkeypatch):
+def test_sr_tab_transfers_view_coordinates_unscaled_when_resolutions_match(
+    loaded_window, stub_sr, qtbot, monkeypatch
+):
+    """Visualization and the SR tab share one high/low toggle, so they always
+    display the same resolution; switching between them must not rescale."""
     stub_sr.release.set()
     loaded_window.runSuperResButton.click()
     finish(qtbot, loaded_window)
@@ -193,8 +203,17 @@ def test_sr_tab_transfers_view_coordinates_at_correct_scale(loaded_window, stub_
     monkeypatch.setattr(window.viewer, "get_view_state", lambda: (4.0, QtCore.QPointF(3, 5)))
     received = []
     monkeypatch.setattr(window.superResViewer, "queue_view_state", received.append)
+
+    # Both tabs show the high-res result by default once SR completes.
     window._on_tab_changed(1)
-    assert received[-1] == (2.0, QtCore.QPointF(6, 10))
+    assert received[-1] == (4.0, QtCore.QPointF(3, 5))
+
+    # Switching back to Original affects both tabs identically, so the
+    # transfer still needs no rescale.
+    window.lowResButton.setChecked(True)
+    window._active_viewer = window.viewer
+    window._on_tab_changed(1)
+    assert received[-1] == (4.0, QtCore.QPointF(3, 5))
 
 
 def test_sr_pixel_tiles_use_the_displayed_image(loaded_window, stub_sr, qtbot):
@@ -229,6 +248,51 @@ def test_sr_comparison_preserves_framing_when_toggling_resolution(loaded_window,
     window.highResButton.setChecked(True)
     qtbot.wait(50)
     assert window.superResViewer.get_view_state()[0] == pytest.approx(4.0)
+
+
+def test_visualization_view_preserves_framing_when_toggling_resolution(loaded_window, stub_sr, qtbot):
+    window = loaded_window
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    window.tabWidget.setCurrentWidget(window.Visualization)
+    window.show()
+    qtbot.waitExposed(window)
+    qtbot.wait(50)
+    window.lowResButton.setChecked(True)
+    qtbot.wait(50)
+    window.viewer.set_view_state((4.0, QtCore.QPointF(4, 4)))
+    window.highResButton.setChecked(True)
+    qtbot.wait(50)
+    assert window.viewer.get_view_state()[0] == pytest.approx(2.0)
+    window.lowResButton.setChecked(True)
+    qtbot.wait(50)
+    assert window.viewer.get_view_state()[0] == pytest.approx(4.0)
+
+
+def test_high_res_notice_shown_once_when_switching_to_visualization(loaded_window, stub_sr, qtbot, dialogs):
+    window = loaded_window
+    stub_sr.release.set()
+    window.tabWidget.setCurrentWidget(window.SuperResolution)
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    assert window.highResButton.isChecked()
+    assert not dialogs.information
+
+    window.tabWidget.setCurrentWidget(window.Visualization)
+    assert len(dialogs.information) == 1
+    assert "Super-Resolution" in dialogs.information[-1][-1]
+
+    window.tabWidget.setCurrentWidget(window.SuperResolution)
+    window.tabWidget.setCurrentWidget(window.Visualization)
+    assert len(dialogs.information) == 1
+
+
+def test_high_res_notice_not_shown_for_low_res_selection(loaded_window, qtbot, dialogs):
+    window = loaded_window
+    window.tabWidget.setCurrentWidget(window.Calibration)
+    window.tabWidget.setCurrentWidget(window.Visualization)
+    assert not dialogs.information
 
 
 def test_index_mean_dialog_remains_available_for_original_after_sr(loaded_window, stub_sr, qtbot):

@@ -84,6 +84,28 @@ def test_save_after_crop_reflects_cropped_dimensions(loaded_window, tmp_path, fi
     assert Image.open(target).size == (4, 4)
 
 
+def _wait_for_settled_viewport(qtbot, viewer) -> None:
+    """Block until `viewer`'s viewport stops resizing.
+
+    Right after `show()`, an offscreen-platform window can still be mid-way
+    through its initial layout settle (e.g. shrinking from a transient
+    oversized geometry to its true final size). `fit_in_view()` snapshots
+    the viewport size synchronously and only recomputes on a later resize
+    event, so calling it while that initial settle is still in flight bakes
+    in the wrong size permanently, with nothing left to correct it. Poll
+    until several consecutive reads agree before touching the viewer; under
+    load the geometry can coincidentally repeat mid-oscillation, so a single
+    repeat is not a reliable stop condition.
+    """
+    streak: list = []
+    for _ in range(100):
+        qtbot.wait(10)
+        streak.append(viewer.viewport().size())
+        streak = streak[-5:]
+        if len(streak) == 5 and len(set(streak)) == 1:
+            return
+
+
 @pytest.mark.parametrize("viewer_name", ["viewer", "superResViewer"])
 def test_crop_rescales_view_to_fit_the_cropped_image(loaded_window, qtbot, viewer_name):
     """Regression for LEAF-153: after a crop, the viewport must recompute
@@ -96,7 +118,7 @@ def test_crop_rescales_view_to_fit_the_cropped_image(loaded_window, qtbot, viewe
             break
     loaded_window.show()
     qtbot.waitExposed(loaded_window)
-    qtbot.wait(50)
+    _wait_for_settled_viewport(qtbot, viewer)
 
     stale_scale = 999.0
     # Force an obviously non-fit scale/center, so a stale pre-crop view state
@@ -104,7 +126,10 @@ def test_crop_rescales_view_to_fit_the_cropped_image(loaded_window, qtbot, viewe
     viewer.set_view_state((stale_scale, QPointF(4.0, 4.0)))
 
     viewer.cropRequested.emit(CROP_RECT)
-    qtbot.wait(50)  # let the queued view-state / resize-settling timers fire
+    # HSIViewer keeps recomputing fit-to-viewport for 300ms after set_photo
+    # (see viewer.py's `_pending_fit`) to absorb late layout/resize settling;
+    # wait past that window so the assertion reads the final, settled fit.
+    qtbot.wait(350)
 
     got_scale, got_center = viewer.get_view_state()
 
