@@ -191,6 +191,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._empty = True
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
             self._photo.setPixmap(QtGui.QPixmap())
+        self._apply_idle_cursor()
         self.fit_in_view()
         if self.has_photo():
             # The viewport may not have its final size yet (e.g. right after
@@ -422,10 +423,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
             return
 
         super().mouseReleaseEvent(event)
-        clicked_pos = self.mapToScene(event.position().toPoint())
 
         if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            # Qt's own ScrollHandDrag release handling just reset the cursor
+            # to its default open-hand grab icon; reapply ours on top of it.
+            self._apply_idle_cursor()
             return
+
+        clicked_pos = self.mapToScene(event.position().toPoint())
 
         if self.prompt_mode == PromptMode.POINTS:
             input_point = np.array(
@@ -477,6 +482,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Control:
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
+            self._apply_idle_cursor()
         if event.key() == Qt.Key.Key_Shift:
             self.newInputBoxList = []
             self._render_mask()
@@ -563,9 +569,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._crop_overlay_item = None
         self._cropping = False
         self._crop_start = None
-        self.setCursor(Qt.CursorShape.ArrowCursor)
         if self.has_photo():
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
+        self._apply_idle_cursor()
 
     def _render_mask(self) -> None:
         if self.mask_array is None:
@@ -582,6 +588,28 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._pixel_overlay_enabled = enabled
         if not enabled:
             self._pixel_overlay.hide()
+        self._apply_idle_cursor()
+
+    def _apply_idle_cursor(self) -> None:
+        """Set the viewport cursor for the current (non-dragging) state.
+
+        Left untouched while cropping or while Ctrl-crosshair mode is active,
+        since those manage their own cursor. Otherwise shows a pointer while
+        pixel-value inspection is on, or the usual pan/grab cursor.
+
+        Targets the viewport specifically, not the view itself: ScrollHandDrag
+        sets an explicit cursor on the viewport widget, which takes priority
+        over whatever cursor the enclosing view has while the mouse is over
+        it, so overriding self.setCursor() here would have no visible effect.
+        """
+        if self._cropping:
+            return
+        if self._pixel_overlay_enabled:
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        elif self.has_photo():
+            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
 
     def _update_pixel_overlay(self, view_pos: QtCore.QPoint) -> None:
         if not self._pixel_overlay_enabled or not self.has_photo():
