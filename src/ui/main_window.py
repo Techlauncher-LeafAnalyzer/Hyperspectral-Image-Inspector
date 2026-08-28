@@ -27,6 +27,7 @@ from core import (
     WavelengthError,
 )
 from ui.generated.MainWindow import Ui_MainWindow
+from ui.index_mean_dialog import IndexMeanDialog
 from ui.spectrum_dialog import SpectrumDialog
 from ui.tab_transition.handler import TabTransitionHandler
 from ui.viewer import HSIViewer
@@ -548,7 +549,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
 
         mean_value = float(np.nanmean(result.values))
-        self.statusbar.showMessage(f"{index_name} mean: {mean_value:.4f}", 8000)
+        dialog = IndexMeanDialog(
+            index_name,
+            mean_value,
+            result.value_range,
+            result.colormap,
+            parent=self,
+        )
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _on_crop_requested(self, rect: QtCore.QRectF) -> None:
         if not self._hsi_data.is_loaded():
