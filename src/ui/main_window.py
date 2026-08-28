@@ -554,6 +554,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             except (VisualizationError, WavelengthError) as exc:
                 LOGGER.info("Skipping %s visualization: %s", mode.value, exc)
 
+        # Keep Original consumers (including SR) on the same RGB stretch as
+        # Visualization. After a crop, the previous RGB array has stale limits.
+        rgb_result = self._visualization_results.get(VisualizationMode.RGB)
+        if rgb_result is not None:
+            self._hsi_data.rgb_array = rgb_result.display_rgb
+
     def _refresh_viewers_display(self) -> None:
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
