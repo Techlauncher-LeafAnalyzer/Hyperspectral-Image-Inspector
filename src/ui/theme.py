@@ -549,6 +549,44 @@ QStatusBar {
     border-top: 1px solid #d8e2df;
 }
 
+QDialog#indexMeanDialog {
+    background: #ffffff;
+}
+
+QLabel#indexMeanHeading {
+    color: #123e37;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QLabel#indexMeanSubtitle {
+    color: #667673;
+    font-size: 12px;
+}
+
+QFrame#indexMeanCard {
+    background: #f3faf8;
+    border: 1px solid #d8ece7;
+    border-radius: 14px;
+}
+
+QLabel#indexMeanValue {
+    color: #123e37;
+    font-size: 42px;
+    font-weight: 700;
+}
+
+QLabel#indexMeanCaption {
+    color: #8a9c98;
+    font-size: 11px;
+}
+
+QLabel#indexMeanRangeLabel {
+    color: #526662;
+    font-size: 12px;
+    font-weight: 600;
+}
+
 QScrollBar:vertical, QScrollBar:horizontal {
     background: #edf2f1;
     border: 0;
