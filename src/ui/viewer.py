@@ -1,22 +1,24 @@
 from __future__ import annotations
 
-from enum import Enum, auto
 from typing import Callable, Mapping, NamedTuple, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QPointF, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPainterPath, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QFontDatabase, QImage, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 
-
-class PromptMode(Enum):
-    """
-    Whether the input is prompted via a grouping of points or a rectangular box
-    """
-    POINTS = auto()
-    BOXES  = auto()
+from ui.theme import (
+    CROP_OVERLAY_COLOR,
+    CROP_SELECTION_COLOR,
+    PROMPT_NEGATIVE_COLOR,
+    PROMPT_POINT_RADIUS,
+    PROMPT_POSITIVE_COLOR,
+    VIEWER_SCENE_BACKGROUND,
+    VIEWER_WATERMARK_COLOR,
+    VIEWER_WATERMARK_POINT_SIZE,
+)
 
 
 class PixelValueEntry(NamedTuple):
@@ -45,8 +47,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
     keeping the dependency graph acyclic.
     """
 
-    photoClicked          = pyqtSignal(QPointF)
-    historyChanged        = pyqtSignal(bool, bool)   # (can_undo, can_redo)
     spectrumPlotRequested = pyqtSignal(QPointF)
     meanIndexRequested    = pyqtSignal(str)
     cropRequested         = pyqtSignal(QtCore.QRectF)
@@ -54,33 +54,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
     # All visualization modes except HyperCube, in display order.
     VISUALIZATION_NAMES = ("RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI")
 
-    # Placeholder values used until a real pixel_value_provider is wired in.
-    _DUMMY_PIXEL_VALUES: Mapping[str, PixelValueEntry] = {
-        "RGB": PixelValueEntry((128, 128, 128), (128, 128, 128)),
-        "NDVI": PixelValueEntry(0.42, (145, 207, 96)),
-        "EVI": PixelValueEntry(0.31, (166, 217, 106)),
-        "MCARI": PixelValueEntry(0.55, (94, 201, 98)),
-        "MTVI": PixelValueEntry(0.67, (33, 145, 140)),
-        "OSAVI": PixelValueEntry(0.38, (215, 173, 96)),
-        "PRI": PixelValueEntry(-0.05, (94, 79, 162)),
-    }
-
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
 
         # --- annotation state ---
-        self.prompt_mode: PromptMode = PromptMode.POINTS
-        self.is_split: bool = False
         self.input_points: NDArray[np.uint32] = np.empty((0, 2), dtype=np.uint32)
         self.input_labels: list[int] = []
-        self.input_box: Optional[NDArray[np.float64]] = None
-        self.start_point: Optional[QPointF] = None
-        self.rect_item: Optional[QGraphicsRectItem] = None
-        self.new_input_points: NDArray[np.uint32] = np.empty((0, 2), dtype=np.uint32)
-        self.newInputBoxList: list[NDArray[np.float64]] = []
-        self.allInputBoxList: list[NDArray[np.float64]] = []
-        self.history: list[tuple[str, object]] = []
-        self.redo_stack: list[tuple[str, object]] = []
 
         # --- crop mode state ---
         self._cropping: bool = False
@@ -95,23 +74,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._pending_fit: bool = False
         self.rgb: Optional[NDArray[np.uint8]] = None
         self.mask_array: Optional[NDArray[np.uint8]] = None
-        self.avatarArray: Optional[NDArray[np.uint8]] = None
 
         # --- pixel value overlay ---
-        self.pixel_value_provider: PixelValueProvider = self._dummy_pixel_values
+        self.pixel_value_provider: PixelValueProvider = self._no_pixel_values
         self._pixel_overlay_enabled: bool = False
         self._pixel_overlay = QLabel(self.viewport())
         self._pixel_overlay.setObjectName("pixelValueOverlay")
-        self._pixel_overlay.setStyleSheet(
-            "QLabel#pixelValueOverlay {"
-            "  background-color: rgba(20, 20, 20, 200);"
-            "  color: #f5f5f5;"
-            "  border: 1px solid #555555;"
-            "  border-radius: 4px;"
-            "  padding: 4px 6px;"
-            "  font-size: 11px;"
-            "}"
-        )
         self._pixel_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._pixel_overlay.setTextFormat(Qt.TextFormat.RichText)
         self._pixel_overlay.hide()
@@ -121,11 +89,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         # --- scene items ---
         self._scene = QtWidgets.QGraphicsScene(self)
         self._photo = QtWidgets.QGraphicsPixmapItem()
-        self.avatar = QtWidgets.QGraphicsPixmapItem()
         self.mask_pixmapitem = QtWidgets.QGraphicsPixmapItem()
 
         self._scene.addItem(self._photo)
-        self._scene.addItem(self.avatar)
         self._scene.addItem(self.mask_pixmapitem)
         self.setScene(self._scene)
 
@@ -133,17 +99,17 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.setResizeAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setBackgroundBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
+        self.setBackgroundBrush(QBrush(VIEWER_SCENE_BACKGROUND))
         self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.text_item = QGraphicsTextItem("APPN-Tech")
         font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
-        font.setPointSize(45)
+        font.setPointSize(VIEWER_WATERMARK_POINT_SIZE)
         font.setBold(True)
         font.setItalic(True)
         self.text_item.setFont(font)
-        self.text_item.setDefaultTextColor(QColor("#eaecee"))
+        self.text_item.setDefaultTextColor(VIEWER_WATERMARK_COLOR)
         self.text_item.setTextWidth(-1)
         self.text_item.setPos(
             -self.text_item.boundingRect().center().x(),
@@ -154,7 +120,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
         self.text_item.setZValue(0)
         self._photo.setZValue(1)
-        self.avatar.setZValue(2)
         self.mask_pixmapitem.setZValue(3)
 
     # ------------------------------------------------------------------ #
@@ -204,9 +169,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
             # it on resize until the layout settles, mirroring queue_view_state.
             self._pending_fit = True
             QtCore.QTimer.singleShot(300, self._clear_pending_fit)
-
-    def set_avatar(self, pixmap: QPixmap) -> None:
-        self.avatar.setPixmap(pixmap)
 
     def get_view_state(self) -> Optional[tuple[float, QPointF]]:
         """Return (scale_factor, scene_center) describing the current pan/zoom."""
@@ -265,67 +227,15 @@ class HSIViewer(QtWidgets.QGraphicsView):
         elif self._pending_fit:
             self.fit_in_view()
 
-    def set_mask(self, mask: NDArray[np.uint8]) -> None:
-        """Accept a new mask array and render it as a blue RGBA overlay."""
-        self.mask_array = mask
-        self._render_mask()
-
     def draw_circle(self, point: NDArray[np.uint32], label: int) -> None:
         """Draw a foreground (green) or background (red) prompt circle."""
-        color = Qt.GlobalColor.green if label == 1 else Qt.GlobalColor.red
-        radius = 5.0
+        color = PROMPT_POSITIVE_COLOR if label == 1 else PROMPT_NEGATIVE_COLOR
+        radius = PROMPT_POINT_RADIUS
         x, y = float(point[0]), float(point[1])
         self._scene.addEllipse(
             x - radius, y - radius, radius * 2, radius * 2,
             QPen(color), QBrush(color),
         )
-
-    def draw_rectangle(self, start: QPointF, end: QPointF) -> None:
-        """Draw a blue bounding-box prompt rectangle."""
-        self.rect_item = self._scene.addRect(
-            QtCore.QRectF(start, end), QPen(Qt.GlobalColor.blue)
-        )
-
-    def undo(self) -> None:
-        if not self.history:
-            return
-        prompt_type, prompt_data = self.history.pop()
-        self.redo_stack.append((prompt_type, prompt_data))
-
-        if prompt_type == "point":
-            self.input_points = self.input_points[:-1]
-            if self.input_labels:
-                self.input_labels.pop()
-        elif prompt_type == "box":
-            self.start_point = None
-            self.rect_item = None
-            self.input_box = None
-
-        items = self._scene.items()
-        if items:
-            self._scene.removeItem(items[0])
-        self._render_mask()
-        self.historyChanged.emit(bool(self.history), bool(self.redo_stack))
-
-    def redo(self) -> None:
-        if not self.redo_stack:
-            return
-        prompt_type, prompt_data = self.redo_stack.pop()
-        self.history.append((prompt_type, prompt_data))
-
-        if prompt_type == "point":
-            self.input_points = np.vstack((self.input_points, prompt_data[1]))
-            self.input_labels.append(prompt_data[0])
-            self.draw_circle(prompt_data[1], prompt_data[0])
-        elif prompt_type == "rectangle":
-            self.input_box = prompt_data
-            self.draw_rectangle(
-                QPointF(float(prompt_data[0]), float(prompt_data[1])),
-                QPointF(float(prompt_data[2]), float(prompt_data[3])),
-            )
-
-        self._render_mask()
-        self.historyChanged.emit(bool(self.history), bool(self.redo_stack))
 
     # ------------------------------------------------------------------ #
     # Qt event overrides                                                   #
@@ -351,8 +261,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
             if event.button() == Qt.MouseButton.LeftButton:
                 self._crop_start = self.mapToScene(event.position().toPoint())
             return
-        if self._photo.isUnderMouse():
-            self.photoClicked.emit(self.mapToScene(event.position().toPoint()))
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
@@ -383,7 +291,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._crop_overlay_item = self._scene.addPath(
                     overlay_path,
                     QPen(Qt.PenStyle.NoPen),
-                    QBrush(QColor(0, 0, 0, 140)),
+                    QBrush(CROP_OVERLAY_COLOR),
                 )
                 self._crop_overlay_item.setZValue(10)
             else:
@@ -392,7 +300,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             if self._crop_rect_item is None:
                 self._crop_rect_item = self._scene.addRect(
                     selection,
-                    QPen(Qt.GlobalColor.yellow, 0, Qt.PenStyle.DashLine),
+                    QPen(CROP_SELECTION_COLOR, 0, Qt.PenStyle.DashLine),
                 )
                 self._crop_rect_item.setZValue(11)
             else:
@@ -436,44 +344,22 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
         clicked_pos = self.mapToScene(event.position().toPoint())
 
-        if self.prompt_mode == PromptMode.POINTS:
-            input_point = np.array(
-                [clicked_pos.x(), clicked_pos.y()], dtype=np.uint32
-            )
-            self.input_points = np.vstack((self.input_points, input_point))
-            if self.is_split:
-                self.new_input_points = np.vstack((self.new_input_points, input_point))
+        input_point = np.array(
+            [clicked_pos.x(), clicked_pos.y()], dtype=np.uint32
+        )
+        self.input_points = np.vstack((self.input_points, input_point))
 
-            if event.button() == Qt.MouseButton.LeftButton:
-                self.input_labels.append(1)
-                action: tuple[str, object] = ("point", (1, input_point))
-                self.draw_circle(input_point, 1)
-            elif event.button() == Qt.MouseButton.RightButton:
-                self.input_labels.append(0)
-                action = ("point", (0, input_point))
-                self.draw_circle(input_point, 0)
-            else:
-                return
-            self.history.append(action)
-
-        elif self.prompt_mode == PromptMode.BOXES and self.start_point is not None:
-            self.draw_rectangle(self.start_point, clicked_pos)
-            rect = np.array([
-                self.start_point.x(), self.start_point.y(),
-                clicked_pos.x(), clicked_pos.y(),
-            ])
-            self.input_box = rect
-            self.newInputBoxList.append(rect.copy())
-            self.allInputBoxList.append(rect.copy())
-            self.history.append(("box", rect))
-            self.start_point = None
-
-        self.historyChanged.emit(bool(self.history), bool(self.redo_stack))
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.input_labels.append(1)
+            self.draw_circle(input_point, 1)
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.input_labels.append(0)
+            self.draw_circle(input_point, 0)
+        else:
+            return
 
         if not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
             self._render_mask()
-            if self.is_split:
-                self.new_input_points = np.empty((0, 2), dtype=np.uint32)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape and self._cropping:
@@ -488,7 +374,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
             self._apply_idle_cursor()
         if event.key() == Qt.Key.Key_Shift:
-            self.newInputBoxList = []
             self._render_mask()
 
     def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
@@ -508,7 +393,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
         spectrum_action = menu.addAction(
             "Spectrum Plot", lambda: self.spectrumPlotRequested.emit(scene_pos)
         )
-        clear_action = menu.addAction("Clear Selection", self._clear_selection)
 
         index_menu = QMenu("Index Mean", menu)
         index_menu.setObjectName("viewerIndexMenu")
@@ -533,7 +417,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
             crop_action = menu.addAction("Crop", self._begin_crop_mode)
 
         spectrum_action.setIcon(QtGui.QIcon(f"{icon_dir}/spectrum_plot.svg"))
-        clear_action.setIcon(QtGui.QIcon(f"{icon_dir}/clear_selection.svg"))
         index_menu.setIcon(QtGui.QIcon(f"{icon_dir}/index_mean.svg"))
         pixel_values_action.setIcon(QtGui.QIcon(f"{icon_dir}/pixel_values.svg"))
         if crop_action is not None:
@@ -550,13 +433,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.mask_pixmapitem.setPixmap(QPixmap())
         self.input_points = np.empty((0, 2), dtype=np.uint32)
         self.input_labels = []
-        self.history = []
-        self.redo_stack = []
         self._pixel_overlay.hide()
-
-    def _clear_selection(self) -> None:
-        self._clear()
-        self.historyChanged.emit(False, False)
 
     def _begin_crop_mode(self) -> None:
         self._cropping = True
@@ -669,8 +546,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             )
         return f'<table cellspacing="3" cellpadding="0">{"".join(rows)}</table>'
 
-    @classmethod
-    def _dummy_pixel_values(cls, row: int, column: int) -> Mapping[str, PixelValueEntry]:
-        """Placeholder provider; real per-pixel values arrive with the
-        visualization model integration."""
-        return cls._DUMMY_PIXEL_VALUES
+    @staticmethod
+    def _no_pixel_values(row: int, column: int) -> Mapping[str, PixelValueEntry]:
+        """Default provider until the controller wires in a real one."""
+        return {}

@@ -5,6 +5,18 @@
 > classes and their per-panel `.ui` files have since been deleted — see
 > "Sidebar + swappable panels → static tabs" under Design Decisions.
 
+> **2026-08 update (`LEAF-156`):** `HSIViewer`'s box-prompt mode (`PromptMode`,
+> `draw_rectangle`, `rect_item`, `input_box`, `start_point`, `newInputBoxList`/
+> `allInputBoxList`), its point-annotation undo/redo/history mechanism (`history`,
+> `redo_stack`, `undo()`, `redo()`, the `historyChanged` and `photoClicked`
+> signals), the `avatar` overlay (`set_avatar`), and the unused `set_mask()`
+> setter were removed as dead code — none had a caller or any UI control wiring
+> them up. `spectrumPlotRequested` and `meanIndexRequested` are no longer
+> unconnected either (see "Known gaps" below) — only `historyChanged`/
+> `photoClicked` were still dangling, and both are gone now. All of `HSIViewer`'s
+> styling (the inline pixel-overlay stylesheet, scene-drawn colours) also moved
+> into `ui/theme.py`. Re-add any of this only once a real feature needs it.
+
 ## Package Structure
 
 ```
@@ -44,7 +56,7 @@ main.py
        └─ core.hsi_utils                           (I/O helpers)
 ```
 
-`HSIViewer` has **no import from `ui.main_window`**. Communication flows upward through Qt signals only — though as of this writing, `MainWindowController` does not connect to any of them (see "Known gaps" below).
+`HSIViewer` has **no import from `ui.main_window`**. Communication flows upward through Qt signals only; `MainWindowController._connect_signals` connects all three (`spectrumPlotRequested`, `meanIndexRequested`, `cropRequested`).
 
 ---
 
@@ -137,18 +149,6 @@ Note: `find_red_nir_bands` (for NDVI-family indices) has no caller anywhere in `
 
 ## `ui/viewer.py`
 
-### `PromptMode`
-
-```python
-class PromptMode(Enum):
-    POINTS = auto()
-    BOXES  = auto()
-```
-
-Controls the annotation interaction mode.
-
----
-
 ### `HSIViewer(QtWidgets.QGraphicsView)`
 
 Custom interactive view for displaying and annotating hyperspectral images. Decoupled from `MainWindowController` via outbound signals. **Four independent instances now exist** — `viewer`, `calibrationViewer`, `superResViewer`, `classificationViewer` — one per tab, each loaded with the same `rgb_array`/`mask_array`/pixmap on image load. They are not kept in sync with each other after that (e.g. annotating in one does not reflect in another).
@@ -156,19 +156,22 @@ Custom interactive view for displaying and annotating hyperspectral images. Deco
 #### Signals
 
 ```python
-photoClicked          = pyqtSignal(QPointF)       # emitted on click over the photo
-historyChanged        = pyqtSignal(bool, bool)    # (can_undo, can_redo)
-spectrumPlotRequested = pyqtSignal(QPointF)       # from context menu
-meanIndexRequested    = pyqtSignal(str)           # index name e.g. "NDVI"
+spectrumPlotRequested = pyqtSignal(QPointF)        # from context menu
+meanIndexRequested    = pyqtSignal(str)            # index name e.g. "NDVI"
+cropRequested         = pyqtSignal(QtCore.QRectF)  # from context menu -> Crop drag
 ```
+
+All three are connected in `MainWindowController._connect_signals` (`_on_spectrum_plot`, `_on_mean_index`, `_on_crop_requested`).
 
 #### Public state (read/write by controller)
 
 ```python
-rgb:          Optional[NDArray[uint8]]   # source RGB array, shape (H, W, 3)
-mask_array:   Optional[NDArray[uint8]]   # current segmentation mask, shape (H, W)
-prompt_mode:  PromptMode                 # POINTS or BOXES
-is_split:     bool                       # split-view mode flag
+rgb:                   Optional[NDArray[uint8]]  # source RGB array, shape (H, W, 3)
+mask_array:            Optional[NDArray[uint8]]  # current segmentation mask, shape (H, W)
+pixel_value_provider:  Callable[[int, int], Mapping[str, PixelValueEntry]]
+    # per-pixel hover readout for the "Show Pixel Values" overlay; the
+    # controller assigns its own callback (`_pixel_values_at`) after
+    # construction, replacing the no-op default.
 ```
 
 #### Public API
@@ -177,30 +180,28 @@ is_split:     bool                       # split-view mode flag
 def has_photo(self) -> bool:
     """True when an image is currently loaded."""
 
+def photo_size(self) -> Optional[QSize]:
+    """Pixel dimensions of the currently displayed photo, or None if empty."""
+
 def fit_in_view(self) -> None:
     """Scale the view to fit the current image exactly."""
 
 def set_photo(self, pixmap: Optional[QPixmap] = None) -> None:
     """Load a new image. Clears all annotation state."""
 
-def set_avatar(self, pixmap: QPixmap) -> None:
-    """Set the overlay avatar pixmap."""
+def get_view_state(self) -> Optional[tuple[float, QPointF]]:
+    """Return (scale_factor, scene_center) describing the current pan/zoom."""
 
-def set_mask(self, mask: NDArray[uint8]) -> None:
-    """Replace the current segmentation mask and re-render the overlay."""
+def set_view_state(self, state: tuple[float, QPointF]) -> None:
+    """Apply a (scale_factor, scene_center) pair captured via get_view_state."""
+
+def queue_view_state(self, state: tuple[float, QPointF]) -> None:
+    """Apply state now, and again on every resize for a short window
+    (covers a tab whose viewport hasn't settled to its final size yet)."""
 
 def draw_circle(self, point: NDArray[uint32], label: int) -> None:
     """Draw a prompt point: green circle for foreground (label=1),
     red for background (label=0)."""
-
-def draw_rectangle(self, start: QPointF, end: QPointF) -> None:
-    """Draw a blue bounding-box prompt rectangle."""
-
-def undo(self) -> None:
-    """Remove the last annotation action. Emits historyChanged."""
-
-def redo(self) -> None:
-    """Re-apply the last undone action. Emits historyChanged."""
 ```
 
 #### Key interaction model
@@ -211,12 +212,13 @@ def redo(self) -> None:
 | Drag | Pan (ScrollHandDrag mode) |
 | Ctrl + left-click | Add foreground point |
 | Ctrl + right-click | Add background point |
-| Ctrl + release (no Shift) | Trigger segmentation render |
-| Shift held during Ctrl+release | Batch mode — defer segmentation |
-| Shift release | Flush batch, trigger segmentation |
-| Right-click | Context menu (Spectrum Plot, Clear Selection, Index Mean) |
+| Ctrl + release (no Shift) | Re-render the mask overlay |
+| Shift held during Ctrl+release | Batch mode — defer mask re-render |
+| Shift release | Flush batch, re-render mask overlay |
+| Right-click | Context menu (Spectrum Plot, Index Mean, Show Pixel Values, Crop) |
+| Right-click menu → Crop, then drag | Crop-selection mode; release emits `cropRequested` |
 
-All of the above still works standalone inside each `HSIViewer`, but `historyChanged`, `spectrumPlotRequested`, and `meanIndexRequested` are emitted into the void — no slot is connected to any of them (see "Known gaps" below). There is also no `actionUndo`/`actionRedo`/`actionClear` in `MainWindow.ui` anymore for `historyChanged` to eventually drive.
+Point clicks accumulate into `input_points`/`input_labels` and draw markers via `draw_circle`, but nothing in the current codebase runs a segmentation model against them — `mask_array` is only ever set directly by the controller (on image load, on crop, etc.), never produced from these prompts. The click-collection UI is scaffolding for a future model-driven segmentation flow; build that wiring (and any undo/redo or box-prompt support it needs) when the feature actually lands rather than trusting the pre-`LEAF-156` version of this doc.
 
 ---
 
@@ -330,7 +332,7 @@ There is no `menubar`/`menuFile` anymore — `MainWindow.ui` no longer declares 
 
 ### Acyclic dependency via signals
 
-`HSIViewer` emits `historyChanged(can_undo, can_redo)`, `spectrumPlotRequested(pos)`, `meanIndexRequested(name)` rather than holding a back-reference to the controller. `ui/viewer.py` still has no import from `ui/main_window.py`. The controller side of this contract is currently empty (see below) but the emitting side is intact, so wiring it back up is additive, not a redesign.
+`HSIViewer` emits `spectrumPlotRequested(pos)`, `meanIndexRequested(name)`, `cropRequested(rect)` rather than holding a back-reference to the controller. `ui/viewer.py` still has no import from `ui/main_window.py`. All three are connected in `MainWindowController._connect_signals`. A parallel `historyChanged`/`photoClicked` pair existed for an annotation undo/redo mechanism but was never connected to anything; both were removed as dead code in `LEAF-156` along with the mechanism they supported.
 
 ### Sidebar + swappable panels → static tabs
 
@@ -387,7 +389,6 @@ are intentionally ignored and are not part of the shared production tree.
 
 Carried over from the current rubric self-assessment / sprint-1 backlog, listed here because they're structural rather than just "unfinished feature":
 
-- **Viewer signals are unconnected.** `historyChanged`, `spectrumPlotRequested`, and `meanIndexRequested` are emitted by all four `HSIViewer`s but `MainWindowController._connect_signals` does not listen to any of them. `_on_spectrum_plot` and `_on_mean_index` exist as stubs but are unreachable. Tracked by `LEAF-118` (spectrum plot) and the Visualization-tab index wiring under `LEAF-114`.
 - **Calibration is permanently disabled.** `calibrateButton` is disabled unconditionally in `_connect_signals` and nothing re-enables it after image load. Tracked by `LEAF-116`.
 - **Unsupervised/Supervised classify buttons are enabled but unwired** — `unsupervisedClassifyButton` and `pushButton_2` flip to enabled on image load but have no click handler. Tracked by `LEAF-119`/`LEAF-120`.
 - **`_save_image` is a stub** with no format decided yet.
