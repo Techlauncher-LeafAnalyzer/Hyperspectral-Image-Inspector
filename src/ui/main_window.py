@@ -499,11 +499,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         display_rgb = result.display_rgb if result is not None else self._hsi_data.rgb_array
         pixmap = hsi_utils.numpy_to_qpixmap(display_rgb)
         for viewer in self._all_viewers():
+            previous_size = viewer.photo_size()
             state = viewer.get_view_state()
             viewer.rgb        = self._hsi_data.rgb_array
             viewer.mask_array = self._hsi_data.mask_array
             viewer.set_photo(pixmap)
-            if state is not None:
+            # Only restore the previous pan/zoom when the image dimensions are
+            # unchanged (e.g. switching visualization mode). Otherwise (e.g.
+            # after a crop) let set_photo's fresh fit_in_view() stand, so the
+            # view actually rescales to the new image size.
+            if state is not None and previous_size == pixmap.size():
                 viewer.queue_view_state(state)
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, object]:
