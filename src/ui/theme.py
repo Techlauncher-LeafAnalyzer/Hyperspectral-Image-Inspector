@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtGui import QFontDatabase
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QFontDatabase
 from PyQt6.QtWidgets import QApplication
 
 
@@ -391,6 +392,15 @@ QGraphicsView#classificationViewer {
     border-radius: 8px;
 }
 
+QLabel#pixelValueOverlay {
+    background-color: rgba(20, 20, 20, 200);
+    color: #f5f5f5;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 11px;
+}
+
 QSplitter::handle {
     background: #dbe5e2;
 }
@@ -592,6 +602,20 @@ QScrollBar:vertical, QScrollBar:horizontal {
     border: 0;
 }
 """
+
+
+# --- HSIViewer scene styling -------------------------------------------- #
+# QGraphicsScene items (the photo, mask overlay, watermark, and annotation
+# prompts drawn on HSIViewer) are painted directly and are not reachable by
+# QSS, so their colours live here as plain constants instead.
+VIEWER_SCENE_BACKGROUND   = QColor(255, 255, 255)
+VIEWER_WATERMARK_COLOR    = QColor("#eaecee")
+VIEWER_WATERMARK_POINT_SIZE = 45
+PROMPT_POSITIVE_COLOR     = Qt.GlobalColor.green
+PROMPT_NEGATIVE_COLOR     = Qt.GlobalColor.red
+PROMPT_POINT_RADIUS       = 5.0
+CROP_OVERLAY_COLOR        = QColor(0, 0, 0, 140)
+CROP_SELECTION_COLOR      = Qt.GlobalColor.yellow
 
 
 def apply_theme(app: QApplication) -> None:

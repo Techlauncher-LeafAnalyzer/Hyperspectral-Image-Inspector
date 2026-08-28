@@ -87,11 +87,11 @@ def test_viewer_context_menu_keeps_actions_and_polished_identity(
     assert menu.minimumWidth() == 252
     assert {
         "Spectrum Plot",
-        "Clear Selection",
         "Index Mean",
         "Show Pixel Values",
         "Crop",
     } <= set(actions)
+    assert "Clear Selection" not in actions
     assert actions["Show Pixel Values"].isCheckable()
     assert actions["Show Pixel Values"].isChecked()
     assert actions["Index Mean"].menu().objectName() == "viewerIndexMenu"
@@ -120,7 +120,7 @@ def test_context_menu_polish_is_shared_by_every_tab(
 
     assert menu.objectName() == "viewerContextMenu"
     assert menu.accessibleName() == "Viewer actions"
-    assert menu.actions()[2].menu().objectName() == "viewerIndexMenu"
+    assert menu.actions()[1].menu().objectName() == "viewerIndexMenu"
     assert all(
         not action.icon().isNull()
         for action in menu.actions()
