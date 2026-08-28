@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event
 from typing import Mapping, Optional
 
 import numpy as np
@@ -14,8 +13,6 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
 from core import (
-    CancelledError,
-    ClassificationError,
     ClassificationService,
     HSIData,
     HSIError,
@@ -23,13 +20,7 @@ from core import (
     SuperResolutionRequest,
     SuperResolutionResult,
     SuperResolutionService,
-    SupervisedClassificationRequest,
-    SupervisedClassificationResult,
-    SupervisedClassifierType,
-    TrainingFilePair,
     TrainingPairResolver,
-    UnsupervisedClassificationRequest,
-    UnsupervisedClassificationResult,
     VisualizationError,
     VisualizationExportError,
     VisualizationExportRequest,
@@ -40,6 +31,7 @@ from core import (
     VisualizationService,
     WavelengthError,
 )
+from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
 from ui.hypercube_controller import HypercubeController
@@ -77,107 +69,6 @@ class _CropSnapshot:
     spectral_obj: Optional[object]
 
 
-class _ClassificationWorker(QtCore.QObject):
-    """Run the synchronous classification Model away from the GUI thread."""
-
-    progressChanged = QtCore.pyqtSignal(int, str)
-    resultReady = QtCore.pyqtSignal(object)
-    failed = QtCore.pyqtSignal(str)
-    cancelled = QtCore.pyqtSignal()
-    finished = QtCore.pyqtSignal()
-
-    def __init__(
-        self,
-        service: ClassificationService,
-        data: HSIData,
-        request: UnsupervisedClassificationRequest,
-    ) -> None:
-        super().__init__()
-        self._service = service
-        self._data = data
-        self._request = request
-        self._cancel_requested = Event()
-
-    @QtCore.pyqtSlot()
-    def run(self) -> None:
-        """Execute in a QThread and report only signal-safe result objects."""
-
-        try:
-            result = self._service.classify_unsupervised(
-                self._data,
-                self._request,
-                progress=self.progressChanged.emit,
-                is_cancelled=self._cancel_requested.is_set,
-            )
-        except CancelledError:
-            self.cancelled.emit()
-        except ClassificationError as exc:
-            self.failed.emit(str(exc))
-        except Exception as exc:  # Keep Qt's event loop alive on programming faults.
-            LOGGER.exception("Unexpected K-means classification failure")
-            self.failed.emit(f"An unexpected error occurred: {exc}")
-        else:
-            self.resultReady.emit(result)
-        finally:
-            self.finished.emit()
-
-    def cancel(self) -> None:
-        """Thread-safely request cancellation at the next Model checkpoint."""
-
-        self._cancel_requested.set()
-
-
-class _SupervisedClassificationWorker(QtCore.QObject):
-    """Open a resolved training pair and run one-example classification."""
-
-    progressChanged = QtCore.pyqtSignal(int, str)
-    resultReady = QtCore.pyqtSignal(object)
-    failed = QtCore.pyqtSignal(str)
-    cancelled = QtCore.pyqtSignal()
-    finished = QtCore.pyqtSignal()
-
-    def __init__(
-        self,
-        service: ClassificationService,
-        target_data: HSIData,
-        training_pair: TrainingFilePair,
-        request: SupervisedClassificationRequest,
-    ) -> None:
-        super().__init__()
-        self._service = service
-        self._target_data = target_data
-        self._training_pair = training_pair
-        self._request = request
-        self._cancel_requested = Event()
-
-    @QtCore.pyqtSlot()
-    def run(self) -> None:
-        try:
-            training_data = HSIReader().open(self._training_pair.cube_path)
-            result = self._service.classify_supervised(
-                self._target_data,
-                training_data,
-                self._training_pair.mask_path,
-                self._request,
-                progress=self.progressChanged.emit,
-                is_cancelled=self._cancel_requested.is_set,
-            )
-        except CancelledError:
-            self.cancelled.emit()
-        except HSIError as exc:
-            self.failed.emit(str(exc))
-        except Exception as exc:  # Keep Qt's event loop alive on programming faults.
-            LOGGER.exception("Unexpected supervised classification failure")
-            self.failed.emit(f"An unexpected error occurred: {exc}")
-        else:
-            self.resultReady.emit(result)
-        finally:
-            self.finished.emit()
-
-    def cancel(self) -> None:
-        self._cancel_requested.set()
-
-
 class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     """Application controller for the Hyperspectral Image Inspector.
 
@@ -204,21 +95,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._viz_view_scale = 1
         self._high_res_notice_shown = False
         self._close_after_sr = False
-        self._classification_service = ClassificationService()
-        self._training_pair_resolver = TrainingPairResolver()
         self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
-        self._classification_result: Optional[
-            UnsupervisedClassificationResult | SupervisedClassificationResult
-        ] = None
-        self._classification_rgb: Optional[NDArray[np.uint8]] = None
-        self._classification_thread: Optional[QtCore.QThread] = None
-        self._classification_worker: Optional[
-            _ClassificationWorker | _SupervisedClassificationWorker
-        ] = None
-        self._active_classification_button: Optional[QtWidgets.QPushButton] = None
-        self._supervised_training_pair: Optional[TrainingFilePair] = None
-        self._close_after_classification = False
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
         self._hypercube_controller = HypercubeController(
@@ -228,6 +106,24 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.statusbar,
             self._visualization_service,
         )
+        self._classification_controller = ClassificationController(
+            self._hsi_data,
+            ClassificationService(),
+            TrainingPairResolver(),
+            self.classificationViewer,
+            self.statusbar,
+            self.unsupervisedClassifyButton,
+            self.pushButton_2,
+            self.pushButton,
+            self.comboBox,
+            self.numOfClassesEdit,
+            self.maxIterationsEdit,
+            self.lineEdit,
+            self.actionLoadImage,
+            lambda: self._hypercube_controller.stop_and_wait(),
+            self,
+        )
+        self._classification_controller.readyToClose.connect(self.close)
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
@@ -328,37 +224,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.actionSaveImage.triggered.connect(self._save_image)
         self.darkFileButton.clicked.connect(self._select_dark_file)
         self.referenceFileButton.clicked.connect(self._select_reference_file)
-        self.pushButton.clicked.connect(self._select_groundtruth_file)
-        self.pushButton_2.clicked.connect(self._on_supervised_classify_clicked)
-        self.unsupervisedClassifyButton.clicked.connect(
-            self._on_unsupervised_classify_clicked
-        )
-        self.numOfClassesEdit.setValidator(QtGui.QIntValidator(2, 65535, self))
-        self.maxIterationsEdit.setValidator(QtGui.QIntValidator(1, 10000, self))
-        self.numOfClassesEdit.setText("5")
-        self.maxIterationsEdit.setText("20")
-        # Keep the View's existing selector driven by the Model enum.  Storing
-        # the enum as item data means the Controller does not depend on the
-        # user-visible label when it builds a classification request.
-        self.comboBox.clear()
-        for classifier in SupervisedClassifierType:
-            self.comboBox.addItem(classifier.value, classifier)
-        self.comboBox.setToolTip(
-            "Choose the Spectral Python classifier used for one-example transfer"
-        )
-        self.unsupervisedClassifyButton.setToolTip(
-            "Load an image, then group pixels by spectral similarity with K-means"
-        )
-        self.pushButton_2.setToolTip(
-            "Classify the current image from the selected reference mask and cube"
-        )
-        self.pushButton.setText("Ground-truth Mask")
-        self.pushButton.setToolTip(
-            "Select a mask; its hyperspectral cube is paired automatically by name"
-        )
-        self.lineEdit.setPlaceholderText(
-            "Select mask; matching cube is detected automatically"
-        )
         self.highResButton.toggled.connect(
             self._update_super_resolution_view_state
         )
@@ -579,16 +444,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._hypercube_controller.shutdown()
-        if self._classification_is_running():
-            assert self._classification_worker is not None
-            self._classification_worker.cancel()
-            self._close_after_classification = True
-            if self._active_classification_button is not None:
-                self._active_classification_button.setEnabled(False)
-                self._active_classification_button.setText("Cancelling…")
-            self.statusbar.showMessage(
-                "Cancelling classification before closing the application…"
-            )
+        if self._classification_controller.request_close():
             event.ignore()
             return
         # Never destroy a running QThread or block Qt waiting for inference.
@@ -614,46 +470,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._select_supporting_file(
             self.referenceFileEdit,
             "Open Reference File",
-        )
-
-    def _select_groundtruth_file(self) -> None:
-        if self._classification_is_running():
-            QMessageBox.information(
-                self,
-                "Classification in progress",
-                "Cancel the current classification before changing training data.",
-            )
-            return
-        mask_path_str, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open Ground-truth Mask",
-            "",
-            (
-                "Ground-truth Masks (*.png *.tif *.tiff *.bmp *.jpg *.jpeg);;"
-                "All Files (*)"
-            ),
-        )
-        if not mask_path_str:
-            return
-
-        try:
-            pair = self._training_pair_resolver.resolve(mask_path_str)
-        except ClassificationError as exc:
-            self._supervised_training_pair = None
-            self.lineEdit.clear()
-            self.lineEdit.setToolTip("")
-            QMessageBox.critical(self, "Invalid training-file pair", str(exc))
-            self.statusbar.showMessage("Training-file pairing failed", 8000)
-            return
-
-        self._supervised_training_pair = pair
-        self.lineEdit.setText(str(pair.mask_path))
-        self.lineEdit.setToolTip(
-            f"Mask: {pair.mask_path}\nHyperspectral cube: {pair.cube_path}"
-        )
-        self.statusbar.showMessage(
-            f"Training mask paired with {pair.cube_path.name}",
-            8000,
         )
 
     def _select_supporting_file(
@@ -696,7 +512,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Cancel or finish SR before loading another image")
             return
-        if self._classification_is_running():
+        if self._classification_controller.is_running():
             QMessageBox.information(
                 self,
                 "Classification in progress",
@@ -727,7 +543,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         candidate.rgb_array = rgb_array
         candidate.mask_array = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
         self._hsi_data.update_from(candidate)
-        self._clear_classification_result()
+        self._classification_controller.clear_result()
         loaded_path = self._hsi_data.data_path
 
         loaded_file_text = f"File Loaded: {loaded_path}"
@@ -737,8 +553,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.superResFilePath.setToolTip(str(loaded_path))
         self.classificationFilePath.setText(loaded_file_text)
         self.classificationFilePath.setToolTip(str(loaded_path))
-        self.unsupervisedClassifyButton.setEnabled(True)
-        self.pushButton_2.setEnabled(True)
+        self._classification_controller.set_image_loaded(True)
         self.statusbar.showMessage(f"Loaded {loaded_path.name}")
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
@@ -755,9 +570,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         display_rgb = result.display_rgb if result is not None else self._display_data().rgb_array
         if (
             self._active_viewer is self.classificationViewer
-            and self._classification_rgb is not None
+            and self._classification_controller.rgb is not None
         ):
-            display_rgb = self._classification_rgb
+            display_rgb = self._classification_controller.rgb
         if self.tabWidget.currentWidget() is self.SuperResolution:
             if self.highResButton.isChecked() and self._super_res_result is None:
                 QMessageBox.information(self, "Nothing to save", "Run Super-Resolution first.")
@@ -821,7 +636,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         data = self._display_data()
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else data.rgb_array
-        pixmap = hsi_utils.numpy_to_qpixmap(display_rgb)
         new_scale = 2 if data is not self._hsi_data else 1
         factor = new_scale / self._viz_view_scale
         for viewer in self._all_viewers():
@@ -829,14 +643,18 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 continue
             previous_size = viewer.photo_size()
             state = viewer.get_view_state()
+            use_classification = (
+                viewer is self.classificationViewer
+                and self._classification_controller.rgb is not None
+            )
             viewer_display = (
-                self._classification_rgb
-                if viewer is self.classificationViewer
-                and self._classification_rgb is not None
+                self._classification_controller.rgb
+                if use_classification
                 else display_rgb
             )
-            viewer.rgb        = data.rgb_array
-            viewer.mask_array = data.mask_array
+            viewer_data = self._hsi_data if use_classification else data
+            viewer.rgb        = viewer_data.rgb_array
+            viewer.mask_array = viewer_data.mask_array
             pixmap = hsi_utils.numpy_to_qpixmap(viewer_display)
             viewer.set_photo(pixmap)
             # Restore the previous pan/zoom, rescaled by `factor`, when the
@@ -845,8 +663,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             # visualization mode). Otherwise (e.g. after a crop) let
             # set_photo's fresh fit_in_view() stand, so the view actually
             # rescales to the new image size.
-            if state is not None and previous_size is not None and previous_size * factor == pixmap.size():
-                viewer.queue_view_state((state[0] / factor, state[1] * factor))
+            viewer_factor = 1.0 if use_classification else factor
+            if (
+                state is not None
+                and previous_size is not None
+                and previous_size * viewer_factor == pixmap.size()
+            ):
+                viewer.queue_view_state(
+                    (state[0] / viewer_factor, state[1] * viewer_factor)
+                )
         self._viz_view_scale = new_scale
         self._refresh_super_resolution_display()
 
@@ -871,286 +696,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         """Add the zero-based K-means class ID to classification hover data."""
 
         values = dict(self._pixel_values_at(row, column))
-        result = self._classification_result
-        if result is not None and (
-            0 <= row < result.class_map.shape[0]
-            and 0 <= column < result.class_map.shape[1]
-        ):
-            values["Class"] = int(result.class_map[row, column])
+        class_id = self._classification_controller.class_id_at(row, column)
+        if class_id is not None:
+            values["Class"] = class_id
         return values
-
-    # ------------------------------------------------------------------ #
-    # Private: unsupervised classification                                #
-    # ------------------------------------------------------------------ #
-
-    def _on_unsupervised_classify_clicked(self) -> None:
-        """Start K-means, or turn the same button into a cancellation action."""
-
-        if self._classification_is_running():
-            self._cancel_active_classification()
-            return
-        if not self._hsi_data.is_loaded():
-            QMessageBox.information(self, "Nothing to classify", "Load an image first.")
-            return
-
-        try:
-            request = UnsupervisedClassificationRequest(
-                n_classes=int(self.numOfClassesEdit.text()),
-                max_iterations=int(self.maxIterationsEdit.text()),
-            )
-        except ValueError:
-            QMessageBox.critical(
-                self,
-                "Invalid classification settings",
-                "Enter whole numbers for classes and maximum iterations.",
-            )
-            return
-        except ClassificationError as exc:
-            QMessageBox.critical(self, "Invalid classification settings", str(exc))
-            return
-
-        estimate = self._classification_service.estimate_kmeans_working_bytes(
-            self._hsi_data, request
-        )
-        if estimate >= 1_000_000_000 and not self._confirm_large_classification(
-            estimate
-        ):
-            return
-
-        self._start_classification_worker(request)
-
-    def _on_supervised_classify_clicked(self) -> None:
-        """Train from the automatically paired example and classify the target."""
-
-        if self._classification_is_running():
-            self._cancel_active_classification()
-            return
-        if not self._hsi_data.is_loaded():
-            QMessageBox.information(self, "Nothing to classify", "Load an image first.")
-            return
-        if self._supervised_training_pair is None:
-            QMessageBox.critical(
-                self,
-                "Training mask required",
-                (
-                    "Select a ground-truth mask first. The program will look beside "
-                    "it for a same-base hyperspectral cube or an "
-                    "_hyperspectral cube pair."
-                ),
-            )
-            return
-        classifier = self.comboBox.currentData()
-        if not isinstance(classifier, SupervisedClassifierType):
-            QMessageBox.critical(
-                self,
-                "Unsupported supervised classifier",
-                "Select a supported supervised classifier and try again.",
-            )
-            return
-        request = SupervisedClassificationRequest(classifier)
-
-        worker = _SupervisedClassificationWorker(
-            self._classification_service,
-            self._hsi_data,
-            self._supervised_training_pair,
-            request,
-        )
-        self._launch_classification_worker(
-            worker,
-            self.pushButton_2,
-            f"Starting {request.classifier.value} classification…",
-        )
-
-    def _cancel_active_classification(self) -> None:
-        assert self._classification_worker is not None
-        self._classification_worker.cancel()
-        if self._active_classification_button is not None:
-            self._active_classification_button.setEnabled(False)
-            self._active_classification_button.setText("Cancelling…")
-        self.statusbar.showMessage(
-            "Cancelling after the current classification stage…"
-        )
-
-    def _confirm_large_classification(self, estimated_bytes: int) -> bool:
-        gibibytes = estimated_bytes / (1024 ** 3)
-        answer = QMessageBox.question(
-            self,
-            "Large classification job",
-            (
-                f"K-means may require about {gibibytes:.1f} GiB of working memory. "
-                "Cropping the image first is recommended. Continue anyway?"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
-
-    def _start_classification_worker(
-        self, request: UnsupervisedClassificationRequest
-    ) -> None:
-        worker = _ClassificationWorker(
-            self._classification_service,
-            self._hsi_data,
-            request,
-        )
-        self._launch_classification_worker(
-            worker,
-            self.unsupervisedClassifyButton,
-            "Starting K-means classification…",
-        )
-
-    def _launch_classification_worker(
-        self,
-        worker: _ClassificationWorker | _SupervisedClassificationWorker,
-        active_button: QtWidgets.QPushButton,
-        starting_message: str,
-    ) -> None:
-        """Create one worker/thread pair; all View updates stay on the GUI thread."""
-
-        self._hypercube_controller.stop_and_wait()
-        thread = QtCore.QThread(self)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.progressChanged.connect(self._on_classification_progress)
-        worker.resultReady.connect(self._on_classification_result)
-        worker.failed.connect(self._on_classification_failed)
-        worker.cancelled.connect(self._on_classification_cancelled)
-        worker.finished.connect(self._on_classification_finished)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._clear_classification_worker)
-
-        self._classification_thread = thread
-        self._classification_worker = worker
-        self._active_classification_button = active_button
-        self.numOfClassesEdit.setEnabled(False)
-        self.maxIterationsEdit.setEnabled(False)
-        self.pushButton.setEnabled(False)
-        self.comboBox.setEnabled(False)
-        self.actionLoadImage.setEnabled(False)
-        self.unsupervisedClassifyButton.setEnabled(
-            active_button is self.unsupervisedClassifyButton
-        )
-        self.pushButton_2.setEnabled(active_button is self.pushButton_2)
-        active_button.setText("Cancel")
-        active_button.setToolTip(
-            "Request cancellation after the current classification stage"
-        )
-        self.statusbar.showMessage(starting_message)
-        thread.start()
-
-    @QtCore.pyqtSlot(int, str)
-    def _on_classification_progress(self, value: int, message: str) -> None:
-        self.statusbar.showMessage(f"Classification {value}% — {message}")
-
-    @QtCore.pyqtSlot(object)
-    def _on_classification_result(self, result: object) -> None:
-        if not isinstance(
-            result,
-            (UnsupervisedClassificationResult, SupervisedClassificationResult),
-        ):
-            self._on_classification_failed("Worker returned an invalid result.")
-            return
-        self._classification_result = result
-        class_ids = (
-            result.class_ids
-            if isinstance(result, SupervisedClassificationResult)
-            else tuple(range(result.n_classes))
-        )
-        self._classification_rgb = self._colorize_class_map(
-            result.class_map,
-            class_ids,
-        )
-        self._show_classification_result()
-        populated = int(np.count_nonzero(result.class_pixel_counts))
-        operation = (
-            result.classifier.value
-            if isinstance(result, SupervisedClassificationResult)
-            else "K-means"
-        )
-        self.statusbar.showMessage(
-            f"{operation} complete: {populated}/{result.n_classes} populated classes",
-            8000,
-        )
-
-    @QtCore.pyqtSlot(str)
-    def _on_classification_failed(self, message: str) -> None:
-        QMessageBox.critical(self, "Classification failed", message)
-        self.statusbar.showMessage("Classification failed", 8000)
-
-    @QtCore.pyqtSlot()
-    def _on_classification_cancelled(self) -> None:
-        self.statusbar.showMessage("Classification cancelled", 5000)
-
-    @QtCore.pyqtSlot()
-    def _on_classification_finished(self) -> None:
-        self.numOfClassesEdit.setEnabled(True)
-        self.maxIterationsEdit.setEnabled(True)
-        self.pushButton.setEnabled(True)
-        self.comboBox.setEnabled(True)
-        self.actionLoadImage.setEnabled(True)
-        self.unsupervisedClassifyButton.setEnabled(self._hsi_data.is_loaded())
-        self.pushButton_2.setEnabled(self._hsi_data.is_loaded())
-        self.unsupervisedClassifyButton.setText("Classify")
-        self.pushButton_2.setText("Classify")
-        self.unsupervisedClassifyButton.setToolTip(
-            "Group pixels by spectral similarity with K-means"
-        )
-        self.pushButton_2.setToolTip(
-            "Classify from the selected reference mask and paired cube"
-        )
-
-    @QtCore.pyqtSlot()
-    def _clear_classification_worker(self) -> None:
-        self._classification_worker = None
-        self._classification_thread = None
-        self._active_classification_button = None
-        if self._close_after_classification:
-            self._close_after_classification = False
-            QtCore.QTimer.singleShot(0, self.close)
-
-    def _show_classification_result(self) -> None:
-        if self._classification_rgb is None:
-            return
-        viewer = self.classificationViewer
-        state = viewer.get_view_state()
-        viewer.set_photo(hsi_utils.numpy_to_qpixmap(self._classification_rgb))
-        if state is not None:
-            viewer.queue_view_state(state)
-
-    @staticmethod
-    def _colorize_class_map(
-        class_map: np.ndarray,
-        class_ids: tuple[int, ...],
-    ) -> NDArray[np.uint8]:
-        """Map arbitrary class IDs to stable, evenly spaced display colors."""
-
-        display_rgb = np.zeros((*class_map.shape, 3), dtype=np.uint8)
-        for color_index, class_id in enumerate(class_ids):
-            color = QtGui.QColor.fromHsvF(
-                color_index / max(len(class_ids), 1),
-                0.72,
-                0.92,
-            )
-            display_rgb[class_map == class_id] = (
-                color.red(),
-                color.green(),
-                color.blue(),
-            )
-        return display_rgb
-
-    def _clear_classification_result(self) -> None:
-        """Discard labels whenever the underlying cube geometry changes."""
-
-        self._classification_result = None
-        self._classification_rgb = None
-
-    def _classification_is_running(self) -> bool:
-        return (
-            self._classification_thread is not None
-            and self._classification_thread.isRunning()
-        )
 
     # ------------------------------------------------------------------ #
     # Private: viewer signal handlers                                      #
@@ -1159,7 +708,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _on_spectrum_plot(self, pos: QPointF) -> None:
         if not self._hsi_data.is_loaded():
             return
-        if self._classification_is_running():
+        if self._classification_controller.is_running():
             self.statusbar.showMessage(
                 "Spectrum reads are unavailable while classification is running",
                 5000,
@@ -1233,7 +782,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         if not self._hsi_data.is_loaded():
             return
-        if self._classification_is_running():
+        if self._classification_controller.is_running():
             self.statusbar.showMessage(
                 "Cancel classification before changing the image crop",
                 5000,
@@ -1253,7 +802,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._crop_undo_stack.pop()
             return
 
-        self._clear_classification_result()
+        self._classification_controller.clear_result()
         self._push_image_to_viewers()
         self.statusbar.showMessage(
             f"Cropped to {cropped_size[0]}x{cropped_size[1]}"
@@ -1327,13 +876,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data.rgb_array    = snapshot.rgb_array
         self._hsi_data.mask_array   = snapshot.mask_array
         self._hsi_data.spectral_obj = snapshot.spectral_obj
-        self._clear_classification_result()
+        self._classification_controller.clear_result()
         self._push_image_to_viewers()
 
     def _undo_crop(self) -> None:
         if (
             self._super_res_worker is not None
-            or self._classification_is_running()
+            or self._classification_controller.is_running()
             or not self._crop_undo_stack
         ):
             return
@@ -1344,7 +893,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _redo_crop(self) -> None:
         if (
             self._super_res_worker is not None
-            or self._classification_is_running()
+            or self._classification_controller.is_running()
             or not self._crop_redo_stack
         ):
             return
