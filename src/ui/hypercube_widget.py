@@ -122,7 +122,7 @@ class HypercubeWidget(QOpenGLWidget):
         self._reset_button = QPushButton("Reset view", self)
         self._reset_button.setObjectName("hypercubeResetButton")
         self._reset_button.clicked.connect(self.reset_view)
-        self._export_button = QPushButton("Export current view…", self)
+        self._export_button = QPushButton("Export current view", self)
         self._export_button.setObjectName("hypercubeExportButton")
         self._export_button.clicked.connect(self._choose_export)
         self._position_controls()

@@ -115,7 +115,7 @@ def test_reference_view_camera_defaults_and_bounded_zoom(qtbot):
 
     assert widget._camera_distance == HypercubeWidget.DEFAULT_CAMERA[0]
     assert widget._target == [0.0, 0.0, 0.0]
-    assert widget._export_button.text() == "Export current view…"
+    assert widget._export_button.text() == "Export current view"
 
 
 def test_reference_view_axis_geometry_uses_model_axes():
