@@ -33,7 +33,9 @@ class PixelValueEntry(NamedTuple):
 
 
 # Signature for the callback that supplies visualization values for a single hovered pixel.
-PixelValueProvider = Callable[[int, int], Mapping[str, PixelValueEntry]]
+PixelValueProvider = Callable[
+    [int, int], Mapping[str, PixelValueEntry | int]
+]
 
 
 class HSIViewer(QtWidgets.QGraphicsView):
@@ -515,11 +517,19 @@ class HSIViewer(QtWidgets.QGraphicsView):
         target.setY(min(target.y(), max(0, bounds.height() - self._pixel_overlay.height())))
         self._pixel_overlay.move(target)
 
-    def _format_pixel_values(self, values: Mapping[str, PixelValueEntry]) -> str:
+    def _format_pixel_values(
+        self, values: Mapping[str, PixelValueEntry | int]
+    ) -> str:
         rows: list[str] = []
+        class_id = values.get("Class")
+        if isinstance(class_id, (int, np.integer)):
+            rows.append(
+                '<tr><td width="10" height="10"></td>'
+                f'<td style="padding-left:6px;">Class: {int(class_id)}</td></tr>'
+            )
         for name in self.VISUALIZATION_NAMES:
             entry = values.get(name)
-            if entry is None:
+            if not isinstance(entry, PixelValueEntry):
                 swatch_color = None
                 text = "—"
             else:
