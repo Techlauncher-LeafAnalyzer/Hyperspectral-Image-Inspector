@@ -30,16 +30,19 @@ from core import (
     WavelengthError,
 )
 from ui.generated.MainWindow import Ui_MainWindow
+from ui.index_mean_dialog import IndexMeanDialog
+from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
 from ui.super_resolution_worker import SuperResolutionWorker
 from ui.tab_transition.handler import TabTransitionHandler
-from ui.viewer import HSIViewer
+from ui.viewer import HSIViewer, PixelValueEntry
 
 
 # Modes rendered eagerly after every image change so hover tooltips, mode
 # switching, and index-mean lookups can read cached results instead of
 # recomputing on demand. BAND is excluded (no band-index selector exists in
-# the UI) and HyperCube is excluded (no hypercube view is wired up yet).
+# the UI) and HyperCube is excluded (it has its own dedicated background
+# worker, driven by HypercubeController).
 _CACHED_VISUALIZATION_MODES = (
     VisualizationMode.RGB,
     VisualizationMode.NDVI,
@@ -91,6 +94,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
+        self._hypercube_controller = HypercubeController(
+            self.modeHyperCube,
+            self.visualizationStack,
+            self.hypercubeWidget,
+            self.statusbar,
+            self._visualization_service,
+        )
         self._configure_tabs()
         self._configure_file_menu()
         self._connect_signals()
@@ -229,8 +239,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 lambda checked, mode=mode: self._on_visualization_mode_toggled(mode, checked)
             )
         self.modeRGB.setChecked(True)
-        self.modeHyperCube.setEnabled(False)
-        self.modeHyperCube.setToolTip("Hypercube view is not implemented yet")
 
         QtGui.QShortcut(
             QtGui.QKeySequence.StandardKey.Undo,
@@ -266,6 +274,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         return self._hsi_data
 
     def _refresh_super_resolution_display(self) -> None:
+        previous_size = self.superResViewer.photo_size()
         state = self.superResViewer.get_view_state()
         if self.highResButton.isChecked() and self._super_res_result is None:
             self.superResViewer.rgb = None
@@ -278,20 +287,28 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         new_scale = 2 if data is not self._hsi_data else 1
         self.superResViewer.rgb = data.rgb_array
         self.superResViewer.mask_array = data.mask_array
-        self.superResViewer.set_photo(hsi_utils.numpy_to_qpixmap(data.rgb_array))
-        if state is not None:
-            factor = new_scale / self._sr_view_scale
+        pixmap = hsi_utils.numpy_to_qpixmap(data.rgb_array)
+        self.superResViewer.set_photo(pixmap)
+        factor = new_scale / self._sr_view_scale
+        # Preserve comparison framing for LR/HR toggles, but refit after a
+        # source crop/resize just like the other viewers (LEAF-153).
+        if (
+            state is not None
+            and previous_size is not None
+            and previous_size * factor == pixmap.size()
+        ):
             self.superResViewer.queue_view_state((state[0] / factor, state[1] * factor))
         self._sr_view_scale = new_scale
 
-    def _sr_pixel_values_at(self, row: int, column: int) -> Mapping[str, object]:
+    def _sr_pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
         data = self._sr_display_data()
         if self.highResButton.isChecked() and self._super_res_result is None:
             return {}
         rgb = data.rgb_array
         if rgb is None or not (0 <= row < rgb.shape[0] and 0 <= column < rgb.shape[1]):
             return {}
-        return {"RGB": tuple(int(value) for value in rgb[row, column])}
+        color = tuple(int(value) for value in rgb[row, column])
+        return {"RGB": PixelValueEntry(value=color, color=color)}
 
     def _run_super_resolution(self) -> None:
         if self._super_res_worker is not None:
@@ -313,6 +330,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.runSuperResButton.setToolTip("Cancel after the current inference tile")
         self.superResProgressBar.setValue(0)
         self.superResStatusStack.setCurrentWidget(self.superResProgressPage)
+        # Both features read the same SpyFile. Finish cancellation of any
+        # hypercube read before handing the source to the SR worker.
+        self._hypercube_controller.stop_and_wait()
         worker = SuperResolutionWorker(self._super_resolution_service, self._hsi_data,
                                        self._super_resolution_request, parent=self)
         self._super_res_worker = worker
@@ -366,6 +386,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.statusbar.showMessage(self._super_res_error)
         if self._close_after_sr:
             QtCore.QTimer.singleShot(0, self.close)
+        else:
+            # A cube build cancelled to make room for SR must not remain stuck
+            # at "Computing hypercube". The original source is still unchanged.
+            self._hypercube_controller.resume(self._hsi_data)
 
     def _set_super_resolution_ready(self) -> None:
         self.actionLoadImage.setEnabled(True)
@@ -384,6 +408,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._update_super_resolution_view_state(False)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._hypercube_controller.shutdown()
         # Never destroy a running QThread or block Qt waiting for inference.
         if self._super_res_worker is not None:
             self._close_after_sr = True
@@ -540,11 +565,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _on_visualization_mode_toggled(self, mode: VisualizationMode, checked: bool) -> None:
         if not checked:
             return
+        self.visualizationStack.setCurrentWidget(self.viewer)
         self._active_visualization_mode = mode
         if self._hsi_data.is_loaded():
             self._refresh_viewers_display()
 
     def _recompute_visualizations(self) -> None:
+        self._hypercube_controller.stop_and_wait()
         self._visualization_results = {}
         for mode in _CACHED_VISUALIZATION_MODES:
             try:
@@ -567,26 +594,32 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         for viewer in self._all_viewers():
             if viewer is self.superResViewer:
                 continue
+            previous_size = viewer.photo_size()
             state = viewer.get_view_state()
             viewer.rgb        = self._hsi_data.rgb_array
             viewer.mask_array = self._hsi_data.mask_array
             viewer.set_photo(pixmap)
-            if state is not None:
+            # Only restore the previous pan/zoom when the image dimensions are
+            # unchanged (e.g. switching visualization mode). Otherwise (e.g.
+            # after a crop) let set_photo's fresh fit_in_view() stand, so the
+            # view actually rescales to the new image size.
+            if state is not None and previous_size == pixmap.size():
                 viewer.queue_view_state(state)
         self._refresh_super_resolution_display()
 
-    def _pixel_values_at(self, row: int, column: int) -> Mapping[str, object]:
-        values: dict[str, object] = {}
+    def _pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
+        values: dict[str, PixelValueEntry] = {}
         for mode, result in self._visualization_results.items():
             height, width = result.display_rgb.shape[:2]
             if not (0 <= row < height and 0 <= column < width):
                 continue
+            color = tuple(int(channel) for channel in result.display_rgb[row, column])
             if mode is VisualizationMode.RGB:
-                values[mode.value] = tuple(
-                    int(channel) for channel in result.display_rgb[row, column]
-                )
+                values[mode.value] = PixelValueEntry(value=color, color=color)
             elif result.values is not None:
-                values[mode.value] = float(result.values[row, column])
+                values[mode.value] = PixelValueEntry(
+                    value=float(result.values[row, column]), color=color
+                )
         return values
 
     # ------------------------------------------------------------------ #
@@ -607,6 +640,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if not (0 <= row < data.rows and 0 <= column < data.columns):
             return
 
+        # A hypercube worker still in flight reads the same underlying
+        # SpyFile handle; serialize this read behind it rather than risking
+        # a concurrent read of a non-thread-safe file object.
+        self._hypercube_controller.stop_and_wait()
         try:
             result = self._visualization_service.spectrum(data, row, column)
         except HSIError as exc:
@@ -638,7 +675,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
 
         mean_value = float(np.nanmean(result.values))
-        self.statusbar.showMessage(f"{index_name} mean: {mean_value:.4f}", 8000)
+        dialog = IndexMeanDialog(
+            index_name,
+            mean_value,
+            result.value_range,
+            result.colormap,
+            parent=self,
+        )
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _on_crop_requested(self, rect: QtCore.QRectF) -> None:
         if self._super_res_worker is not None:
@@ -730,3 +776,4 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._reset_super_resolution()
         self._recompute_visualizations()
         self._refresh_viewers_display()
+        self._hypercube_controller.refresh(self._hsi_data)

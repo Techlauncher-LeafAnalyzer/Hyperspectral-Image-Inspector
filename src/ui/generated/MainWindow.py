@@ -1,4 +1,4 @@
-# Form implementation generated from reading ui file 'src/qt/MainWindow.ui'
+# Form implementation generated from reading ui file 'qt/MainWindow.ui'
 #
 # Created by: PyQt6 UI code generator 6.11.0
 #
@@ -23,10 +23,16 @@ class Ui_MainWindow(object):
         self.Visualization.setObjectName("Visualization")
         self.verticalLayout = QtWidgets.QVBoxLayout(self.Visualization)
         self.verticalLayout.setObjectName("verticalLayout")
-        self.viewer = HSIViewer(parent=self.Visualization)
+        self.visualizationStack = QtWidgets.QStackedWidget(parent=self.Visualization)
+        self.visualizationStack.setObjectName("visualizationStack")
+        self.viewer = HSIViewer()
         self.viewer.setLayoutDirection(QtCore.Qt.LayoutDirection.LeftToRight)
         self.viewer.setObjectName("viewer")
-        self.verticalLayout.addWidget(self.viewer)
+        self.visualizationStack.addWidget(self.viewer)
+        self.hypercubeWidget = HypercubeWidget()
+        self.hypercubeWidget.setObjectName("hypercubeWidget")
+        self.visualizationStack.addWidget(self.hypercubeWidget)
+        self.verticalLayout.addWidget(self.visualizationStack)
         self.imageFilePath = QtWidgets.QLabel(parent=self.Visualization)
         self.imageFilePath.setObjectName("imageFilePath")
         self.verticalLayout.addWidget(self.imageFilePath)
@@ -331,4 +337,5 @@ class Ui_MainWindow(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.Classification), _translate("MainWindow", "Classification"))
         self.actionLoadImage.setText(_translate("MainWindow", "Load Image"))
         self.actionSaveImage.setText(_translate("MainWindow", "Save Image"))
+from ui.hypercube_widget import HypercubeWidget
 from ui.viewer import HSIViewer

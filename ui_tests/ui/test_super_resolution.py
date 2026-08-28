@@ -6,11 +6,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from PIL import Image
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtWidgets
 from spectral.io import envi
 
-from core import CancelledError, HSIReader, SuperResolutionError, SuperResolutionResult
+from core import CancelledError, HSIReader, SuperResolutionError, SuperResolutionResult, VisualizationMode
 from core.super_resolution_model import DEFAULT_CHECKPOINT
+from ui.index_mean_dialog import IndexMeanDialog
+from ui.viewer import PixelValueEntry
 
 
 @pytest.fixture
@@ -152,7 +154,11 @@ def test_crop_and_new_load_invalidate_sr(loaded_window, stub_sr, qtbot, syntheti
     assert window._super_res_result is None and window.lowResButton.isChecked()
 
 
-def test_close_cancels_without_destroying_running_thread(loaded_window, stub_sr, qtbot):
+def test_close_cancels_without_destroying_running_thread(loaded_window, stub_sr, qtbot, monkeypatch):
+    monkeypatch.setattr(
+        loaded_window._hypercube_controller, "resume",
+        lambda data: pytest.fail("Closing must not restart a hypercube worker"),
+    )
     loaded_window.show()
     loaded_window.runSuperResButton.click()
     qtbot.waitUntil(stub_sr.started.is_set)
@@ -189,6 +195,106 @@ def test_sr_tab_transfers_view_coordinates_at_correct_scale(loaded_window, stub_
     monkeypatch.setattr(window.superResViewer, "queue_view_state", received.append)
     window._on_tab_changed(1)
     assert received[-1] == (2.0, QtCore.QPointF(6, 10))
+
+
+def test_sr_pixel_tiles_use_the_displayed_image(loaded_window, stub_sr, qtbot):
+    window = loaded_window
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    for button, row, column in ((window.highResButton, 14, 15), (window.lowResButton, 6, 7)):
+        button.setChecked(True)
+        entries = window.superResViewer.pixel_value_provider(row, column)
+        color = tuple(int(value) for value in window.superResViewer.rgb[row, column])
+        assert entries == {"RGB": PixelValueEntry(value=color, color=color)}
+        html = window.superResViewer._format_pixel_values(entries)
+        assert 'bgcolor="#{:02x}{:02x}{:02x}"'.format(*color) in html
+        assert "RGB: ({}, {}, {})".format(*color) in html
+    assert window.superResViewer.pixel_value_provider(14, 15) == {}
+
+
+def test_sr_comparison_preserves_framing_when_toggling_resolution(loaded_window, stub_sr, qtbot):
+    window = loaded_window
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    window.tabWidget.setCurrentWidget(window.SuperResolution)
+    window.show()
+    qtbot.waitExposed(window)
+    qtbot.wait(50)
+    window.superResViewer.set_view_state((4.0, QtCore.QPointF(8, 8)))
+    window.lowResButton.setChecked(True)
+    qtbot.wait(50)
+    assert window.superResViewer.get_view_state()[0] == pytest.approx(8.0)
+    window.highResButton.setChecked(True)
+    qtbot.wait(50)
+    assert window.superResViewer.get_view_state()[0] == pytest.approx(4.0)
+
+
+def test_index_mean_dialog_remains_available_for_original_after_sr(loaded_window, stub_sr, qtbot):
+    window = loaded_window
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    # HR indices have not been computed, so keep the existing clear message.
+    window.superResViewer.meanIndexRequested.emit("NDVI")
+    assert not window.findChildren(IndexMeanDialog)
+    assert "original image" in window.statusbar.currentMessage()
+    window.lowResButton.setChecked(True)
+    window.superResViewer.meanIndexRequested.emit("NDVI")
+    dialog = window.findChild(IndexMeanDialog)
+    assert dialog is not None and dialog.isVisible()
+    value = np.nanmean(window._visualization_results[VisualizationMode.NDVI].values)
+    assert dialog.findChild(QtWidgets.QLabel, "indexMeanValue").text() == f"{value:.4f}"
+    dialog.close()
+
+
+def test_sr_serializes_cube_reads_and_resumes_interrupted_hypercube(
+    loaded_window, stub_sr, qtbot, monkeypatch
+):
+    window = loaded_window
+    controller = window._hypercube_controller
+    controller.stop_and_wait()
+    active = threading.Event()
+    stopped = threading.Event()
+    service = window._visualization_service
+    prepare = service.prepare_hypercube_view
+
+    def interrupted_build(data, *, progress, is_cancelled):
+        active.set()
+        try:
+            while not stopped.wait(.005):
+                if is_cancelled():
+                    raise CancelledError()
+        finally:
+            active.clear()
+            stopped.set()
+
+    monkeypatch.setattr(service, "prepare_hypercube_view", interrupted_build)
+    controller.refresh(window._hsi_data)
+    qtbot.waitUntil(active.is_set)
+    generation = controller._generation
+    run = window._super_resolution_service.run
+
+    def guarded_run(*args, **kwargs):
+        assert stopped.is_set() and not active.is_set(), "Cube readers must not overlap"
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(window._super_resolution_service, "run", guarded_run)
+    window.runSuperResButton.click()
+    qtbot.waitUntil(stub_sr.started.is_set)
+    assert controller._worker is None
+    # A queued callback from the cancelled job must not overwrite SR status.
+    controller._on_progress(generation, 10, "stale cube read")
+    assert "stale cube read" not in window.statusbar.currentMessage()
+    monkeypatch.setattr(service, "prepare_hypercube_view", prepare)
+    stub_sr.release.set()
+    finish(qtbot, window)
+    qtbot.waitUntil(lambda: controller._view_data is not None)
+    window.modeHyperCube.setChecked(True)
+    assert window.visualizationStack.currentWidget() is window.hypercubeWidget
+    assert window.hypercubeWidget._view_data is controller._view_data
+    assert window._super_res_result.data.shape == (16, 16, 8)
 
 
 @pytest.mark.sr_model
