@@ -14,6 +14,7 @@ import core.hsi_utils as hsi_utils
 from core import (
     CancelledError,
     ClassificationError,
+    ClassificationLayerModel,
     ClassificationService,
     HSIData,
     HSIError,
@@ -26,7 +27,16 @@ from core import (
     UnsupervisedClassificationRequest,
     UnsupervisedClassificationResult,
 )
+from ui.classification_layer_panel import ClassificationLayerPanel
+from ui.theme import VIEWER_SCENE_BACKGROUND
 from ui.viewer import HSIViewer
+
+_LAYER_COMPOSITE_BACKGROUND = (
+    VIEWER_SCENE_BACKGROUND.red(),
+    VIEWER_SCENE_BACKGROUND.green(),
+    VIEWER_SCENE_BACKGROUND.blue(),
+)
+_OPACITY_REFRESH_INTERVAL_MS = 40
 
 LOGGER = logging.getLogger(__name__)
 
@@ -153,6 +163,7 @@ class ClassificationController(QObject):
         service: ClassificationService,
         training_pair_resolver: TrainingPairResolver,
         viewer: HSIViewer,
+        layer_panel: ClassificationLayerPanel,
         statusbar: QtWidgets.QStatusBar,
         unsupervised_button: QtWidgets.QPushButton,
         supervised_button: QtWidgets.QPushButton,
@@ -170,6 +181,7 @@ class ClassificationController(QObject):
         self._service = service
         self._training_pair_resolver = training_pair_resolver
         self._viewer = viewer
+        self._layer_panel = layer_panel
         self._statusbar = statusbar
         self._unsupervised_button = unsupervised_button
         self._supervised_button = supervised_button
@@ -184,6 +196,11 @@ class ClassificationController(QObject):
 
         self._result: Optional[_ClassificationResult] = None
         self._rgb: Optional[NDArray[np.uint8]] = None
+        self._layers: Optional[ClassificationLayerModel] = None
+        self._opacity_refresh_timer = QtCore.QTimer(self)
+        self._opacity_refresh_timer.setSingleShot(True)
+        self._opacity_refresh_timer.setInterval(_OPACITY_REFRESH_INTERVAL_MS)
+        self._opacity_refresh_timer.timeout.connect(self._show_result)
         self._thread: Optional[QtCore.QThread] = None
         self._worker: Optional[
             Union[_ClassificationWorker, _SupervisedClassificationWorker]
@@ -225,6 +242,8 @@ class ClassificationController(QObject):
 
         self._result = None
         self._rgb = None
+        self._layers = None
+        self._layer_panel.clear()
 
     def request_close(self) -> bool:
         """Begin cancelling a running classification for an application close.
@@ -254,6 +273,8 @@ class ClassificationController(QObject):
         self._groundtruth_button.clicked.connect(self._on_select_groundtruth_clicked)
         self._supervised_button.clicked.connect(self._on_supervised_classify_clicked)
         self._unsupervised_button.clicked.connect(self._on_unsupervised_classify_clicked)
+        self._layer_panel.visibilityChanged.connect(self._on_layer_visibility_changed)
+        self._layer_panel.opacityChanged.connect(self._on_layer_opacity_changed)
 
         self._num_classes_edit.setValidator(QtGui.QIntValidator(2, 65535, self))
         self._max_iterations_edit.setValidator(QtGui.QIntValidator(1, 10000, self))
@@ -490,6 +511,8 @@ class ClassificationController(QObject):
             else tuple(range(result.n_classes))
         )
         self._rgb = self._colorize_class_map(result.class_map, class_ids)
+        self._layers = ClassificationLayerModel(result)
+        self._layer_panel.set_layers(self._layers.layers)
         self._show_result()
         populated = int(np.count_nonzero(result.class_pixel_counts))
         operation = (
@@ -539,11 +562,40 @@ class ClassificationController(QObject):
             self._close_after_classification = False
             QtCore.QTimer.singleShot(0, self.readyToClose.emit)
 
-    def _show_result(self) -> None:
-        if self._rgb is None:
+    @QtCore.pyqtSlot(int, bool)
+    def _on_layer_visibility_changed(self, class_id: int, visible: bool) -> None:
+        if self._layers is None:
             return
+        try:
+            self._layers.set_class_visible(class_id, visible)
+        except ClassificationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._show_result()
+
+    @QtCore.pyqtSlot(int, float)
+    def _on_layer_opacity_changed(self, class_id: int, opacity: float) -> None:
+        if self._layers is None:
+            return
+        try:
+            self._layers.set_class_opacity(class_id, opacity)
+        except ClassificationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._opacity_refresh_timer.start()
+
+    def _show_result(self) -> None:
+        if self._rgb is None or self._layers is None:
+            return
+        base_rgb = self._hsi_data.rgb_array
+        if base_rgb is not None and base_rgb.shape == (*self._layers.image_shape, 3):
+            composite = self._layers.compose_display(self._rgb, base_rgb=base_rgb)
+        else:
+            composite = self._layers.compose_display(
+                self._rgb, background_color=_LAYER_COMPOSITE_BACKGROUND
+            )
         state = self._viewer.get_view_state()
-        self._viewer.set_photo(hsi_utils.numpy_to_qpixmap(self._rgb))
+        self._viewer.set_photo(hsi_utils.numpy_to_qpixmap(composite.display_rgb))
         if state is not None:
             self._viewer.queue_view_state(state)
 

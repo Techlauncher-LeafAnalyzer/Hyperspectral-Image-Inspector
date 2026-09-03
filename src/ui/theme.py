@@ -601,6 +601,105 @@ QScrollBar:vertical, QScrollBar:horizontal {
     background: #edf2f1;
     border: 0;
 }
+
+QWidget#classificationLayerPanel {
+    background: #f9fbfa;
+    border-left: 1px solid #d8e2df;
+}
+
+QLabel#classificationLayerPanelTitle {
+    color: #123e37;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 2px 2px 4px 2px;
+}
+
+QLabel#classificationLayerPanelEmpty {
+    color: #8a9c98;
+    font-size: 12px;
+    padding: 4px 2px;
+}
+
+QScrollArea#classificationLayerScrollArea {
+    background: transparent;
+    border: 0;
+}
+
+QWidget#classificationLayerRow {
+    background: #ffffff;
+    border: 1px solid #d8e2df;
+    border-radius: 8px;
+}
+
+QLabel#layerNameLabel {
+    color: #263735;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+QLabel#layerPixelCountLabel {
+    color: #8a9c98;
+    font-size: 11px;
+}
+
+QLabel#layerOpacityValueLabel {
+    color: #667673;
+    font-size: 11px;
+}
+
+QCheckBox#layerVisibilityToggle {
+    spacing: 0;
+}
+
+QCheckBox#layerVisibilityToggle::indicator {
+    width: 34px;
+    height: 18px;
+    border-radius: 9px;
+    background: #cddad6;
+    border: 1px solid #b7c5c1;
+}
+
+QCheckBox#layerVisibilityToggle::indicator:hover {
+    border-color: #8fbcb4;
+}
+
+QCheckBox#layerVisibilityToggle::indicator:checked {
+    background: #168b7b;
+    border-color: #168b7b;
+}
+
+QCheckBox#layerVisibilityToggle::indicator:checked:hover {
+    background: #117d70;
+    border-color: #117d70;
+}
+
+QSlider#layerOpacitySlider::groove:horizontal {
+    height: 4px;
+    background: #dde5e2;
+    border-radius: 2px;
+}
+
+QSlider#layerOpacitySlider::sub-page:horizontal {
+    background: #168b7b;
+    border-radius: 2px;
+}
+
+QSlider#layerOpacitySlider::add-page:horizontal {
+    background: #dde5e2;
+    border-radius: 2px;
+}
+
+QSlider#layerOpacitySlider::handle:horizontal {
+    width: 12px;
+    height: 12px;
+    margin: -5px 0;
+    border-radius: 6px;
+    background: #117d70;
+}
+
+QSlider#layerOpacitySlider::handle:horizontal:hover {
+    background: #0d6a5f;
+}
 """
 
 

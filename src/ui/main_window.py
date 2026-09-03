@@ -111,6 +111,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             ClassificationService(),
             TrainingPairResolver(),
             self.classificationViewer,
+            self.classificationLayerPanel,
             self.statusbar,
             self.unsupervisedClassifyButton,
             self.pushButton_2,

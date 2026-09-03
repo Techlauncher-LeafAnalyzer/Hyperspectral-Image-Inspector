@@ -111,8 +111,12 @@ objects are accidentally combined, but the Controller should clear them first.
 
 ```python
 for layer in model.layers:
-    print(layer.class_id, layer.name, layer.pixel_count, layer.visible)
+    print(layer.class_id, layer.name, layer.pixel_count, layer.visible, layer.opacity)
 ```
+
+`layer.opacity` is a `float` in `[0.0, 1.0]`, defaulting to `1.0` for every
+class. It is independent of `visible`: hiding a layer does not reset its
+stored opacity, so toggling it back on restores the previous fade.
 
 Never use the widget row as the class ID. K-means IDs are zero-based, while
 supervised IDs may be `(1, 2)`, `(2, 7)`, or another positive sequence. Store
@@ -171,6 +175,32 @@ def _on_layer_item_changed(self, item) -> None:
         self._rebuild_class_layer_panel()
 ```
 
+### Adjust one layer's opacity
+
+```python
+def _on_layer_opacity_changed(self, class_id: int, opacity: float) -> None:
+    model = self._classification_layers
+    if model is None:
+        return
+    try:
+        model.set_class_opacity(class_id, opacity)
+        self._refresh_classification_rgb()  # debounce for slider drags
+    except ClassificationError as exc:
+        self._show_classification_error(str(exc))
+```
+
+`compose_display`/`compose_rgb`/`compose_index` blend each class toward the
+requested background colour by its opacity, using `visible=False` as
+opacity `0.0` for that class regardless of its stored value. A slider drag
+should debounce the recomposition call, not the Model update — see
+[Performance and memory](#11-performance-and-memory).
+
+Pass `compose_display(..., base_rgb=data.rgb_array)` to reveal the true-colour
+image beneath a faded/hidden class instead of a flat background colour —
+this is the Photoshop-style "layer over a photo" look. `base_rgb` must match
+`image_shape`; fall back to `background_color` when it does not (e.g. the
+cube was reclassified but the cached true-colour array has not caught up).
+
 ### Solo, show/hide all, rename, and restore
 
 ```python
@@ -211,9 +241,9 @@ def _refresh_classification_rgb(self) -> None:
 
 | Field | Shape/type | Meaning |
 | --- | --- | --- |
-| `display_rgb` | HxWx3 `uint8` | Visible true RGB; hidden pixels use the requested background. |
-| `display_rgba` | HxWx4 `uint8` | True RGB with alpha 255 for visible and 0 for hidden pixels. |
-| `visible_mask` | HxW `bool` | Union of currently visible class masks. |
+| `display_rgb` | HxWx3 `uint8` | True RGB blended toward `base_rgb` (if given) or the requested background colour, by each pixel's class opacity (hidden = opacity 0). |
+| `display_rgba` | HxWx4 `uint8` | True RGB with alpha = each pixel's class opacity scaled to 0-255 (0 when hidden). |
+| `visible_mask` | HxW `bool` | Union of currently visible class masks, independent of opacity value. |
 | `visible_class_ids` | `tuple[int, ...]` | Visibility snapshot used for the composite. |
 
 Returned arrays are read-only. Replace the View image; do not edit arrays.
@@ -388,12 +418,13 @@ rejects analyses created by another layer Model.
 | `mask_for_class(id)` | Read-only HxW binary mask. |
 | `rename_class(id, name)` | Change presentation label. |
 | `set_class_visible(id, bool)` | Toggle one class. |
+| `set_class_opacity(id, float)` | Set one class's blend opacity (0.0-1.0). |
 | `set_visible_classes(ids)` | Replace visible selection atomically. |
 | `show_only(id)` | Solo one class. |
 | `set_all_visible(bool)` | Show/hide all. |
 | `visible_mask()` | Read-only HxW visible union. |
 | `compose_rgb(rgb, ...)` | True-RGB visibility composite. |
-| `compose_display(rgb, ...)` | Composite any HxWx3 rendering. |
+| `compose_display(rgb, ..., base_rgb=None)` | Composite any HxWx3 rendering, optionally over a true-colour base image. |
 | `rgb_layer(rgb, id)` | Transparent true-RGB class layer. |
 | `analyze_index(data, request, ...)` | Read/calculate/partition an index. |
 | `analyze_visualization(result, ...)` | Partition a cached index. |
@@ -486,9 +517,9 @@ When adapting the layer system, preserve these boundaries:
 - Add scientific index formulas and wavelength rules to
   `VisualizationService`, then opt the mode into classification analysis.
   Do not duplicate formulas in a widget or Controller.
-- Add persistent layer properties such as opacity to
-  `ClassificationLayerModel` and `ClassificationLayer`; do not store the only
-  copy in checkbox widgets.
+- Add persistent layer properties (opacity already lives on
+  `ClassificationLayerModel`/`ClassificationLayer`, per `set_class_opacity`
+  above) to the Model; do not store the only copy in widget state.
 - Keep Qt types/signals in `src/ui`. Public `core` inputs and outputs should
   remain Python values, dataclasses, and NumPy arrays.
 - Keep stable class IDs distinct from row position and user-facing names.
