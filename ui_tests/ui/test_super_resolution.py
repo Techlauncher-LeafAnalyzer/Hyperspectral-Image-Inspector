@@ -62,6 +62,26 @@ def test_processed_selection_without_result_does_not_show_original(loaded_window
     assert loaded_window.superResViewer.has_photo()
 
 
+def test_classification_resolution_label_follows_the_toggle(loaded_window, stub_sr, qtbot):
+    window = loaded_window
+    assert window.classificationResolutionText.text() == "Viewing: Original (low-res)"
+
+    # Checking high-res before a result exists changes nothing: there is
+    # still no Super-Resolution data to view.
+    window.highResButton.setChecked(True)
+    assert window.classificationResolutionText.text() == "Viewing: Original (low-res)"
+    window.lowResButton.setChecked(True)
+
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    assert window.highResButton.isChecked()
+    assert window.classificationResolutionText.text() == "Viewing: Super-Resolution (high-res)"
+
+    window.lowResButton.setChecked(True)
+    assert window.classificationResolutionText.text() == "Viewing: Original (low-res)"
+
+
 def test_background_run_comparison_and_export(loaded_window, stub_sr, qtbot, file_dialog, tmp_path):
     window = loaded_window
     original = window._hsi_data.read_bands(range(8)).copy()
@@ -293,6 +313,83 @@ def test_high_res_notice_not_shown_for_low_res_selection(loaded_window, qtbot, d
     window.tabWidget.setCurrentWidget(window.Calibration)
     window.tabWidget.setCurrentWidget(window.Visualization)
     assert not dialogs.information
+
+
+def test_classification_follows_the_low_high_res_toggle_with_separate_results(
+    loaded_window, stub_sr, qtbot
+):
+    """Each resolution keeps its own classification, refreshed like Visualization."""
+
+    window = loaded_window
+    window.numOfClassesEdit.setText("2")
+    window.maxIterationsEdit.setText("3")
+
+    window.unsupervisedClassifyButton.click()
+    qtbot.waitUntil(lambda: not window._classification_controller.is_running(), timeout=5000)
+    assert len(window.classificationLayerPanel._rows) == 2
+    window.classificationLayerPanel._rows[1]._toggle.setChecked(False)
+    low_res_image = window.classificationViewer._photo.pixmap().toImage().copy()
+
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+
+    # High-res has never been classified: the layer panel is empty and the
+    # viewer falls back to the plain Super-Resolution image, exactly like
+    # Visualization's own low/high toggle falls back to the plain photo.
+    assert window.highResButton.isChecked()
+    assert len(window.classificationLayerPanel._rows) == 0
+    assert window.classificationViewer.rgb.shape == (16, 16, 3)
+
+    window.unsupervisedClassifyButton.click()
+    qtbot.waitUntil(lambda: not window._classification_controller.is_running(), timeout=5000)
+    assert len(window.classificationLayerPanel._rows) == 2
+    high_res_image = window.classificationViewer._photo.pixmap().toImage().copy()
+    assert high_res_image != low_res_image
+
+    # Swap back to low-res: the earlier result, and the layer visibility
+    # choice made against it, must both still be there -- untouched by the
+    # high-res classification that ran afterward.
+    window.lowResButton.setChecked(True)
+    assert len(window.classificationLayerPanel._rows) == 2
+    assert not window.classificationLayerPanel._rows[1]._toggle.isChecked()
+    assert window.classificationViewer._photo.pixmap().toImage() == low_res_image
+
+    window.highResButton.setChecked(True)
+    assert len(window.classificationLayerPanel._rows) == 2
+    assert window.classificationLayerPanel._rows[1]._toggle.isChecked()
+    assert window.classificationViewer._photo.pixmap().toImage() == high_res_image
+
+
+def test_rerunning_super_resolution_discards_the_stale_high_res_classification(
+    loaded_window, stub_sr, qtbot
+):
+    window = loaded_window
+    window.numOfClassesEdit.setText("2")
+    window.maxIterationsEdit.setText("3")
+
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    assert window.highResButton.isChecked()
+
+    window.unsupervisedClassifyButton.click()
+    qtbot.waitUntil(lambda: not window._classification_controller.is_running(), timeout=5000)
+    assert len(window.classificationLayerPanel._rows) == 2
+
+    window.lowResButton.setChecked(True)
+    stub_sr.release.clear()
+    stub_sr.started.clear()
+    window.runSuperResButton.click()
+    qtbot.waitUntil(stub_sr.started.is_set)
+    stub_sr.release.set()
+    finish(qtbot, window)
+
+    # Rerunning SR must discard the classification made against the old SR
+    # result: `highResButton` flips back on completion, revealing an empty
+    # (not stale) layer panel for the new high-res data.
+    assert window.highResButton.isChecked()
+    assert len(window.classificationLayerPanel._rows) == 0
 
 
 def test_index_mean_dialog_remains_available_for_original_after_sr(loaded_window, stub_sr, qtbot):
