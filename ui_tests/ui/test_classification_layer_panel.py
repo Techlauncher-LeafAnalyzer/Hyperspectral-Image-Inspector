@@ -21,7 +21,7 @@ from core import (
     TrainingPairResolver,
 )
 from core.classification_model import UnsupervisedClassificationResult
-from ui.classification_controller import ClassificationController
+from ui.classification_controller import _LAYER_COMPOSITE_BACKGROUND, ClassificationController
 from ui.classification_layer_panel import ClassificationLayerPanel
 from ui.viewer import HSIViewer
 
@@ -184,6 +184,89 @@ def test_moving_a_row_slider_emits_opacity_changed(qtbot):
     assert blocker.args == [0, 0.4]
 
 
+def test_toggle_all_button_disables_then_enables_every_row(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_layers(_make_layers(count=3))
+    assert panel._toggle_all_button.text() == "Disable All"
+
+    with qtbot.waitSignal(panel.setAllVisibleRequested, timeout=1000) as blocker:
+        panel._toggle_all_button.click()
+    assert blocker.args == [False]
+
+    # Simulate the controller applying the request and rebuilding rows.
+    hidden_layers = tuple(
+        ClassificationLayer(
+            class_id=layer.class_id,
+            name=layer.name,
+            pixel_count=layer.pixel_count,
+            visible=False,
+            opacity=layer.opacity,
+        )
+        for layer in _make_layers(count=3)
+    )
+    panel.set_layers(hidden_layers)
+    assert panel._toggle_all_button.text() == "Enable All"
+
+    with qtbot.waitSignal(panel.setAllVisibleRequested, timeout=1000) as blocker:
+        panel._toggle_all_button.click()
+    assert blocker.args == [True]
+
+
+def test_toggle_all_button_text_follows_a_single_row_toggle(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_layers(_make_layers(count=2))
+
+    panel._rows[0]._toggle.setChecked(False)
+    assert panel._toggle_all_button.text() == "Disable All"
+
+    panel._rows[1]._toggle.setChecked(False)
+    assert panel._toggle_all_button.text() == "Enable All"
+
+
+def test_outline_toggle_button_emits_outline_mode_changed(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_layers(_make_layers(count=2))
+
+    with qtbot.waitSignal(panel.outlineModeChanged, timeout=1000) as blocker:
+        panel._outline_toggle_button.setChecked(True)
+    assert blocker.args == [True]
+    assert panel._outline_toggle_button.text() == "Show Fill"
+
+    with qtbot.waitSignal(panel.outlineModeChanged, timeout=1000) as blocker:
+        panel._outline_toggle_button.setChecked(False)
+    assert blocker.args == [False]
+    assert panel._outline_toggle_button.text() == "Borders Only"
+
+
+def test_moving_the_global_opacity_slider_emits_global_opacity_changed(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_layers(_make_layers(count=2))
+
+    with qtbot.waitSignal(panel.globalOpacityChanged, timeout=1000) as blocker:
+        panel._global_opacity_slider.setValue(30)
+
+    assert blocker.args == [0.3]
+    assert panel._global_opacity_value_label.text() == "30%"
+
+
+def test_set_layers_resets_global_controls(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_layers(_make_layers(count=2))
+    panel._global_opacity_slider.setValue(20)
+    panel._outline_toggle_button.setChecked(True)
+
+    panel.set_layers(_make_layers(count=3))
+
+    assert panel._global_opacity_slider.value() == 100
+    assert not panel._outline_toggle_button.isChecked()
+    assert panel._outline_toggle_button.text() == "Borders Only"
+
+
 # ---------------------------------------------------------------------- #
 # End-to-end wiring through ClassificationController                       #
 # ---------------------------------------------------------------------- #
@@ -259,6 +342,80 @@ def test_clear_result_clears_the_layer_panel(qtbot):
 
     assert len(layer_panel._rows) == 0
     assert controller._layers is None
+
+
+# ---------------------------------------------------------------------- #
+# Enable/disable all, global opacity, and border-only mode                 #
+# ---------------------------------------------------------------------- #
+
+
+def test_disabling_all_hides_every_class_and_rebuilds_unchecked_rows(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    controller._on_result(_make_unsupervised_result(class_map))
+    before = viewer._photo.pixmap().toImage().copy()
+
+    controller._on_set_all_visible_requested(False)
+
+    assert controller._layers.visible_class_ids == ()
+    assert all(not row._toggle.isChecked() for row in layer_panel._rows.values())
+    after = viewer._photo.pixmap().toImage()
+    assert before != after
+
+
+def test_enabling_all_restores_every_class(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    controller._on_result(_make_unsupervised_result(class_map))
+    controller._on_layer_visibility_changed(1, False)
+
+    controller._on_set_all_visible_requested(True)
+
+    assert controller._layers.visible_class_ids == (0, 1, 2)
+    assert all(row._toggle.isChecked() for row in layer_panel._rows.values())
+
+
+def test_toggle_all_button_click_flows_through_to_the_model(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    controller._on_result(_make_unsupervised_result(class_map))
+
+    layer_panel._toggle_all_button.click()
+
+    assert controller._layers.visible_class_ids == ()
+
+
+def test_global_opacity_scales_the_composite_after_debounce(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    controller._on_result(_make_unsupervised_result(class_map))
+
+    controller._on_global_opacity_changed(0.5)
+    assert controller._layers.global_opacity == 0.5
+
+    qtbot.wait(150)
+
+    composite = controller._composite()
+    assert composite is not None
+    # Every visible-class pixel should now be a 50/50 blend toward background,
+    # never the fully-opaque class colour.
+    assert not np.array_equal(composite.display_rgb, controller._rgb)
+
+
+def test_outline_mode_reveals_background_in_class_interiors(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.full((6, 6), 0, dtype=np.int32)
+    class_map[1:5, 1:5] = 1  # a solid interior block guaranteed to have non-border pixels
+    controller._on_result(_make_unsupervised_result(class_map))
+
+    controller._on_outline_mode_changed(True)
+
+    assert controller._layers.outline_mode
+    composite = controller._composite()
+    # (2, 2) is inside class 1's block, away from every edge -> pure interior.
+    interior_pixel = composite.display_rgb[2, 2]
+    background_pixel = np.array(_LAYER_COMPOSITE_BACKGROUND, dtype=np.uint8)
+    assert np.array_equal(interior_pixel, background_pixel)
 
 
 # ---------------------------------------------------------------------- #

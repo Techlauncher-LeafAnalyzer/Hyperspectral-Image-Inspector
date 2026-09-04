@@ -89,6 +89,9 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
 
     visibilityChanged = pyqtSignal(int, bool)
     opacityChanged = pyqtSignal(int, float)
+    setAllVisibleRequested = pyqtSignal(bool)
+    globalOpacityChanged = pyqtSignal(float)
+    outlineModeChanged = pyqtSignal(bool)
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -102,6 +105,60 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         )
         self._empty_label.setObjectName("classificationLayerPanelEmpty")
         self._empty_label.setWordWrap(True)
+
+        self._toggle_all_button = QtWidgets.QPushButton("Disable All", self)
+        self._toggle_all_button.setObjectName("layerToggleAllButton")
+        self._toggle_all_button.setToolTip("Show or hide every class at once")
+        self._toggle_all_button.clicked.connect(self._on_toggle_all_clicked)
+        # A row's own toggle also flips the aggregate state this button shows.
+        self.visibilityChanged.connect(lambda *_: self._update_toggle_all_button_text())
+
+        self._outline_toggle_button = QtWidgets.QPushButton(
+            "Borders Only", self
+        )
+        self._outline_toggle_button.setObjectName("layerOutlineToggleButton")
+        self._outline_toggle_button.setCheckable(True)
+        self._outline_toggle_button.setToolTip(
+            "Show only each class's boundary instead of a solid fill"
+        )
+        self._outline_toggle_button.toggled.connect(self._on_outline_toggled)
+
+        header_controls_row = QtWidgets.QHBoxLayout()
+        header_controls_row.setContentsMargins(0, 0, 0, 0)
+        header_controls_row.setSpacing(6)
+        header_controls_row.addWidget(self._toggle_all_button, 1)
+        header_controls_row.addWidget(self._outline_toggle_button, 1)
+
+        global_opacity_label = QtWidgets.QLabel("Overall opacity", self)
+        global_opacity_label.setObjectName("globalOpacityLabel")
+
+        self._global_opacity_slider = QtWidgets.QSlider(
+            Qt.Orientation.Horizontal, self
+        )
+        self._global_opacity_slider.setObjectName("globalOpacitySlider")
+        self._global_opacity_slider.setRange(0, 100)
+        self._global_opacity_slider.setValue(100)
+        self._global_opacity_slider.setToolTip(
+            "Scale every layer's opacity together"
+        )
+        self._global_opacity_slider.valueChanged.connect(
+            self._on_global_opacity_slider_changed
+        )
+
+        self._global_opacity_value_label = QtWidgets.QLabel("100%", self)
+        self._global_opacity_value_label.setObjectName(
+            "globalOpacityValueLabel"
+        )
+        self._global_opacity_value_label.setFixedWidth(34)
+        self._global_opacity_value_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        global_opacity_row = QtWidgets.QHBoxLayout()
+        global_opacity_row.setContentsMargins(0, 0, 0, 0)
+        global_opacity_row.setSpacing(6)
+        global_opacity_row.addWidget(self._global_opacity_slider, 1)
+        global_opacity_row.addWidget(self._global_opacity_value_label)
 
         self._rows_container = QtWidgets.QWidget(self)
         self._rows_layout = QtWidgets.QVBoxLayout(self._rows_container)
@@ -118,6 +175,9 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(title)
         layout.addWidget(self._empty_label)
+        layout.addLayout(header_controls_row)
+        layout.addWidget(global_opacity_label)
+        layout.addLayout(global_opacity_row)
         layout.addWidget(self._scroll_area, 1)
 
         self._rows: dict[int, _LayerRowWidget] = {}
@@ -129,7 +189,10 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         Only called after a brand new classification result arrives, so a
         full clear-and-rebuild (mirroring the block-signals-and-rebuild
         pattern in ``docs/classification_layer_api.md``) is simplest and
-        avoids reordering/diffing logic this panel does not need.
+        avoids reordering/diffing logic this panel does not need. The
+        global opacity slider and outline toggle reset alongside the rows
+        because a fresh ``ClassificationLayerModel`` also starts at full
+        opacity and fill mode.
         """
 
         self.clear()
@@ -139,6 +202,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             row.opacityChanged.connect(self.opacityChanged)
             self._rows[layer.class_id] = row
             self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
+        self._reset_global_controls()
         self._update_empty_state()
 
     def clear(self) -> None:
@@ -148,9 +212,44 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             self._rows_layout.removeWidget(row)
             row.deleteLater()
         self._rows.clear()
+        self._reset_global_controls()
         self._update_empty_state()
+
+    def _on_toggle_all_clicked(self) -> None:
+        any_visible = any(row._toggle.isChecked() for row in self._rows.values())
+        self.setAllVisibleRequested.emit(not any_visible)
+
+    def _on_outline_toggled(self, checked: bool) -> None:
+        self._outline_toggle_button.setText(
+            "Show Fill" if checked else "Borders Only"
+        )
+        self.outlineModeChanged.emit(checked)
+
+    def _on_global_opacity_slider_changed(self, value: int) -> None:
+        self._global_opacity_value_label.setText(f"{value}%")
+        self.globalOpacityChanged.emit(value / 100.0)
+
+    def _reset_global_controls(self) -> None:
+        self._global_opacity_slider.blockSignals(True)
+        self._global_opacity_slider.setValue(100)
+        self._global_opacity_slider.blockSignals(False)
+        self._global_opacity_value_label.setText("100%")
+
+        self._outline_toggle_button.blockSignals(True)
+        self._outline_toggle_button.setChecked(False)
+        self._outline_toggle_button.setText("Borders Only")
+        self._outline_toggle_button.blockSignals(False)
 
     def _update_empty_state(self) -> None:
         has_rows = bool(self._rows)
         self._empty_label.setVisible(not has_rows)
         self._scroll_area.setVisible(has_rows)
+        self._toggle_all_button.setEnabled(has_rows)
+        self._outline_toggle_button.setEnabled(has_rows)
+        self._global_opacity_slider.setEnabled(has_rows)
+        if has_rows:
+            self._update_toggle_all_button_text()
+
+    def _update_toggle_all_button_text(self) -> None:
+        any_visible = any(row._toggle.isChecked() for row in self._rows.values())
+        self._toggle_all_button.setText("Disable All" if any_visible else "Enable All")

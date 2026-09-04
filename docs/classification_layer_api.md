@@ -215,6 +215,23 @@ Rebuild rows after solo/show-all/hide-all/rename so widget state reflects the
 Model. `set_visible_classes` validates the complete selection before changing
 anything. Names are presentation metadata and never change IDs or masks.
 
+### Global opacity and outline (border-only) mode
+
+```python
+model.set_global_opacity(0.6)
+model.set_outline_mode(True)
+```
+
+`set_global_opacity` scales every layer's effective opacity together, like a
+group opacity in Photoshop, without touching each layer's own stored
+`opacity` -- restoring it to `1.0` reveals the same per-layer fades the user
+already set. `set_outline_mode(True)` restricts each visible class's paint to
+its boundary pixels (4-connected; an image-edge pixel counts as a boundary)
+so the interior reveals `base_rgb`/`background_color`, which is useful for
+inspecting class borders without hiding the underlying picture. Both apply
+inside `_effective_alpha` before `compose_display` blends, so nothing else
+in the compositing path changes.
+
 ## 5. Displaying selected classes as true RGB
 
 Use the cached RGB `VisualizationResult.display_rgb`. Do not pass the coloured
@@ -422,6 +439,10 @@ rejects analyses created by another layer Model.
 | `set_visible_classes(ids)` | Replace visible selection atomically. |
 | `show_only(id)` | Solo one class. |
 | `set_all_visible(bool)` | Show/hide all. |
+| `set_global_opacity(float)` | Scale every layer's opacity together (0.0-1.0). |
+| `set_outline_mode(bool)` | Render every layer as border-only, not filled. |
+| `global_opacity` | Current master opacity scale. |
+| `outline_mode` | Whether border-only rendering is active. |
 | `visible_mask()` | Read-only HxW visible union. |
 | `compose_rgb(rgb, ...)` | True-RGB visibility composite. |
 | `compose_display(rgb, ..., base_rgb=None)` | Composite any HxWx3 rendering, optionally over a true-colour base image. |
