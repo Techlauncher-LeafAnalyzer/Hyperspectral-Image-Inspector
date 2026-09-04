@@ -19,6 +19,7 @@ from spectral.io.spyfile import SubImage
 
 from .errors import VisualizationError, WavelengthError
 from .hsi_utils import nearest_band_index
+from .roi import BoolMask, Masked, combine, polygon_mask
 
 
 class _CroppedSpyFile(SubImage):
@@ -104,6 +105,7 @@ class HSIData:
     mask_array: Optional[npt.NDArray[np.uint8]] = None
     selected_path: Optional[Path] = None
     metadata_map: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    roi_mask: Optional[BoolMask] = field(default=None, repr=False)
 
     @classmethod
     def create(
@@ -149,6 +151,7 @@ class HSIData:
         self.selected_path = None
         self.wavelengths = []
         self.metadata_map = {}
+        self.roi_mask = None
 
     def update_from(self, other: "HSIData") -> None:
         """Replace dataset contents without replacing this state object.
@@ -169,6 +172,7 @@ class HSIData:
         self.mask_array = other.mask_array
         self.selected_path = other.selected_path
         self.metadata_map = MappingProxyType(dict(other.metadata_map))
+        self.roi_mask = other.roi_mask
 
     @property
     def source_path(self) -> Path:
@@ -319,6 +323,8 @@ class HSIData:
 
         self.rgb_array = self.rgb_array[y1:y2, x1:x2, :].copy()
         self.mask_array = self.mask_array[y1:y2, x1:x2].copy()
+        if self.roi_mask is not None:
+            self.roi_mask = self.roi_mask[y1:y2, x1:x2].copy()
         if self.spectral_obj is not None:
             self.spectral_obj = _CroppedSpyFile(
                 self.spectral_obj,
@@ -326,3 +332,64 @@ class HSIData:
                 (x1, x2),
             )
         return (x2 - x1, y2 - y1)
+
+    def crop_polygon(
+        self, vertices: Sequence[tuple[float, float]]
+    ) -> tuple[int, int] | None:
+        """Crop to a polygon's bounding box and record the polygon as an ROI.
+
+        ``vertices`` are ``(x, y)`` pixel coordinates in the *current* frame.
+        The cube itself stays rectangular — SPy has no non-rectangular
+        representation — so the bounding box is cropped exactly as
+        :meth:`crop` does and the polygon is retained in :attr:`roi_mask`.
+        Model code honours that mask through :class:`core.roi.Masked`.
+
+        Returns the new ``(width, height)``, or ``None`` when the selection
+        is degenerate or no display arrays are loaded.
+        """
+
+        points = np.asarray(vertices, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 2 or len(points) < 3:
+            return None
+
+        size = self.crop(
+            float(points[:, 0].min()),
+            float(points[:, 1].min()),
+            float(points[:, 0].max()),
+            float(points[:, 1].max()),
+        )
+        if size is None:
+            return None
+
+        width, height = size
+        origin_x = max(0.0, np.floor(points[:, 0].min()))
+        origin_y = max(0.0, np.floor(points[:, 1].min()))
+        local = points - np.array([origin_x, origin_y])
+        try:
+            polygon = polygon_mask(local, (height, width))
+        except ValueError:
+            return None
+        if not polygon.any():
+            # A sliver thinner than one pixel centre selects nothing; keep the
+            # bounding-box crop rather than leaving an all-empty ROI behind.
+            return size
+
+        self.roi_mask = combine(self.roi_mask, polygon)
+        return size
+
+    def masked(self, values: np.ndarray) -> Masked[np.ndarray]:
+        """Pair an array computed from this cube with the active ROI.
+
+        Returns an unmasked container when no polygon crop is in effect, so
+        callers can use one code path regardless.
+        """
+
+        if self.roi_mask is None:
+            return Masked.unit(values)
+        array = np.asarray(values)
+        if array.shape[:2] != self.roi_mask.shape:
+            raise VisualizationError(
+                f"Array shape {array.shape[:2]} does not match the "
+                f"{self.roi_mask.shape} region of interest."
+            )
+        return Masked(array, self.roi_mask)

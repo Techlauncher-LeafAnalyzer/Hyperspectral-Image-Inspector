@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 import tempfile
 from types import MappingProxyType
-from typing import Mapping
+from typing import Mapping, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -93,6 +93,10 @@ class VisualizationExportService:
         {ImageExportFormat.PNG, ImageExportFormat.TIFF, ImageExportFormat.BMP}
     )
 
+    # Formats whose encoders carry an alpha channel. A polygon-cropped export
+    # needs one to distinguish "outside the region" from a black reading.
+    _ALPHA_FORMATS = frozenset({ImageExportFormat.PNG, ImageExportFormat.TIFF})
+
     @property
     def supported_extensions(self) -> tuple[str, ...]:
         """Return extensions a Controller can use to build its save dialog."""
@@ -103,6 +107,7 @@ class VisualizationExportService:
         self,
         display_rgb: npt.NDArray[np.uint8],
         request: VisualizationExportRequest,
+        alpha_mask: Optional[npt.NDArray[np.bool_]] = None,
     ) -> VisualizationExportResult:
         """Validate and atomically save a displayed ``(H, W, 3)`` RGB array.
 
@@ -110,14 +115,22 @@ class VisualizationExportService:
         same visual composition but is inherently lossy. The input array is
         never modified and a failed encode leaves no partial destination file.
 
+        ``alpha_mask`` marks the pixels to keep when exporting a
+        polygon-cropped (non-rectangular) image. PNG and TIFF record the
+        excluded pixels as transparent; formats without an alpha channel
+        cannot, so they are refused rather than silently writing a black or
+        white border that would read as real data.
+
         Raises:
             VisualizationExportError: Pixels, destination, overwrite policy,
-                extension, or image encoding is invalid.
+                extension, alpha support, or image encoding is invalid.
         """
 
         pixels = self._validated_pixels(display_rgb)
         target, image_format = self._resolve_target(request.output_path)
         self._validate_destination(target, overwrite=request.overwrite)
+        if alpha_mask is not None:
+            pixels = self._with_alpha(pixels, alpha_mask, image_format)
 
         temporary_path: Path | None = None
         file_size_bytes = 0
@@ -174,6 +187,32 @@ class VisualizationExportService:
             sha256=file_sha256,
             lossless=image_format in self._LOSSLESS_FORMATS,
         )
+
+    def _with_alpha(
+        self,
+        pixels: npt.NDArray[np.uint8],
+        alpha_mask: npt.NDArray[np.bool_],
+        image_format: ImageExportFormat,
+    ) -> npt.NDArray[np.uint8]:
+        """Attach a transparency channel for a non-rectangular export."""
+
+        height, width, _ = pixels.shape
+        if alpha_mask.shape != (height, width):
+            raise VisualizationExportError(
+                f"Alpha mask {alpha_mask.shape} does not match the "
+                f"{(height, width)} display array."
+            )
+        if image_format not in self._ALPHA_FORMATS:
+            supported = ", ".join(sorted(fmt.value for fmt in self._ALPHA_FORMATS))
+            raise VisualizationExportError(
+                f"{image_format.value} has no alpha channel, so a "
+                f"polygon-cropped image cannot be saved without inventing "
+                f"pixels outside the region. Save as {supported} instead."
+            )
+        rgba = np.empty((height, width, 4), dtype=np.uint8)
+        rgba[:, :, :3] = pixels
+        rgba[:, :, 3] = np.where(alpha_mask, 255, 0).astype(np.uint8)
+        return np.ascontiguousarray(rgba)
 
     @staticmethod
     def _validated_pixels(

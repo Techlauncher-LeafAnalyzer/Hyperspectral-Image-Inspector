@@ -207,8 +207,17 @@ def adapt_psi_header(header_path: Path) -> Path:
         ) from exc
 
 
-def numpy_to_qpixmap(image: npt.NDArray[np.uint8]) -> "QPixmap":
+def numpy_to_qpixmap(
+    image: npt.NDArray[np.uint8],
+    alpha_mask: Optional[npt.NDArray[np.bool_]] = None,
+) -> "QPixmap":
     """Convert ``uint8`` RGB data to QPixmap for the legacy Controller.
+
+    ``alpha_mask`` marks the pixels to keep. Supply it for a non-rectangular
+    (polygon-cropped) image: excluded pixels become fully transparent so the
+    viewer's own background shows through, instead of rendering as black —
+    black is a legitimate reflectance reading and must not be ambiguous with
+    "outside the region". Without a mask the opaque RGB path is unchanged.
 
     This compatibility adapter imports Qt lazily. New Model code must not call
     it; conversion belongs at the Controller/View boundary.
@@ -218,11 +227,26 @@ def numpy_to_qpixmap(image: npt.NDArray[np.uint8]) -> "QPixmap":
 
     contiguous = np.ascontiguousarray(image, dtype=np.uint8)
     height, width, channels = contiguous.shape
+
+    if alpha_mask is not None:
+        if alpha_mask.shape != (height, width):
+            raise ValueError(
+                f"Alpha mask {alpha_mask.shape} does not match the "
+                f"{(height, width)} display array."
+            )
+        rgba = np.empty((height, width, 4), dtype=np.uint8)
+        rgba[:, :, :3] = contiguous
+        rgba[:, :, 3] = np.where(alpha_mask, 255, 0).astype(np.uint8)
+        contiguous = np.ascontiguousarray(rgba)
+        image_format = QImage.Format.Format_RGBA8888
+    else:
+        image_format = QImage.Format.Format_RGB888
+
     qimage = QImage(
         contiguous.data,
         width,
         height,
         int(contiguous.strides[0]),
-        QImage.Format.Format_RGB888,
+        image_format,
     ).copy()
     return QPixmap.fromImage(qimage)
