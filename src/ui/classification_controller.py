@@ -552,6 +552,8 @@ class ClassificationController(QObject):
         ):
             self._on_failed("Worker returned an invalid result.")
             return
+        if self._active_data is None:
+            self._active_data = self._display_data_provider()
         self._result = result
         class_ids = (
             result.class_ids

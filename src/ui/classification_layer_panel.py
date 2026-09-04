@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtWidgets
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from core import ClassificationLayer

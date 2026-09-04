@@ -133,7 +133,7 @@ def test_set_layers_builds_one_row_per_layer(qtbot):
     panel.set_layers(_make_layers(count=3))
 
     assert len(panel._rows) == 3
-    assert not panel._empty_label.isVisible()
+    assert panel._empty_label.isHidden()
     for class_id, row in panel._rows.items():
         assert row._toggle.isChecked()
         assert row._opacity_slider.value() == 100
