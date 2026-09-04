@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import numpy as np
 from PyQt6.QtWidgets import (
     QComboBox,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QStatusBar,
     QWidget,
@@ -14,12 +17,21 @@ from core import (
     ClassificationLayer,
     ClassificationService,
     HSIData,
+    HSIReader,
     TrainingPairResolver,
 )
 from core.classification_model import UnsupervisedClassificationResult
 from ui.classification_controller import ClassificationController
 from ui.classification_layer_panel import ClassificationLayerPanel
 from ui.viewer import HSIViewer
+
+
+@dataclass
+class _FakeDisplaySource:
+    """Stands in for MainWindowController's ``_display_data``/SR-toggle state."""
+
+    data: HSIData = field(default_factory=HSIData)
+    is_super_resolution_active: bool = False
 
 
 def _make_layers(*, count: int = 3) -> tuple[ClassificationLayer, ...]:
@@ -85,9 +97,11 @@ def _make_controller(qtbot):
     ):
         qtbot.addWidget(widget)
     load_image_action = QAction(parent)
+    source = _FakeDisplaySource()
 
     controller = ClassificationController(
-        HSIData(),
+        lambda: source.data,
+        lambda: source.is_super_resolution_active,
         ClassificationService(),
         TrainingPairResolver(),
         viewer,
@@ -104,7 +118,7 @@ def _make_controller(qtbot):
         lambda: None,
         parent,
     )
-    return controller, viewer, layer_panel
+    return controller, viewer, layer_panel, source
 
 
 # ---------------------------------------------------------------------- #
@@ -176,7 +190,7 @@ def test_moving_a_row_slider_emits_opacity_changed(qtbot):
 
 
 def test_result_populates_layer_panel(qtbot):
-    controller, viewer, layer_panel = _make_controller(qtbot)
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
     class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
     result = _make_unsupervised_result(class_map)
 
@@ -188,7 +202,7 @@ def test_result_populates_layer_panel(qtbot):
 
 
 def test_hiding_a_layer_updates_the_rendered_pixmap(qtbot):
-    controller, viewer, layer_panel = _make_controller(qtbot)
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
     class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
     result = _make_unsupervised_result(class_map)
     controller._on_result(result)
@@ -202,12 +216,13 @@ def test_hiding_a_layer_updates_the_rendered_pixmap(qtbot):
 
 
 def test_hiding_a_layer_reveals_the_true_colour_base_image(qtbot):
-    controller, viewer, layer_panel = _make_controller(qtbot)
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
     class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
     result = _make_unsupervised_result(class_map)
     base_rgb = np.zeros((2, 3, 3), dtype=np.uint8)
     base_rgb[..., 2] = 40  # a distinct, otherwise-unused blue base image
-    controller._hsi_data.rgb_array = base_rgb
+    source.data.rgb_array = base_rgb
+    controller._active_data = source.data  # set by the real click handler pre-launch
     controller._on_result(result)
 
     controller._on_layer_visibility_changed(1, False)
@@ -220,7 +235,7 @@ def test_hiding_a_layer_reveals_the_true_colour_base_image(qtbot):
 
 
 def test_changing_opacity_debounces_then_updates_the_pixmap(qtbot):
-    controller, viewer, layer_panel = _make_controller(qtbot)
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
     class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
     result = _make_unsupervised_result(class_map)
     controller._on_result(result)
@@ -236,7 +251,7 @@ def test_changing_opacity_debounces_then_updates_the_pixmap(qtbot):
 
 
 def test_clear_result_clears_the_layer_panel(qtbot):
-    controller, viewer, layer_panel = _make_controller(qtbot)
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
     class_map = np.array([[0, 1]], dtype=np.int32)
     controller._on_result(_make_unsupervised_result(class_map))
 
@@ -244,3 +259,73 @@ def test_clear_result_clears_the_layer_panel(qtbot):
 
     assert len(layer_panel._rows) == 0
     assert controller._layers is None
+
+
+# ---------------------------------------------------------------------- #
+# Super-Resolution-aware classification                                    #
+# ---------------------------------------------------------------------- #
+
+
+def test_classifying_with_super_resolution_active_targets_its_data_and_notifies(
+    qtbot, synthetic_cube_path, monkeypatch
+):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    source.data = HSIReader().open(synthetic_cube_path)
+    source.is_super_resolution_active = True
+    controller._num_classes_edit.setText("2")
+    controller._max_iterations_edit.setText("3")
+
+    infos: list[tuple] = []
+    monkeypatch.setattr(
+        QMessageBox, "information", staticmethod(lambda *args: infos.append(args))
+    )
+
+    controller._on_unsupervised_classify_clicked()
+    qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
+
+    assert controller._active_data is source.data
+    assert len(infos) == 1
+    assert "Super-Resolution" in infos[0][1]
+
+
+def test_classifying_without_super_resolution_active_shows_no_notice(
+    qtbot, synthetic_cube_path, monkeypatch
+):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    source.data = HSIReader().open(synthetic_cube_path)
+    source.is_super_resolution_active = False
+    controller._num_classes_edit.setText("2")
+    controller._max_iterations_edit.setText("3")
+
+    infos: list[tuple] = []
+    monkeypatch.setattr(
+        QMessageBox, "information", staticmethod(lambda *args: infos.append(args))
+    )
+
+    controller._on_unsupervised_classify_clicked()
+    qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
+
+    assert controller._active_data is source.data
+    assert len(infos) == 0
+
+
+def test_super_resolution_notice_is_shown_only_once(
+    qtbot, synthetic_cube_path, monkeypatch
+):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    source.data = HSIReader().open(synthetic_cube_path)
+    source.is_super_resolution_active = True
+    controller._num_classes_edit.setText("2")
+    controller._max_iterations_edit.setText("3")
+
+    infos: list[tuple] = []
+    monkeypatch.setattr(
+        QMessageBox, "information", staticmethod(lambda *args: infos.append(args))
+    )
+
+    controller._on_unsupervised_classify_clicked()
+    qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
+    controller._on_unsupervised_classify_clicked()
+    qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
+
+    assert len(infos) == 1
