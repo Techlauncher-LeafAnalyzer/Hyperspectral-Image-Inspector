@@ -602,22 +602,109 @@ QScrollBar:vertical, QScrollBar:horizontal {
     border: 0;
 }
 
-QWidget#classificationLayerPanel {
+QWidget#Classification {
     background: #f9fbfa;
-    border-left: 1px solid #d8e2df;
+}
+
+QLabel#classificationFilePath {
+    color: #6a7c78;
+    font-size: 12px;
+    padding: 1px 2px;
+}
+
+QGroupBox#classificationControls {
+    background: transparent;
+    border: 0;
+}
+
+QWidget#classificationLayerPanel {
+    background: #f5f9f8;
+    border: 1px solid #cfddda;
+    border-radius: 10px;
+}
+
+QWidget#classificationLayerHeader,
+QWidget#classificationLayerHeaderDetails,
+QWidget#classificationLayerBody,
+QWidget#classificationLayerRows {
+    background: transparent;
+    border: 0;
 }
 
 QLabel#classificationLayerPanelTitle {
-    color: #123e37;
-    font-size: 13px;
+    color: #173532;
+    font-size: 14px;
     font-weight: 700;
-    padding: 2px 2px 4px 2px;
+}
+
+QLabel#classificationLayerCount {
+    min-width: 20px;
+    max-width: 20px;
+    min-height: 20px;
+    max-height: 20px;
+    color: #176d61;
+    background: #dcefeb;
+    border: 1px solid #c3ded8;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QToolButton#classificationLayerCollapseButton {
+    min-width: 25px;
+    max-width: 25px;
+    min-height: 25px;
+    max-height: 25px;
+    color: #3e5c57;
+    background: #ffffff;
+    border: 1px solid #d1dedb;
+    border-radius: 7px;
+    font-size: 21px;
+    font-weight: 500;
+    padding: 0 0 2px 0;
+}
+
+QToolButton#classificationLayerCollapseButton:hover {
+    color: #126f62;
+    background: #e5f3f0;
+    border-color: #9fcac1;
+}
+
+QToolButton#classificationLayerCollapseButton:pressed {
+    background: #d5ebe6;
+    border-color: #78afa5;
+}
+
+QToolButton#classificationLayerCollapseButton:focus {
+    border-color: #168b7b;
+}
+
+QLabel#classificationLayerSummary {
+    color: #71827f;
+    font-size: 11px;
+    padding: 0 1px;
+}
+
+QFrame#classificationLayerControls {
+    background: #eaf2f0;
+    border: 1px solid #d4e2df;
+    border-radius: 8px;
+}
+
+QLabel#classificationLayerSectionLabel {
+    color: #516662;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 2px 0 2px;
 }
 
 QLabel#classificationLayerPanelEmpty {
-    color: #8a9c98;
+    color: #849490;
+    background: #edf4f2;
+    border: 1px dashed #cbdad6;
+    border-radius: 8px;
     font-size: 12px;
-    padding: 4px 2px;
+    padding: 18px 13px;
 }
 
 QScrollArea#classificationLayerScrollArea {
@@ -625,94 +712,126 @@ QScrollArea#classificationLayerScrollArea {
     border: 0;
 }
 
+QScrollArea#classificationLayerScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+
+QScrollArea#classificationLayerScrollArea QScrollBar:vertical {
+    width: 7px;
+    background: transparent;
+    margin: 1px 0;
+}
+
+QScrollArea#classificationLayerScrollArea QScrollBar::handle:vertical {
+    min-height: 26px;
+    background: #bfceca;
+    border-radius: 3px;
+}
+
+QScrollArea#classificationLayerScrollArea QScrollBar::handle:vertical:hover {
+    background: #93aaa5;
+}
+
+QScrollArea#classificationLayerScrollArea QScrollBar::add-line:vertical,
+QScrollArea#classificationLayerScrollArea QScrollBar::sub-line:vertical,
+QScrollArea#classificationLayerScrollArea QScrollBar::add-page:vertical,
+QScrollArea#classificationLayerScrollArea QScrollBar::sub-page:vertical {
+    height: 0;
+    background: transparent;
+}
+
 QWidget#classificationLayerRow {
     background: #ffffff;
-    border: 1px solid #d8e2df;
-    border-radius: 8px;
+    border: 1px solid #d5e2df;
+    border-radius: 9px;
+}
+
+QWidget#classificationLayerRow:hover {
+    background: #fbfefd;
+    border-color: #a9ccc5;
+}
+
+QWidget#classificationLayerRow[layerVisible="false"] {
+    background: #f1f5f4;
+    border-color: #dde6e4;
+}
+
+QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerNameLabel,
+QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerOpacityCaption,
+QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerOpacityValueLabel {
+    color: #869591;
 }
 
 QLabel#layerNameLabel {
     color: #263735;
-    font-weight: 600;
+    font-weight: 650;
     font-size: 12px;
 }
 
 QLabel#layerPixelCountLabel {
-    color: #8a9c98;
-    font-size: 11px;
+    color: #82918e;
+    font-size: 10px;
 }
 
+QLabel#layerOpacityCaption,
 QLabel#layerOpacityValueLabel {
-    color: #667673;
-    font-size: 11px;
+    color: #60736f;
+    font-size: 10px;
+}
+
+QLabel#layerOpacityValueLabel,
+QLabel#globalOpacityValueLabel {
+    font-weight: 600;
 }
 
 QCheckBox#layerVisibilityToggle {
     spacing: 0;
+    padding: 1px;
 }
 
 QCheckBox#layerVisibilityToggle::indicator {
-    width: 34px;
+    width: 18px;
     height: 18px;
-    border-radius: 9px;
-    background: #cddad6;
-    border: 1px solid #b7c5c1;
+    border: 0;
 }
 
-QCheckBox#layerVisibilityToggle::indicator:hover {
-    border-color: #8fbcb4;
+QCheckBox#layerVisibilityToggle::indicator:unchecked {
+    image: url(__CHECKBOX_UNCHECKED__);
 }
 
 QCheckBox#layerVisibilityToggle::indicator:checked {
-    background: #168b7b;
-    border-color: #168b7b;
+    image: url(__CHECKBOX_CHECKED__);
 }
 
-QCheckBox#layerVisibilityToggle::indicator:checked:hover {
-    background: #117d70;
-    border-color: #117d70;
+QCheckBox#layerVisibilityToggle:focus {
+    background: #dff1ed;
+    border: 1px solid #79b5aa;
+    border-radius: 5px;
 }
 
-QSlider#layerOpacitySlider::groove:horizontal {
-    height: 4px;
-    background: #dde5e2;
-    border-radius: 2px;
-}
-
-QSlider#layerOpacitySlider::sub-page:horizontal {
-    background: #168b7b;
-    border-radius: 2px;
-}
-
-QSlider#layerOpacitySlider::add-page:horizontal {
-    background: #dde5e2;
-    border-radius: 2px;
-}
-
-QSlider#layerOpacitySlider::handle:horizontal {
-    width: 12px;
-    height: 12px;
-    margin: -5px 0;
-    border-radius: 6px;
-    background: #117d70;
-}
-
-QSlider#layerOpacitySlider::handle:horizontal:hover {
-    background: #0d6a5f;
-}
-
-QPushButton#layerToggleAllButton, QPushButton#layerOutlineToggleButton {
-    color: #123e37;
+QPushButton#layerToggleAllButton,
+QPushButton#layerOutlineToggleButton {
+    min-height: 18px;
+    color: #254c46;
     background: #ffffff;
-    border: 1px solid #cddad6;
+    border: 1px solid #c7d8d4;
     border-radius: 6px;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 6px;
+    font-size: 10px;
+    font-weight: 650;
+    padding: 5px 7px;
 }
 
-QPushButton#layerToggleAllButton:hover, QPushButton#layerOutlineToggleButton:hover {
+QPushButton#layerToggleAllButton:hover,
+QPushButton#layerOutlineToggleButton:hover {
+    color: #126f62;
+    background: #f8fcfb;
     border-color: #8fbcb4;
+}
+
+QPushButton#layerToggleAllButton:pressed,
+QPushButton#layerOutlineToggleButton:pressed {
+    background: #dcefeb;
+    border-color: #6ba99e;
 }
 
 QPushButton#layerOutlineToggleButton:checked {
@@ -721,50 +840,67 @@ QPushButton#layerOutlineToggleButton:checked {
     color: #ffffff;
 }
 
-QPushButton#layerToggleAllButton:disabled, QPushButton#layerOutlineToggleButton:disabled {
-    color: #a9b6b2;
+QPushButton#layerOutlineToggleButton:checked:hover {
+    background: #117b6d;
+    border-color: #117b6d;
+}
+
+QPushButton#layerToggleAllButton:disabled,
+QPushButton#layerOutlineToggleButton:disabled {
+    color: #9daba8;
     background: #edf2f1;
-    border-color: #dde5e2;
+    border-color: #d9e3e0;
 }
 
 QLabel#globalOpacityLabel {
-    color: #667673;
-    font-size: 11px;
-    font-weight: 600;
-    padding-top: 2px;
+    color: #526863;
+    font-size: 10px;
+    font-weight: 650;
 }
 
 QLabel#globalOpacityValueLabel {
-    color: #667673;
-    font-size: 11px;
+    color: #526863;
+    font-size: 10px;
 }
 
+QSlider#layerOpacitySlider,
+QSlider#globalOpacitySlider {
+    min-height: 14px;
+}
+
+QSlider#layerOpacitySlider::groove:horizontal,
 QSlider#globalOpacitySlider::groove:horizontal {
     height: 4px;
-    background: #dde5e2;
+    background: #d8e3e0;
     border-radius: 2px;
 }
 
+QSlider#layerOpacitySlider::sub-page:horizontal,
 QSlider#globalOpacitySlider::sub-page:horizontal {
-    background: #168b7b;
+    background: #39a393;
     border-radius: 2px;
 }
 
+QSlider#layerOpacitySlider::add-page:horizontal,
 QSlider#globalOpacitySlider::add-page:horizontal {
-    background: #dde5e2;
+    background: #d8e3e0;
     border-radius: 2px;
 }
 
+QSlider#layerOpacitySlider::handle:horizontal,
 QSlider#globalOpacitySlider::handle:horizontal {
-    width: 12px;
-    height: 12px;
+    width: 13px;
+    height: 13px;
     margin: -5px 0;
-    border-radius: 6px;
-    background: #117d70;
+    background: #ffffff;
+    border: 2px solid #168b7b;
+    border-radius: 7px;
 }
 
+QSlider#layerOpacitySlider::handle:horizontal:hover,
 QSlider#globalOpacitySlider::handle:horizontal:hover {
-    background: #0d6a5f;
+    background: #dff1ed;
+    border-color: #0d6a5f;
 }
 """
 
@@ -790,12 +926,16 @@ def apply_theme(app: QApplication) -> None:
     combo_box_arrow = assets_dir / "chevron_down.svg"
     radio_unchecked = assets_dir / "radio_unchecked.svg"
     radio_checked = assets_dir / "radio_checked.svg"
+    checkbox_unchecked = assets_dir / "checkbox_unchecked.svg"
+    checkbox_checked = assets_dir / "checkbox_checked.svg"
     menu_check = assets_dir / "menu_check.svg"
     menu_chevron = assets_dir / "chevron_right.svg"
     app.setStyleSheet(
         APP_QSS.replace("__COMBOBOX_ARROW__", combo_box_arrow.as_posix())
         .replace("__RADIO_UNCHECKED__", radio_unchecked.as_posix())
         .replace("__RADIO_CHECKED__", radio_checked.as_posix())
+        .replace("__CHECKBOX_UNCHECKED__", checkbox_unchecked.as_posix())
+        .replace("__CHECKBOX_CHECKED__", checkbox_checked.as_posix())
         .replace("__MENU_CHECK__", menu_check.as_posix())
         .replace("__MENU_CHEVRON__", menu_chevron.as_posix())
     )

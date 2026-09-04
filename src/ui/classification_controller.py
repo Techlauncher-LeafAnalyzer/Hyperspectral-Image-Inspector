@@ -29,6 +29,7 @@ from core import (
     UnsupervisedClassificationRequest,
     UnsupervisedClassificationResult,
 )
+from ui.classification_colors import classification_palette
 from ui.classification_layer_panel import ClassificationLayerPanel
 from ui.theme import VIEWER_SCENE_BACKGROUND
 from ui.viewer import HSIViewer
@@ -768,15 +769,6 @@ class ClassificationController(QObject):
         """Map arbitrary class IDs to stable, evenly spaced display colors."""
 
         display_rgb = np.zeros((*class_map.shape, 3), dtype=np.uint8)
-        for color_index, class_id in enumerate(class_ids):
-            color = QtGui.QColor.fromHsvF(
-                color_index / max(len(class_ids), 1),
-                0.72,
-                0.92,
-            )
-            display_rgb[class_map == class_id] = (
-                color.red(),
-                color.green(),
-                color.blue(),
-            )
+        for class_id, color in classification_palette(class_ids).items():
+            display_rgb[class_map == class_id] = color
         return display_rgb
