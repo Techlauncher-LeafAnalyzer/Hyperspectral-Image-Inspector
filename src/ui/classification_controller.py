@@ -14,6 +14,8 @@ import core.hsi_utils as hsi_utils
 from core import (
     CancelledError,
     ClassificationError,
+    ClassificationLayerComposite,
+    ClassificationLayerModel,
     ClassificationService,
     HSIData,
     HSIError,
@@ -26,7 +28,16 @@ from core import (
     UnsupervisedClassificationRequest,
     UnsupervisedClassificationResult,
 )
+from ui.classification_layer_panel import ClassificationLayerPanel
+from ui.theme import VIEWER_SCENE_BACKGROUND
 from ui.viewer import HSIViewer
+
+_LAYER_COMPOSITE_BACKGROUND = (
+    VIEWER_SCENE_BACKGROUND.red(),
+    VIEWER_SCENE_BACKGROUND.green(),
+    VIEWER_SCENE_BACKGROUND.blue(),
+)
+_OPACITY_REFRESH_INTERVAL_MS = 40
 
 LOGGER = logging.getLogger(__name__)
 
@@ -149,10 +160,12 @@ class ClassificationController(QObject):
 
     def __init__(
         self,
-        hsi_data: HSIData,
+        display_data_provider: Callable[[], HSIData],
+        is_super_resolution_active: Callable[[], bool],
         service: ClassificationService,
         training_pair_resolver: TrainingPairResolver,
         viewer: HSIViewer,
+        layer_panel: ClassificationLayerPanel,
         statusbar: QtWidgets.QStatusBar,
         unsupervised_button: QtWidgets.QPushButton,
         supervised_button: QtWidgets.QPushButton,
@@ -166,10 +179,12 @@ class ClassificationController(QObject):
         parent_widget: QtWidgets.QWidget,
     ) -> None:
         super().__init__()
-        self._hsi_data = hsi_data
+        self._display_data_provider = display_data_provider
+        self._is_super_resolution_active = is_super_resolution_active
         self._service = service
         self._training_pair_resolver = training_pair_resolver
         self._viewer = viewer
+        self._layer_panel = layer_panel
         self._statusbar = statusbar
         self._unsupervised_button = unsupervised_button
         self._supervised_button = supervised_button
@@ -184,6 +199,13 @@ class ClassificationController(QObject):
 
         self._result: Optional[_ClassificationResult] = None
         self._rgb: Optional[NDArray[np.uint8]] = None
+        self._layers: Optional[ClassificationLayerModel] = None
+        self._active_data: Optional[HSIData] = None
+        self._sr_notice_shown = False
+        self._opacity_refresh_timer = QtCore.QTimer(self)
+        self._opacity_refresh_timer.setSingleShot(True)
+        self._opacity_refresh_timer.setInterval(_OPACITY_REFRESH_INTERVAL_MS)
+        self._opacity_refresh_timer.timeout.connect(self._show_result)
         self._thread: Optional[QtCore.QThread] = None
         self._worker: Optional[
             Union[_ClassificationWorker, _SupervisedClassificationWorker]
@@ -201,6 +223,25 @@ class ClassificationController(QObject):
     @property
     def rgb(self) -> Optional[NDArray[np.uint8]]:
         return self._rgb
+
+    @property
+    def display_data(self) -> Optional[HSIData]:
+        """Return the data source the current result was classified against."""
+
+        return self._active_data
+
+    def composited_rgb(self) -> Optional[NDArray[np.uint8]]:
+        """Return the current layer-composited display image, if any result exists.
+
+        This is what the classification viewer actually shows -- it reflects
+        per-class visibility/opacity, unlike :attr:`rgb`. Other tabs (saving
+        the active viewer, refreshing after a Super-Resolution toggle) must
+        read this instead of :attr:`rgb` to avoid showing a stale, flattened
+        image.
+        """
+
+        composite = self._composite()
+        return composite.display_rgb if composite is not None else None
 
     def class_id_at(self, row: int, column: int) -> Optional[int]:
         """Return the zero-based class ID at ``(row, column)``, if any."""
@@ -225,6 +266,9 @@ class ClassificationController(QObject):
 
         self._result = None
         self._rgb = None
+        self._layers = None
+        self._active_data = None
+        self._layer_panel.clear()
 
     def request_close(self) -> bool:
         """Begin cancelling a running classification for an application close.
@@ -254,6 +298,8 @@ class ClassificationController(QObject):
         self._groundtruth_button.clicked.connect(self._on_select_groundtruth_clicked)
         self._supervised_button.clicked.connect(self._on_supervised_classify_clicked)
         self._unsupervised_button.clicked.connect(self._on_unsupervised_classify_clicked)
+        self._layer_panel.visibilityChanged.connect(self._on_layer_visibility_changed)
+        self._layer_panel.opacityChanged.connect(self._on_layer_opacity_changed)
 
         self._num_classes_edit.setValidator(QtGui.QIntValidator(2, 65535, self))
         self._max_iterations_edit.setValidator(QtGui.QIntValidator(1, 10000, self))
@@ -337,7 +383,8 @@ class ClassificationController(QObject):
         if self.is_running():
             self._cancel_active()
             return
-        if not self._hsi_data.is_loaded():
+        data = self._display_data_provider()
+        if not data.is_loaded():
             QMessageBox.information(self._parent, "Nothing to classify", "Load an image first.")
             return
 
@@ -357,11 +404,13 @@ class ClassificationController(QObject):
             QMessageBox.critical(self._parent, "Invalid classification settings", str(exc))
             return
 
-        estimate = self._service.estimate_kmeans_working_bytes(self._hsi_data, request)
+        estimate = self._service.estimate_kmeans_working_bytes(data, request)
         if estimate >= 1_000_000_000 and not self._confirm_large_job(estimate):
             return
 
-        worker = _ClassificationWorker(self._service, self._hsi_data, request)
+        self._notify_if_classifying_super_resolution()
+        self._active_data = data
+        worker = _ClassificationWorker(self._service, data, request)
         self._launch_worker(
             worker, self._unsupervised_button, "Starting K-means classification…"
         )
@@ -372,7 +421,8 @@ class ClassificationController(QObject):
         if self.is_running():
             self._cancel_active()
             return
-        if not self._hsi_data.is_loaded():
+        data = self._display_data_provider()
+        if not data.is_loaded():
             QMessageBox.information(self._parent, "Nothing to classify", "Load an image first.")
             return
         if self._training_pair is None:
@@ -396,9 +446,11 @@ class ClassificationController(QObject):
             return
         request = SupervisedClassificationRequest(classifier)
 
+        self._notify_if_classifying_super_resolution()
+        self._active_data = data
         worker = _SupervisedClassificationWorker(
             self._service,
-            self._hsi_data,
+            data,
             self._training_pair,
             request,
         )
@@ -416,6 +468,23 @@ class ClassificationController(QObject):
             self._active_button.setText("Cancelling…")
         self._statusbar.showMessage(
             "Cancelling after the current classification stage…"
+        )
+
+    def _notify_if_classifying_super_resolution(self) -> None:
+        """Tell the user, once per session, that classification targets the SR result.
+
+        Mirrors ``MainWindowController``'s one-time "Viewing Super-Resolution
+        image" notice for the Visualization tab.
+        """
+
+        if self._sr_notice_shown or not self._is_super_resolution_active():
+            return
+        self._sr_notice_shown = True
+        QMessageBox.information(
+            self._parent,
+            "Classifying Super-Resolution image",
+            "Classification is running on the Super-Resolution (high-res) "
+            "result instead of the original image.",
         )
 
     def _confirm_large_job(self, estimated_bytes: int) -> bool:
@@ -483,6 +552,8 @@ class ClassificationController(QObject):
         ):
             self._on_failed("Worker returned an invalid result.")
             return
+        if self._active_data is None:
+            self._active_data = self._display_data_provider()
         self._result = result
         class_ids = (
             result.class_ids
@@ -490,6 +561,8 @@ class ClassificationController(QObject):
             else tuple(range(result.n_classes))
         )
         self._rgb = self._colorize_class_map(result.class_map, class_ids)
+        self._layers = ClassificationLayerModel(result)
+        self._layer_panel.set_layers(self._layers.layers)
         self._show_result()
         populated = int(np.count_nonzero(result.class_pixel_counts))
         operation = (
@@ -518,7 +591,7 @@ class ClassificationController(QObject):
         self._groundtruth_button.setEnabled(True)
         self._classifier_combo.setEnabled(True)
         self._load_image_action.setEnabled(True)
-        loaded = self._hsi_data.is_loaded()
+        loaded = self._display_data_provider().is_loaded()
         self._unsupervised_button.setEnabled(loaded)
         self._supervised_button.setEnabled(loaded)
         self._unsupervised_button.setText("Classify")
@@ -539,11 +612,44 @@ class ClassificationController(QObject):
             self._close_after_classification = False
             QtCore.QTimer.singleShot(0, self.readyToClose.emit)
 
+    @QtCore.pyqtSlot(int, bool)
+    def _on_layer_visibility_changed(self, class_id: int, visible: bool) -> None:
+        if self._layers is None:
+            return
+        try:
+            self._layers.set_class_visible(class_id, visible)
+        except ClassificationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._show_result()
+
+    @QtCore.pyqtSlot(int, float)
+    def _on_layer_opacity_changed(self, class_id: int, opacity: float) -> None:
+        if self._layers is None:
+            return
+        try:
+            self._layers.set_class_opacity(class_id, opacity)
+        except ClassificationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._opacity_refresh_timer.start()
+
+    def _composite(self) -> Optional[ClassificationLayerComposite]:
+        if self._rgb is None or self._layers is None:
+            return None
+        base_rgb = self._active_data.rgb_array if self._active_data is not None else None
+        if base_rgb is not None and base_rgb.shape == (*self._layers.image_shape, 3):
+            return self._layers.compose_display(self._rgb, base_rgb=base_rgb)
+        return self._layers.compose_display(
+            self._rgb, background_color=_LAYER_COMPOSITE_BACKGROUND
+        )
+
     def _show_result(self) -> None:
-        if self._rgb is None:
+        composite_rgb = self.composited_rgb()
+        if composite_rgb is None:
             return
         state = self._viewer.get_view_state()
-        self._viewer.set_photo(hsi_utils.numpy_to_qpixmap(self._rgb))
+        self._viewer.set_photo(hsi_utils.numpy_to_qpixmap(composite_rgb))
         if state is not None:
             self._viewer.queue_view_state(state)
 

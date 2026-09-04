@@ -1,4 +1,4 @@
-# Form implementation generated from reading ui file 'qt/MainWindow.ui'
+# Form implementation generated from reading ui file 'src/qt/MainWindow.ui'
 #
 # Created by: PyQt6 UI code generator 6.11.0
 #
@@ -190,10 +190,18 @@ class Ui_MainWindow(object):
         self.Classification.setObjectName("Classification")
         self.classificationLayout = QtWidgets.QVBoxLayout(self.Classification)
         self.classificationLayout.setObjectName("classificationLayout")
+        self.classificationViewerRow = QtWidgets.QHBoxLayout()
+        self.classificationViewerRow.setObjectName("classificationViewerRow")
         self.classificationViewer = HSIViewer(parent=self.Classification)
         self.classificationViewer.setLayoutDirection(QtCore.Qt.LayoutDirection.LeftToRight)
         self.classificationViewer.setObjectName("classificationViewer")
-        self.classificationLayout.addWidget(self.classificationViewer)
+        self.classificationViewerRow.addWidget(self.classificationViewer)
+        self.classificationLayerPanel = ClassificationLayerPanel(parent=self.Classification)
+        self.classificationLayerPanel.setMinimumSize(QtCore.QSize(220, 0))
+        self.classificationLayerPanel.setMaximumSize(QtCore.QSize(260, 16777215))
+        self.classificationLayerPanel.setObjectName("classificationLayerPanel")
+        self.classificationViewerRow.addWidget(self.classificationLayerPanel)
+        self.classificationLayout.addLayout(self.classificationViewerRow)
         self.classificationFilePath = QtWidgets.QLabel(parent=self.Classification)
         self.classificationFilePath.setObjectName("classificationFilePath")
         self.classificationLayout.addWidget(self.classificationFilePath)
@@ -337,5 +345,6 @@ class Ui_MainWindow(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.Classification), _translate("MainWindow", "Classification"))
         self.actionLoadImage.setText(_translate("MainWindow", "Load Image"))
         self.actionSaveImage.setText(_translate("MainWindow", "Save Image"))
+from ui.classification_layer_panel import ClassificationLayerPanel
 from ui.hypercube_widget import HypercubeWidget
 from ui.viewer import HSIViewer

@@ -438,11 +438,31 @@
        </attribute>
        <layout class="QVBoxLayout" name="classificationLayout">
         <item>
-         <widget class="HSIViewer" name="classificationViewer">
-          <property name="layoutDirection">
-           <enum>Qt::LayoutDirection::LeftToRight</enum>
-          </property>
-         </widget>
+         <layout class="QHBoxLayout" name="classificationViewerRow">
+          <item>
+           <widget class="HSIViewer" name="classificationViewer">
+            <property name="layoutDirection">
+             <enum>Qt::LayoutDirection::LeftToRight</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="ClassificationLayerPanel" name="classificationLayerPanel">
+            <property name="minimumSize">
+             <size>
+              <width>220</width>
+              <height>0</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>260</width>
+              <height>16777215</height>
+             </size>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </item>
         <item>
          <widget class="QLabel" name="classificationFilePath">
@@ -683,6 +703,11 @@
    <class>HypercubeWidget</class>
    <extends>QWidget</extends>
    <header>ui.hypercube_widget</header>
+  </customwidget>
+  <customwidget>
+   <class>ClassificationLayerPanel</class>
+   <extends>QWidget</extends>
+   <header>ui.classification_layer_panel</header>
   </customwidget>
  </customwidgets>
  <resources>

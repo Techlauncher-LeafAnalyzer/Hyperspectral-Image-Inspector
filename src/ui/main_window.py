@@ -107,10 +107,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._visualization_service,
         )
         self._classification_controller = ClassificationController(
-            self._hsi_data,
+            self._display_data,
+            self._is_super_resolution_active,
             ClassificationService(),
             TrainingPairResolver(),
             self.classificationViewer,
+            self.classificationLayerPanel,
             self.statusbar,
             self.unsupervisedClassifyButton,
             self.pushButton_2,
@@ -304,9 +306,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         chooses between it and the original for the whole application, not
         just the Super-Resolution tab's own comparison viewer.
         """
-        if self.highResButton.isChecked() and self._super_res_result is not None:
+        if self._is_super_resolution_active():
             return self._super_res_result.data
         return self._hsi_data
+
+    def _is_super_resolution_active(self) -> bool:
+        """Return whether ``_display_data`` currently resolves to the SR result."""
+
+        return self.highResButton.isChecked() and self._super_res_result is not None
 
     def _refresh_super_resolution_display(self) -> None:
         previous_size = self.superResViewer.photo_size()
@@ -568,11 +575,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else self._display_data().rgb_array
-        if (
-            self._active_viewer is self.classificationViewer
-            and self._classification_controller.rgb is not None
-        ):
-            display_rgb = self._classification_controller.rgb
+        classification_rgb = (
+            self._classification_controller.composited_rgb()
+            if self._active_viewer is self.classificationViewer
+            else None
+        )
+        if classification_rgb is not None:
+            display_rgb = classification_rgb
         if self.tabWidget.currentWidget() is self.SuperResolution:
             if self.highResButton.isChecked() and self._super_res_result is None:
                 QMessageBox.information(self, "Nothing to save", "Run Super-Resolution first.")
@@ -643,16 +652,18 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 continue
             previous_size = viewer.photo_size()
             state = viewer.get_view_state()
-            use_classification = (
-                viewer is self.classificationViewer
-                and self._classification_controller.rgb is not None
+            classification_rgb = (
+                self._classification_controller.composited_rgb()
+                if viewer is self.classificationViewer
+                else None
             )
-            viewer_display = (
-                self._classification_controller.rgb
+            use_classification = classification_rgb is not None
+            viewer_display = classification_rgb if use_classification else display_rgb
+            viewer_data = (
+                self._classification_controller.display_data
                 if use_classification
-                else display_rgb
+                else data
             )
-            viewer_data = self._hsi_data if use_classification else data
             viewer.rgb        = viewer_data.rgb_array
             viewer.mask_array = viewer_data.mask_array
             pixmap = hsi_utils.numpy_to_qpixmap(viewer_display)

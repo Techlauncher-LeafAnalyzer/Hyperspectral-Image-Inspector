@@ -13,7 +13,7 @@ once, then reuses the resulting raster for every class.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from numbers import Integral
+from numbers import Integral, Real
 from typing import Callable, Iterable
 
 import numpy as np
@@ -63,15 +63,17 @@ class ClassificationLayer:
     name: str
     pixel_count: int
     visible: bool
+    opacity: float
 
 
 @dataclass(frozen=True, slots=True)
 class ClassificationLayerComposite:
     """RGB and RGBA representations of the currently visible layers.
 
-    ``display_rgb`` has hidden pixels filled with the requested background
-    colour. ``display_rgba`` retains original RGB at visible pixels and uses
-    alpha 0 at hidden pixels, making it suitable for a transparent overlay.
+    ``display_rgb`` has hidden/faded pixels blended toward the requested
+    background colour or base image. ``display_rgba`` retains original RGB
+    everywhere and uses each pixel's class opacity as its alpha, making it
+    suitable for a transparent overlay.
     """
 
     display_rgb: np.ndarray
@@ -211,6 +213,7 @@ class ClassificationLayerModel:
         )
         self._names = {class_id: f"Class {class_id}" for class_id in class_ids}
         self._visibility = {class_id: True for class_id in class_ids}
+        self._opacity = {class_id: 1.0 for class_id in class_ids}
 
     @property
     def result(self) -> ClassificationResult:
@@ -242,6 +245,7 @@ class ClassificationLayerModel:
                 name=self._names[class_id],
                 pixel_count=self._pixel_counts[index],
                 visible=self._visibility[class_id],
+                opacity=self._opacity[class_id],
             )
             for index, class_id in enumerate(self._class_ids)
         )
@@ -267,6 +271,12 @@ class ClassificationLayerModel:
         if not isinstance(visible, (bool, np.bool_)):
             raise ClassificationError("Layer visibility must be true or false.")
         self._visibility[normalized] = bool(visible)
+
+    def set_class_opacity(self, class_id: int, opacity: float) -> None:
+        """Update one layer's opacity, independent of its visibility state."""
+
+        normalized = self._require_class(class_id)
+        self._opacity[normalized] = _normalize_opacity(opacity)
 
     def set_visible_classes(self, class_ids: Iterable[int]) -> None:
         """Atomically replace the visible set, useful for restoring UI state."""
@@ -312,6 +322,21 @@ class ClassificationLayerModel:
         mask.setflags(write=False)
         return mask
 
+    def _effective_alpha(self) -> np.ndarray:
+        """Return an HxW blend factor: per-class opacity where visible, else 0.
+
+        Class masks are disjoint (enforced in ``__init__``), so classes can be
+        painted independently without any overlap/accumulation to resolve.
+        """
+
+        alpha = np.zeros(self.image_shape, dtype=np.float32)
+        for index, class_id in enumerate(self._class_ids):
+            if self._visibility[class_id]:
+                mask = self._one_hot_masks[index].astype(bool, copy=False)
+                alpha[mask] = self._opacity[class_id]
+        alpha.setflags(write=False)
+        return alpha
+
     def compose_rgb(
         self,
         rgb: np.ndarray,
@@ -331,21 +356,37 @@ class ClassificationLayerModel:
         display_rgb: np.ndarray,
         *,
         background_color: tuple[int, int, int] = (0, 0, 0),
+        base_rgb: np.ndarray | None = None,
     ) -> ClassificationLayerComposite:
-        """Apply visibility to any RGB rendering, including an index colormap."""
+        """Apply visibility and opacity to any RGB rendering, including an
+        index colormap.
+
+        Hidden pixels and faded (partially opaque) pixels are blended toward
+        ``base_rgb`` when given -- typically the true-colour image beneath a
+        false-coloured classification overlay -- or toward the flat
+        ``background_color`` otherwise. A layer at the default opacity of
+        ``1.0`` behaves exactly like a hard visible/hidden switch.
+        """
 
         rgb = self._validated_rgb(display_rgb)
-        background = _normalize_rgb_color(background_color)
         visible_mask = self.visible_mask()
+        alpha = self._effective_alpha()
+        alpha_channel = alpha[..., np.newaxis]
 
-        flattened_background = np.asarray(background, dtype=np.uint8)
-        composited = np.empty_like(rgb)
-        composited[...] = flattened_background
-        composited[visible_mask] = rgb[visible_mask]
+        if base_rgb is not None:
+            background_arr = self._validated_rgb(base_rgb).astype(np.float32)
+        else:
+            background_arr = np.asarray(
+                _normalize_rgb_color(background_color), dtype=np.float32
+            )
+        blended = rgb.astype(np.float32) * alpha_channel + background_arr * (
+            1.0 - alpha_channel
+        )
+        composited = np.clip(blended, 0, 255).astype(np.uint8)
 
         rgba = np.empty((*self.image_shape, 4), dtype=np.uint8)
         rgba[..., :3] = rgb
-        rgba[..., 3] = visible_mask.astype(np.uint8) * 255
+        rgba[..., 3] = np.clip(alpha * 255.0, 0, 255).astype(np.uint8)
         for array in (composited, rgba):
             array.setflags(write=False)
         return ClassificationLayerComposite(
@@ -547,6 +588,15 @@ def _normalize_class_id(class_id: int) -> int:
     if isinstance(class_id, bool) or not isinstance(class_id, Integral):
         raise ClassificationError("Classification class ID must be an integer.")
     return int(class_id)
+
+
+def _normalize_opacity(opacity: float) -> float:
+    if isinstance(opacity, bool) or not isinstance(opacity, Real):
+        raise ClassificationError("Layer opacity must be a number.")
+    value = float(opacity)
+    if not 0.0 <= value <= 1.0:
+        raise ClassificationError("Layer opacity must be between 0.0 and 1.0.")
+    return value
 
 
 def _normalize_rgb_color(color: tuple[int, int, int]) -> tuple[int, int, int]:
