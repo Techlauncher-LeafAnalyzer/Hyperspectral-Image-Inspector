@@ -476,7 +476,7 @@
           <property name="maximumSize">
            <size>
             <width>16777215</width>
-            <height>89</height>
+            <height>118</height>
            </size>
           </property>
           <property name="title">
@@ -603,6 +603,23 @@
                  </property>
                  <property name="placeholderText">
                   <string>Select groundtruth file</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QPushButton" name="hyperspectralImageButton">
+                 <property name="text">
+                  <string>Hyperspectral Image</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <widget class="QLineEdit" name="hyperspectralImageEdit">
+                 <property name="readOnly">
+                  <bool>true</bool>
+                 </property>
+                 <property name="placeholderText">
+                  <string>Select hyperspectral image</string>
                  </property>
                 </widget>
                </item>
