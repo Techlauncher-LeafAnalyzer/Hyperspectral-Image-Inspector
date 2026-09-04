@@ -282,6 +282,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             return
         self._refresh_super_resolution_display()
+        self._update_classification_resolution_label()
         self.superResStatusStack.setCurrentWidget(self.superResIdlePage)
         if not self._hsi_data.is_loaded():
             status = "Load an image to compare the original and processed result"
@@ -298,6 +299,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         # not just the Super-Resolution tab's own comparison viewer.
         if self._super_res_result is not None:
             self._refresh_visualization_pipeline()
+            self._classification_controller.refresh_display()
 
     def _display_data(self) -> HSIData:
         """Return the dataset every tab should currently render.
@@ -314,6 +316,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         """Return whether ``_display_data`` currently resolves to the SR result."""
 
         return self.highResButton.isChecked() and self._super_res_result is not None
+
+    def _update_classification_resolution_label(self) -> None:
+        """Tell the Classification tab which resolution it is currently showing."""
+
+        text = (
+            "Viewing: Super-Resolution (high-res)"
+            if self._is_super_resolution_active()
+            else "Viewing: Original (low-res)"
+        )
+        self.classificationResolutionText.setText(text)
 
     def _refresh_super_resolution_display(self) -> None:
         previous_size = self.superResViewer.photo_size()
@@ -405,6 +417,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         result.data.rgb_array = display.display_rgb
         result.data.mask_array = np.zeros(display.display_rgb.shape[:2], dtype=np.uint8)
         self._super_res_result = result
+        # A fresh SR run invalidates any classification made against the
+        # previous SR result -- the original-resolution slot is unaffected.
+        self._classification_controller.clear_super_resolution_result()
         self.highResButton.setChecked(True)
         self._refresh_super_resolution_display()
         self.superResProgressBar.setValue(100)

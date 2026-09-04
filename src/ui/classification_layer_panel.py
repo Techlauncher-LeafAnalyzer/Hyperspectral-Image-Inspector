@@ -187,34 +187,45 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self,
         layers: tuple[ClassificationLayer, ...],
         *,
-        reset_global_controls: bool = True,
+        global_opacity: float = 1.0,
+        outline_mode: bool = False,
     ) -> None:
         """Rebuild every row from scratch to reflect ``layers``.
 
-        The default path resets global controls too (matching a fresh
-        ``ClassificationLayerModel``), but callers that only changed row
-        visibility can preserve them via ``reset_global_controls=False``.
+        Called both after a brand new classification result arrives and
+        when switching back to a resolution level with an existing result
+        (see ``ClassificationController.refresh_display``), so a full
+        clear-and-rebuild (mirroring the block-signals-and-rebuild pattern
+        in ``docs/classification_layer_api.md``) is simplest and avoids
+        reordering/diffing logic this panel does not need. ``global_opacity``
+        and ``outline_mode`` reflect that result's own
+        ``ClassificationLayerModel`` state, so switching back to a result
+        the user had already faded or outlined restores those header
+        controls too, not just the per-row values.
         """
 
-        self.clear(reset_global_controls=reset_global_controls)
+        self._clear_rows()
         for layer in layers:
             row = _LayerRowWidget(layer, self._rows_container)
             row.visibilityChanged.connect(self.visibilityChanged)
             row.opacityChanged.connect(self.opacityChanged)
             self._rows[layer.class_id] = row
             self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
+        self._apply_global_controls(global_opacity, outline_mode)
         self._update_empty_state()
 
-    def clear(self, *, reset_global_controls: bool = True) -> None:
-        """Remove all rows and show the empty-state message."""
+    def clear(self) -> None:
+        """Remove all rows, reset the global controls, and show empty state."""
 
+        self._clear_rows()
+        self._reset_global_controls()
+        self._update_empty_state()
+
+    def _clear_rows(self) -> None:
         for row in self._rows.values():
             self._rows_layout.removeWidget(row)
             row.deleteLater()
         self._rows.clear()
-        if reset_global_controls:
-            self._reset_global_controls()
-        self._update_empty_state()
 
     def _on_toggle_all_clicked(self) -> None:
         any_visible = any(row._toggle.isChecked() for row in self._rows.values())
@@ -230,16 +241,20 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._global_opacity_value_label.setText(f"{value}%")
         self.globalOpacityChanged.emit(value / 100.0)
 
-    def _reset_global_controls(self) -> None:
+    def _apply_global_controls(self, global_opacity: float, outline_mode: bool) -> None:
+        value = round(global_opacity * 100)
         self._global_opacity_slider.blockSignals(True)
-        self._global_opacity_slider.setValue(100)
+        self._global_opacity_slider.setValue(value)
         self._global_opacity_slider.blockSignals(False)
-        self._global_opacity_value_label.setText("100%")
+        self._global_opacity_value_label.setText(f"{value}%")
 
         self._outline_toggle_button.blockSignals(True)
-        self._outline_toggle_button.setChecked(False)
-        self._outline_toggle_button.setText("Borders Only")
+        self._outline_toggle_button.setChecked(outline_mode)
+        self._outline_toggle_button.setText("Show Fill" if outline_mode else "Borders Only")
         self._outline_toggle_button.blockSignals(False)
+
+    def _reset_global_controls(self) -> None:
+        self._apply_global_controls(1.0, False)
 
     def _update_empty_state(self) -> None:
         has_rows = bool(self._rows)

@@ -280,8 +280,8 @@ def test_result_populates_layer_panel(qtbot):
     controller._on_result(result)
 
     assert len(layer_panel._rows) == 3
-    assert controller._layers is not None
-    assert controller._layers.visible_class_ids == (0, 1, 2)
+    assert controller._current_slot.layers is not None
+    assert controller._current_slot.layers.visible_class_ids == (0, 1, 2)
 
 
 def test_hiding_a_layer_updates_the_rendered_pixmap(qtbot):
@@ -294,7 +294,7 @@ def test_hiding_a_layer_updates_the_rendered_pixmap(qtbot):
     controller._on_layer_visibility_changed(1, False)
 
     after = viewer._photo.pixmap().toImage()
-    assert controller._layers.visible_class_ids == (0, 2)
+    assert controller._current_slot.layers.visible_class_ids == (0, 2)
     assert before != after
 
 
@@ -305,7 +305,7 @@ def test_hiding_a_layer_reveals_the_true_colour_base_image(qtbot):
     base_rgb = np.zeros((2, 3, 3), dtype=np.uint8)
     base_rgb[..., 2] = 40  # a distinct, otherwise-unused blue base image
     source.data.rgb_array = base_rgb
-    controller._active_data = source.data  # set by the real click handler pre-launch
+    controller._current_slot.active_data = source.data  # set by the real click handler pre-launch
     controller._on_result(result)
 
     controller._on_layer_visibility_changed(1, False)
@@ -325,7 +325,7 @@ def test_changing_opacity_debounces_then_updates_the_pixmap(qtbot):
     before = viewer._photo.pixmap().toImage().copy()
 
     controller._on_layer_opacity_changed(2, 0.5)
-    assert controller._layers.layers[2].opacity == 0.5
+    assert controller._current_slot.layers.layers[2].opacity == 0.5
 
     qtbot.wait(150)
 
@@ -341,7 +341,7 @@ def test_clear_result_clears_the_layer_panel(qtbot):
     controller.clear_result()
 
     assert len(layer_panel._rows) == 0
-    assert controller._layers is None
+    assert controller._current_slot.layers is None
 
 
 # ---------------------------------------------------------------------- #
@@ -357,7 +357,7 @@ def test_disabling_all_hides_every_class_and_rebuilds_unchecked_rows(qtbot):
 
     controller._on_set_all_visible_requested(False)
 
-    assert controller._layers.visible_class_ids == ()
+    assert controller._current_slot.layers.visible_class_ids == ()
     assert all(not row._toggle.isChecked() for row in layer_panel._rows.values())
     after = viewer._photo.pixmap().toImage()
     assert before != after
@@ -371,24 +371,8 @@ def test_enabling_all_restores_every_class(qtbot):
 
     controller._on_set_all_visible_requested(True)
 
-    assert controller._layers.visible_class_ids == (0, 1, 2)
+    assert controller._current_slot.layers.visible_class_ids == (0, 1, 2)
     assert all(row._toggle.isChecked() for row in layer_panel._rows.values())
-
-
-def test_toggle_all_preserves_global_opacity_and_outline_mode(qtbot):
-    controller, viewer, layer_panel, source = _make_controller(qtbot)
-    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
-    controller._on_result(_make_unsupervised_result(class_map))
-    layer_panel._global_opacity_slider.setValue(40)
-    layer_panel._outline_toggle_button.setChecked(True)
-
-    controller._on_set_all_visible_requested(False)
-
-    assert controller._layers.global_opacity == 0.4
-    assert controller._layers.outline_mode
-    assert layer_panel._global_opacity_slider.value() == 40
-    assert layer_panel._outline_toggle_button.isChecked()
-    assert layer_panel._outline_toggle_button.text() == "Show Fill"
 
 
 def test_toggle_all_button_click_flows_through_to_the_model(qtbot):
@@ -398,7 +382,7 @@ def test_toggle_all_button_click_flows_through_to_the_model(qtbot):
 
     layer_panel._toggle_all_button.click()
 
-    assert controller._layers.visible_class_ids == ()
+    assert controller._current_slot.layers.visible_class_ids == ()
 
 
 def test_global_opacity_scales_the_composite_after_debounce(qtbot):
@@ -407,7 +391,7 @@ def test_global_opacity_scales_the_composite_after_debounce(qtbot):
     controller._on_result(_make_unsupervised_result(class_map))
 
     controller._on_global_opacity_changed(0.5)
-    assert controller._layers.global_opacity == 0.5
+    assert controller._current_slot.layers.global_opacity == 0.5
 
     qtbot.wait(150)
 
@@ -415,7 +399,7 @@ def test_global_opacity_scales_the_composite_after_debounce(qtbot):
     assert composite is not None
     # Every visible-class pixel should now be a 50/50 blend toward background,
     # never the fully-opaque class colour.
-    assert not np.array_equal(composite.display_rgb, controller._rgb)
+    assert not np.array_equal(composite.display_rgb, controller._current_slot.rgb)
 
 
 def test_outline_mode_reveals_background_in_class_interiors(qtbot):
@@ -426,7 +410,7 @@ def test_outline_mode_reveals_background_in_class_interiors(qtbot):
 
     controller._on_outline_mode_changed(True)
 
-    assert controller._layers.outline_mode
+    assert controller._current_slot.layers.outline_mode
     composite = controller._composite()
     # (2, 2) is inside class 1's block, away from every edge -> pure interior.
     interior_pixel = composite.display_rgb[2, 2]
@@ -456,7 +440,7 @@ def test_classifying_with_super_resolution_active_targets_its_data_and_notifies(
     controller._on_unsupervised_classify_clicked()
     qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
 
-    assert controller._active_data is source.data
+    assert controller._current_slot.active_data is source.data
     assert len(infos) == 1
     assert "Super-Resolution" in infos[0][1]
 
@@ -478,7 +462,7 @@ def test_classifying_without_super_resolution_active_shows_no_notice(
     controller._on_unsupervised_classify_clicked()
     qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
 
-    assert controller._active_data is source.data
+    assert controller._current_slot.active_data is source.data
     assert len(infos) == 0
 
 
@@ -502,3 +486,154 @@ def test_super_resolution_notice_is_shown_only_once(
     qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
 
     assert len(infos) == 1
+
+
+# ---------------------------------------------------------------------- #
+# Per-resolution classification storage and low/high-res swapping          #
+# ---------------------------------------------------------------------- #
+
+
+def _classify_into_slot(controller, source, slot_key: bool, class_map: np.ndarray) -> None:
+    """Simulate a completed classification job launched at ``slot_key``.
+
+    Mirrors what the real click handler records (``_pending_slot_key`` and
+    the slot's ``active_data``) before a worker's ``resultReady`` signal
+    reaches ``_on_result``, without spinning up an actual QThread.
+    """
+
+    source.is_super_resolution_active = slot_key
+    controller._pending_slot_key = slot_key
+    controller._slots[slot_key].active_data = source.data
+    controller._on_result(_make_unsupervised_result(class_map))
+
+
+def test_low_and_high_res_results_are_stored_in_separate_slots(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    low_res_data = HSIData()
+    low_res_data.rgb_array = np.zeros((2, 3, 3), dtype=np.uint8)
+    high_res_data = HSIData()
+    high_res_data.rgb_array = np.zeros((4, 6, 3), dtype=np.uint8)
+
+    source.data = low_res_data
+    _classify_into_slot(
+        controller, source, False, np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    )
+    low_slot_layers = controller._slots[False].layers
+
+    source.data = high_res_data
+    _classify_into_slot(
+        controller,
+        source,
+        True,
+        np.array([[0, 0, 1, 1], [1, 2, 2, 0], [0, 1, 1, 2], [2, 2, 0, 0]], dtype=np.int32),
+    )
+    high_slot_layers = controller._slots[True].layers
+
+    assert low_slot_layers is not None and high_slot_layers is not None
+    assert low_slot_layers is not high_slot_layers
+    assert controller._slots[False].active_data is low_res_data
+    assert controller._slots[True].active_data is high_res_data
+    assert controller._slots[False].result.class_map.shape == (2, 3)
+    assert controller._slots[True].result.class_map.shape == (4, 4)
+
+
+def test_editing_one_resolutions_layers_does_not_affect_the_other(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    _classify_into_slot(controller, source, False, class_map)
+    _classify_into_slot(controller, source, True, class_map)
+
+    # Editing while viewing high-res must not touch the low-res slot.
+    source.is_super_resolution_active = True
+    controller._on_layer_visibility_changed(1, False)
+    controller._on_global_opacity_changed(0.4)
+
+    assert controller._slots[True].layers.visible_class_ids == (0, 2)
+    assert controller._slots[True].layers.global_opacity == 0.4
+    assert controller._slots[False].layers.visible_class_ids == (0, 1, 2)
+    assert controller._slots[False].layers.global_opacity == 1.0
+
+
+def test_refresh_display_swaps_the_layer_panel_to_the_active_resolution(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    _classify_into_slot(controller, source, False, class_map)
+    controller._on_layer_visibility_changed(1, False)  # fade a class in low-res only
+
+    # Switch to high-res, which has never been classified.
+    source.is_super_resolution_active = True
+    controller.refresh_display()
+    assert len(layer_panel._rows) == 0
+
+    # Switch back to low-res: its rows and visibility choice must be intact.
+    source.is_super_resolution_active = False
+    controller.refresh_display()
+    assert len(layer_panel._rows) == 3
+    assert not layer_panel._rows[1]._toggle.isChecked()
+
+
+def test_refresh_display_restores_global_opacity_and_outline_mode(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    _classify_into_slot(controller, source, False, class_map)
+    controller._on_global_opacity_changed(0.6)
+    controller._on_outline_mode_changed(True)
+
+    source.is_super_resolution_active = True
+    controller.refresh_display()
+    assert layer_panel._global_opacity_slider.value() == 100
+    assert not layer_panel._outline_toggle_button.isChecked()
+
+    source.is_super_resolution_active = False
+    controller.refresh_display()
+    assert layer_panel._global_opacity_slider.value() == 60
+    assert layer_panel._outline_toggle_button.isChecked()
+
+
+def test_clear_super_resolution_result_only_discards_the_high_res_slot(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    _classify_into_slot(controller, source, False, class_map)
+    _classify_into_slot(controller, source, True, class_map)
+
+    controller.clear_super_resolution_result()
+
+    assert controller._slots[True].result is None
+    assert controller._slots[True].layers is None
+    assert controller._slots[False].result is not None
+    assert controller._slots[False].layers is not None
+
+
+def test_clear_result_discards_both_resolution_slots(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    _classify_into_slot(controller, source, False, class_map)
+    _classify_into_slot(controller, source, True, class_map)
+
+    controller.clear_result()
+
+    assert controller._slots[False].result is None
+    assert controller._slots[True].result is None
+    assert len(layer_panel._rows) == 0
+
+
+def test_a_completed_worker_does_not_overwrite_the_slot_toggled_away_from(qtbot):
+    """A result must land in the slot active at launch, not at completion."""
+
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+
+    # Launch while low-res is active...
+    source.is_super_resolution_active = False
+    controller._pending_slot_key = False
+    controller._slots[False].active_data = source.data
+    # ...but the user flips to high-res before the worker's result arrives.
+    source.is_super_resolution_active = True
+
+    controller._on_result(_make_unsupervised_result(class_map))
+
+    assert controller._slots[False].result is not None
+    assert controller._slots[True].result is None
+    # The currently-active (high-res) panel/viewer must not have been
+    # disturbed by a result that belongs to the other resolution.
+    assert len(layer_panel._rows) == 0

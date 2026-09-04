@@ -675,6 +675,16 @@
           </layout>
          </widget>
         </item>
+        <item>
+         <widget class="QLabel" name="classificationResolutionText">
+          <property name="text">
+           <string>Viewing: Original (low-res)</string>
+          </property>
+          <property name="statusMessage" stdset="0">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
        </layout>
       </widget>
      </widget>

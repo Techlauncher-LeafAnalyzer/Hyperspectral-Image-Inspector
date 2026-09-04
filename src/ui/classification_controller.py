@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from threading import Event
 from typing import Callable, Optional, Union
 
@@ -42,6 +43,24 @@ _OPACITY_REFRESH_INTERVAL_MS = 40
 LOGGER = logging.getLogger(__name__)
 
 _ClassificationResult = Union[UnsupervisedClassificationResult, SupervisedClassificationResult]
+
+
+@dataclass
+class _ClassificationSlot:
+    """One resolution level's independent classification state.
+
+    The Controller keeps one slot for the original image and one for the
+    Super-Resolution result, keyed by the same boolean
+    ``is_super_resolution_active()`` used to pick a data source, so
+    classifying at one resolution never overwrites -- or gets shown against
+    the wrong-shaped base image of -- a result already produced at the
+    other.
+    """
+
+    result: Optional[_ClassificationResult] = None
+    rgb: Optional[NDArray[np.uint8]] = None
+    layers: Optional[ClassificationLayerModel] = None
+    active_data: Optional[HSIData] = None
 
 
 class _ClassificationWorker(QtCore.QObject):
@@ -197,10 +216,11 @@ class ClassificationController(QObject):
         self._stop_hypercube = stop_hypercube
         self._parent = parent_widget
 
-        self._result: Optional[_ClassificationResult] = None
-        self._rgb: Optional[NDArray[np.uint8]] = None
-        self._layers: Optional[ClassificationLayerModel] = None
-        self._active_data: Optional[HSIData] = None
+        self._slots: dict[bool, _ClassificationSlot] = {
+            False: _ClassificationSlot(),
+            True: _ClassificationSlot(),
+        }
+        self._pending_slot_key = False
         self._sr_notice_shown = False
         self._opacity_refresh_timer = QtCore.QTimer(self)
         self._opacity_refresh_timer.setSingleShot(True)
@@ -221,14 +241,20 @@ class ClassificationController(QObject):
     # ------------------------------------------------------------------ #
 
     @property
+    def _current_slot(self) -> _ClassificationSlot:
+        """Return the slot matching whichever resolution is now displayed."""
+
+        return self._slots[self._is_super_resolution_active()]
+
+    @property
     def rgb(self) -> Optional[NDArray[np.uint8]]:
-        return self._rgb
+        return self._current_slot.rgb
 
     @property
     def display_data(self) -> Optional[HSIData]:
         """Return the data source the current result was classified against."""
 
-        return self._active_data
+        return self._current_slot.active_data
 
     def composited_rgb(self) -> Optional[NDArray[np.uint8]]:
         """Return the current layer-composited display image, if any result exists.
@@ -246,7 +272,7 @@ class ClassificationController(QObject):
     def class_id_at(self, row: int, column: int) -> Optional[int]:
         """Return the zero-based class ID at ``(row, column)``, if any."""
 
-        result = self._result
+        result = self._current_slot.result
         if result is None or not (
             0 <= row < result.class_map.shape[0]
             and 0 <= column < result.class_map.shape[1]
@@ -262,13 +288,43 @@ class ClassificationController(QObject):
         self._supervised_button.setEnabled(loaded)
 
     def clear_result(self) -> None:
-        """Discard labels whenever the underlying cube geometry changes."""
+        """Discard both resolutions' labels when the cube geometry changes."""
 
-        self._result = None
-        self._rgb = None
-        self._layers = None
-        self._active_data = None
+        self._slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
         self._layer_panel.clear()
+
+    def clear_super_resolution_result(self) -> None:
+        """Discard only the Super-Resolution slot, e.g. before a fresh SR run.
+
+        A new Super-Resolution result has different data than whatever the
+        stale high-res slot was classified against, while the
+        original-resolution slot is unaffected and stays valid.
+        """
+
+        self._slots[True] = _ClassificationSlot()
+
+    def refresh_display(self) -> None:
+        """Show the layer panel for whichever classification result is active.
+
+        Call this whenever the Super-Resolution low/high toggle changes.
+        The classification pixmap itself needs no separate action here:
+        ``composited_rgb()`` already reads the slot matching the *current*
+        toggle state, so the caller's own viewer refresh
+        (``MainWindowController._refresh_viewers_display``) picks up the
+        right image on its own -- or falls back to the plain photo when
+        this resolution has no classification result yet. Only the layer
+        panel, which this Controller owns, needs this explicit sync.
+        """
+
+        slot = self._current_slot
+        if slot.layers is not None:
+            self._layer_panel.set_layers(
+                slot.layers.layers,
+                global_opacity=slot.layers.global_opacity,
+                outline_mode=slot.layers.outline_mode,
+            )
+        else:
+            self._layer_panel.clear()
 
     def request_close(self) -> bool:
         """Begin cancelling a running classification for an application close.
@@ -412,7 +468,8 @@ class ClassificationController(QObject):
             return
 
         self._notify_if_classifying_super_resolution()
-        self._active_data = data
+        self._pending_slot_key = self._is_super_resolution_active()
+        self._slots[self._pending_slot_key].active_data = data
         worker = _ClassificationWorker(self._service, data, request)
         self._launch_worker(
             worker, self._unsupervised_button, "Starting K-means classification…"
@@ -450,7 +507,8 @@ class ClassificationController(QObject):
         request = SupervisedClassificationRequest(classifier)
 
         self._notify_if_classifying_super_resolution()
-        self._active_data = data
+        self._pending_slot_key = self._is_super_resolution_active()
+        self._slots[self._pending_slot_key].active_data = data
         worker = _SupervisedClassificationWorker(
             self._service,
             data,
@@ -555,18 +613,28 @@ class ClassificationController(QObject):
         ):
             self._on_failed("Worker returned an invalid result.")
             return
-        if self._active_data is None:
-            self._active_data = self._display_data_provider()
-        self._result = result
+        # Target the slot captured when this job launched, not whichever
+        # resolution happens to be on screen now -- the toggle may have
+        # flipped while the worker was still running.
+        slot_key = self._pending_slot_key
+        slot = self._slots[slot_key]
+        if slot.active_data is None:
+            slot.active_data = self._display_data_provider()
+        slot.result = result
         class_ids = (
             result.class_ids
             if isinstance(result, SupervisedClassificationResult)
             else tuple(range(result.n_classes))
         )
-        self._rgb = self._colorize_class_map(result.class_map, class_ids)
-        self._layers = ClassificationLayerModel(result)
-        self._layer_panel.set_layers(self._layers.layers)
-        self._show_result()
+        slot.rgb = self._colorize_class_map(result.class_map, class_ids)
+        slot.layers = ClassificationLayerModel(result)
+        if slot_key == self._is_super_resolution_active():
+            self._layer_panel.set_layers(
+                slot.layers.layers,
+                global_opacity=slot.layers.global_opacity,
+                outline_mode=slot.layers.outline_mode,
+            )
+            self._show_result()
         populated = int(np.count_nonzero(result.class_pixel_counts))
         operation = (
             result.classifier.value
@@ -617,10 +685,11 @@ class ClassificationController(QObject):
 
     @QtCore.pyqtSlot(int, bool)
     def _on_layer_visibility_changed(self, class_id: int, visible: bool) -> None:
-        if self._layers is None:
+        layers = self._current_slot.layers
+        if layers is None:
             return
         try:
-            self._layers.set_class_visible(class_id, visible)
+            layers.set_class_visible(class_id, visible)
         except ClassificationError as exc:
             self._statusbar.showMessage(str(exc), 8000)
             return
@@ -628,10 +697,11 @@ class ClassificationController(QObject):
 
     @QtCore.pyqtSlot(int, float)
     def _on_layer_opacity_changed(self, class_id: int, opacity: float) -> None:
-        if self._layers is None:
+        layers = self._current_slot.layers
+        if layers is None:
             return
         try:
-            self._layers.set_class_opacity(class_id, opacity)
+            layers.set_class_opacity(class_id, opacity)
         except ClassificationError as exc:
             self._statusbar.showMessage(str(exc), 8000)
             return
@@ -639,21 +709,24 @@ class ClassificationController(QObject):
 
     @QtCore.pyqtSlot(bool)
     def _on_set_all_visible_requested(self, visible: bool) -> None:
-        if self._layers is None:
+        layers = self._current_slot.layers
+        if layers is None:
             return
-        self._layers.set_all_visible(visible)
+        layers.set_all_visible(visible)
         self._layer_panel.set_layers(
-            self._layers.layers,
-            reset_global_controls=False,
+            layers.layers,
+            global_opacity=layers.global_opacity,
+            outline_mode=layers.outline_mode,
         )
         self._show_result()
 
     @QtCore.pyqtSlot(float)
     def _on_global_opacity_changed(self, opacity: float) -> None:
-        if self._layers is None:
+        layers = self._current_slot.layers
+        if layers is None:
             return
         try:
-            self._layers.set_global_opacity(opacity)
+            layers.set_global_opacity(opacity)
         except ClassificationError as exc:
             self._statusbar.showMessage(str(exc), 8000)
             return
@@ -661,19 +734,21 @@ class ClassificationController(QObject):
 
     @QtCore.pyqtSlot(bool)
     def _on_outline_mode_changed(self, enabled: bool) -> None:
-        if self._layers is None:
+        layers = self._current_slot.layers
+        if layers is None:
             return
-        self._layers.set_outline_mode(enabled)
+        layers.set_outline_mode(enabled)
         self._show_result()
 
     def _composite(self) -> Optional[ClassificationLayerComposite]:
-        if self._rgb is None or self._layers is None:
+        slot = self._current_slot
+        if slot.rgb is None or slot.layers is None:
             return None
-        base_rgb = self._active_data.rgb_array if self._active_data is not None else None
-        if base_rgb is not None and base_rgb.shape == (*self._layers.image_shape, 3):
-            return self._layers.compose_display(self._rgb, base_rgb=base_rgb)
-        return self._layers.compose_display(
-            self._rgb, background_color=_LAYER_COMPOSITE_BACKGROUND
+        base_rgb = slot.active_data.rgb_array if slot.active_data is not None else None
+        if base_rgb is not None and base_rgb.shape == (*slot.layers.image_shape, 3):
+            return slot.layers.compose_display(slot.rgb, base_rgb=base_rgb)
+        return slot.layers.compose_display(
+            slot.rgb, background_color=_LAYER_COMPOSITE_BACKGROUND
         )
 
     def _show_result(self) -> None:
