@@ -300,6 +300,9 @@ class ClassificationController(QObject):
         self._unsupervised_button.clicked.connect(self._on_unsupervised_classify_clicked)
         self._layer_panel.visibilityChanged.connect(self._on_layer_visibility_changed)
         self._layer_panel.opacityChanged.connect(self._on_layer_opacity_changed)
+        self._layer_panel.setAllVisibleRequested.connect(self._on_set_all_visible_requested)
+        self._layer_panel.globalOpacityChanged.connect(self._on_global_opacity_changed)
+        self._layer_panel.outlineModeChanged.connect(self._on_outline_mode_changed)
 
         self._num_classes_edit.setValidator(QtGui.QIntValidator(2, 65535, self))
         self._max_iterations_edit.setValidator(QtGui.QIntValidator(1, 10000, self))
@@ -633,6 +636,35 @@ class ClassificationController(QObject):
             self._statusbar.showMessage(str(exc), 8000)
             return
         self._opacity_refresh_timer.start()
+
+    @QtCore.pyqtSlot(bool)
+    def _on_set_all_visible_requested(self, visible: bool) -> None:
+        if self._layers is None:
+            return
+        self._layers.set_all_visible(visible)
+        self._layer_panel.set_layers(
+            self._layers.layers,
+            reset_global_controls=False,
+        )
+        self._show_result()
+
+    @QtCore.pyqtSlot(float)
+    def _on_global_opacity_changed(self, opacity: float) -> None:
+        if self._layers is None:
+            return
+        try:
+            self._layers.set_global_opacity(opacity)
+        except ClassificationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._opacity_refresh_timer.start()
+
+    @QtCore.pyqtSlot(bool)
+    def _on_outline_mode_changed(self, enabled: bool) -> None:
+        if self._layers is None:
+            return
+        self._layers.set_outline_mode(enabled)
+        self._show_result()
 
     def _composite(self) -> Optional[ClassificationLayerComposite]:
         if self._rgb is None or self._layers is None:

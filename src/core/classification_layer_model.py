@@ -214,6 +214,8 @@ class ClassificationLayerModel:
         self._names = {class_id: f"Class {class_id}" for class_id in class_ids}
         self._visibility = {class_id: True for class_id in class_ids}
         self._opacity = {class_id: 1.0 for class_id in class_ids}
+        self._global_opacity = 1.0
+        self._outline_mode = False
 
     @property
     def result(self) -> ClassificationResult:
@@ -234,6 +236,18 @@ class ClassificationLayerModel:
         return tuple(
             class_id for class_id in self._class_ids if self._visibility[class_id]
         )
+
+    @property
+    def global_opacity(self) -> float:
+        """Return the master opacity scale applied on top of every layer."""
+
+        return self._global_opacity
+
+    @property
+    def outline_mode(self) -> bool:
+        """Return whether layers currently render as borders only, not fills."""
+
+        return self._outline_mode
 
     @property
     def layers(self) -> tuple[ClassificationLayer, ...]:
@@ -307,6 +321,29 @@ class ClassificationLayerModel:
         for class_id in self._class_ids:
             self._visibility[class_id] = bool(visible)
 
+    def set_global_opacity(self, opacity: float) -> None:
+        """Scale every layer's effective opacity together, like a group opacity.
+
+        Independent of each layer's own ``opacity``: the stored per-layer
+        values are preserved, so restoring the global scale to ``1.0``
+        reveals the same relative fades the user had set per class.
+        """
+
+        self._global_opacity = _normalize_opacity(opacity)
+
+    def set_outline_mode(self, enabled: bool) -> None:
+        """Switch every visible layer between a solid fill and border-only.
+
+        Border-only mode paints just each class region's boundary pixels at
+        its opacity, leaving the interior fully transparent so the base
+        image or background shows through -- useful for inspecting class
+        boundaries without obscuring the underlying picture.
+        """
+
+        if not isinstance(enabled, (bool, np.bool_)):
+            raise ClassificationError("Outline mode must be true or false.")
+        self._outline_mode = bool(enabled)
+
     def visible_mask(self) -> np.ndarray:
         """Return a read-only HxW boolean union of all visible classes."""
 
@@ -327,13 +364,18 @@ class ClassificationLayerModel:
 
         Class masks are disjoint (enforced in ``__init__``), so classes can be
         painted independently without any overlap/accumulation to resolve.
+        The result is additionally scaled by ``global_opacity`` and, in
+        ``outline_mode``, restricted to each class region's boundary pixels.
         """
 
         alpha = np.zeros(self.image_shape, dtype=np.float32)
         for index, class_id in enumerate(self._class_ids):
-            if self._visibility[class_id]:
-                mask = self._one_hot_masks[index].astype(bool, copy=False)
-                alpha[mask] = self._opacity[class_id]
+            if not self._visibility[class_id]:
+                continue
+            mask = self._one_hot_masks[index].astype(bool, copy=False)
+            if self._outline_mode:
+                mask = _boundary_mask(mask)
+            alpha[mask] = self._opacity[class_id] * self._global_opacity
         alpha.setflags(write=False)
         return alpha
 
@@ -597,6 +639,25 @@ def _normalize_opacity(opacity: float) -> float:
     if not 0.0 <= value <= 1.0:
         raise ClassificationError("Layer opacity must be between 0.0 and 1.0.")
     return value
+
+
+def _boundary_mask(mask: np.ndarray) -> np.ndarray:
+    """Return ``mask`` pixels adjacent (4-connected) to a non-mask pixel.
+
+    An image-edge pixel counts as adjacent to the outside, so a class region
+    touching the frame is still fully outlined. Pure NumPy (no SciPy) keeps
+    this dependency-free for the base install.
+    """
+
+    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    interior = (
+        padded[1:-1, 1:-1]
+        & padded[:-2, 1:-1]
+        & padded[2:, 1:-1]
+        & padded[1:-1, :-2]
+        & padded[1:-1, 2:]
+    )
+    return mask & ~interior
 
 
 def _normalize_rgb_color(color: tuple[int, int, int]) -> tuple[int, int, int]:

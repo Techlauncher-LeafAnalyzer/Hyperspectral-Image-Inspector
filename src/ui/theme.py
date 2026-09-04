@@ -700,6 +700,72 @@ QSlider#layerOpacitySlider::handle:horizontal {
 QSlider#layerOpacitySlider::handle:horizontal:hover {
     background: #0d6a5f;
 }
+
+QPushButton#layerToggleAllButton, QPushButton#layerOutlineToggleButton {
+    color: #123e37;
+    background: #ffffff;
+    border: 1px solid #cddad6;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 6px;
+}
+
+QPushButton#layerToggleAllButton:hover, QPushButton#layerOutlineToggleButton:hover {
+    border-color: #8fbcb4;
+}
+
+QPushButton#layerOutlineToggleButton:checked {
+    background: #168b7b;
+    border-color: #168b7b;
+    color: #ffffff;
+}
+
+QPushButton#layerToggleAllButton:disabled, QPushButton#layerOutlineToggleButton:disabled {
+    color: #a9b6b2;
+    background: #edf2f1;
+    border-color: #dde5e2;
+}
+
+QLabel#globalOpacityLabel {
+    color: #667673;
+    font-size: 11px;
+    font-weight: 600;
+    padding-top: 2px;
+}
+
+QLabel#globalOpacityValueLabel {
+    color: #667673;
+    font-size: 11px;
+}
+
+QSlider#globalOpacitySlider::groove:horizontal {
+    height: 4px;
+    background: #dde5e2;
+    border-radius: 2px;
+}
+
+QSlider#globalOpacitySlider::sub-page:horizontal {
+    background: #168b7b;
+    border-radius: 2px;
+}
+
+QSlider#globalOpacitySlider::add-page:horizontal {
+    background: #dde5e2;
+    border-radius: 2px;
+}
+
+QSlider#globalOpacitySlider::handle:horizontal {
+    width: 12px;
+    height: 12px;
+    margin: -5px 0;
+    border-radius: 6px;
+    background: #117d70;
+}
+
+QSlider#globalOpacitySlider::handle:horizontal:hover {
+    background: #0d6a5f;
+}
 """
 
 
