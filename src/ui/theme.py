@@ -651,10 +651,10 @@ QLabel#classificationLayerCount {
 }
 
 QToolButton#classificationLayerCollapseButton {
-    min-width: 25px;
-    max-width: 25px;
-    min-height: 25px;
-    max-height: 25px;
+    min-width: 22px;
+    max-width: 22px;
+    min-height: 22px;
+    max-height: 22px;
     color: #3e5c57;
     background: #ffffff;
     border: 1px solid #d1dedb;
