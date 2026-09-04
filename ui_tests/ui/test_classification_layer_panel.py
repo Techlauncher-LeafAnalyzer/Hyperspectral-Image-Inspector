@@ -21,6 +21,7 @@ from core import (
     TrainingPairResolver,
 )
 from core.classification_model import UnsupervisedClassificationResult
+from ui.classification_colors import classification_palette
 from ui.classification_controller import _LAYER_COMPOSITE_BACKGROUND, ClassificationController
 from ui.classification_layer_panel import ClassificationLayerPanel
 from ui.viewer import HSIViewer
@@ -137,6 +138,36 @@ def test_set_layers_builds_one_row_per_layer(qtbot):
     for class_id, row in panel._rows.items():
         assert row._toggle.isChecked()
         assert row._opacity_slider.value() == 100
+        assert row._color_swatch.color == classification_palette(range(3))[class_id]
+
+
+def test_layer_summary_tracks_visible_classes(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_layers(_make_layers(count=3))
+
+    assert panel._summary_label.text() == "3 of 3 classes selected"
+    panel._rows[1]._toggle.setChecked(False)
+    assert panel._summary_label.text() == "2 of 3 classes selected"
+
+
+def test_panel_collapses_and_expands_without_changing_layers(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_layers(_make_layers(count=3))
+    panel.show()
+
+    panel.set_collapsed(True, animate=False)
+    assert panel.is_collapsed
+    assert panel.maximumWidth() == 48
+    assert panel._body.isHidden()
+    assert len(panel._rows) == 3
+
+    panel.set_collapsed(False, animate=False)
+    assert not panel.is_collapsed
+    assert panel.maximumWidth() == 280
+    assert panel._body.isVisible()
+    assert len(panel._rows) == 3
 
 
 def test_empty_state_shown_before_any_layers(qtbot):
@@ -188,7 +219,7 @@ def test_toggle_all_button_disables_then_enables_every_row(qtbot):
     panel = ClassificationLayerPanel()
     qtbot.addWidget(panel)
     panel.set_layers(_make_layers(count=3))
-    assert panel._toggle_all_button.text() == "Disable All"
+    assert panel._toggle_all_button.text() == "Deselect all"
 
     with qtbot.waitSignal(panel.setAllVisibleRequested, timeout=1000) as blocker:
         panel._toggle_all_button.click()
@@ -206,7 +237,7 @@ def test_toggle_all_button_disables_then_enables_every_row(qtbot):
         for layer in _make_layers(count=3)
     )
     panel.set_layers(hidden_layers)
-    assert panel._toggle_all_button.text() == "Enable All"
+    assert panel._toggle_all_button.text() == "Select all"
 
     with qtbot.waitSignal(panel.setAllVisibleRequested, timeout=1000) as blocker:
         panel._toggle_all_button.click()
@@ -219,10 +250,10 @@ def test_toggle_all_button_text_follows_a_single_row_toggle(qtbot):
     panel.set_layers(_make_layers(count=2))
 
     panel._rows[0]._toggle.setChecked(False)
-    assert panel._toggle_all_button.text() == "Disable All"
+    assert panel._toggle_all_button.text() == "Deselect all"
 
     panel._rows[1]._toggle.setChecked(False)
-    assert panel._toggle_all_button.text() == "Enable All"
+    assert panel._toggle_all_button.text() == "Select all"
 
 
 def test_outline_toggle_button_emits_outline_mode_changed(qtbot):
@@ -233,12 +264,12 @@ def test_outline_toggle_button_emits_outline_mode_changed(qtbot):
     with qtbot.waitSignal(panel.outlineModeChanged, timeout=1000) as blocker:
         panel._outline_toggle_button.setChecked(True)
     assert blocker.args == [True]
-    assert panel._outline_toggle_button.text() == "Show Fill"
+    assert panel._outline_toggle_button.text() == "Show fill"
 
     with qtbot.waitSignal(panel.outlineModeChanged, timeout=1000) as blocker:
         panel._outline_toggle_button.setChecked(False)
     assert blocker.args == [False]
-    assert panel._outline_toggle_button.text() == "Borders Only"
+    assert panel._outline_toggle_button.text() == "Borders only"
 
 
 def test_moving_the_global_opacity_slider_emits_global_opacity_changed(qtbot):
@@ -264,7 +295,7 @@ def test_set_layers_resets_global_controls(qtbot):
 
     assert panel._global_opacity_slider.value() == 100
     assert not panel._outline_toggle_button.isChecked()
-    assert panel._outline_toggle_button.text() == "Borders Only"
+    assert panel._outline_toggle_button.text() == "Borders only"
 
 
 # ---------------------------------------------------------------------- #
@@ -282,6 +313,9 @@ def test_result_populates_layer_panel(qtbot):
     assert len(layer_panel._rows) == 3
     assert controller._current_slot.layers is not None
     assert controller._current_slot.layers.visible_class_ids == (0, 1, 2)
+    for class_id, row in layer_panel._rows.items():
+        rendered_color = tuple(controller.rgb[class_map == class_id][0])
+        assert row._color_swatch.color == rendered_color
 
 
 def test_hiding_a_layer_updates_the_rendered_pixmap(qtbot):

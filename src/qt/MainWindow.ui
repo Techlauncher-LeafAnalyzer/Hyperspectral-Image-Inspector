@@ -439,6 +439,9 @@
        <layout class="QVBoxLayout" name="classificationLayout">
         <item>
          <layout class="QHBoxLayout" name="classificationViewerRow">
+          <property name="spacing">
+           <number>10</number>
+          </property>
           <item>
            <widget class="HSIViewer" name="classificationViewer">
             <property name="layoutDirection">
@@ -450,13 +453,13 @@
            <widget class="ClassificationLayerPanel" name="classificationLayerPanel">
             <property name="minimumSize">
              <size>
-              <width>220</width>
+              <width>236</width>
               <height>0</height>
              </size>
             </property>
             <property name="maximumSize">
              <size>
-              <width>260</width>
+              <width>280</width>
               <height>16777215</height>
              </size>
             </property>
