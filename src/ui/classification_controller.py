@@ -642,7 +642,10 @@ class ClassificationController(QObject):
         if self._layers is None:
             return
         self._layers.set_all_visible(visible)
-        self._layer_panel.set_layers(self._layers.layers)
+        self._layer_panel.set_layers(
+            self._layers.layers,
+            reset_global_controls=False,
+        )
         self._show_result()
 
     @QtCore.pyqtSlot(float)

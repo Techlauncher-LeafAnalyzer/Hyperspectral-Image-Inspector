@@ -183,36 +183,37 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._rows: dict[int, _LayerRowWidget] = {}
         self._update_empty_state()
 
-    def set_layers(self, layers: tuple[ClassificationLayer, ...]) -> None:
+    def set_layers(
+        self,
+        layers: tuple[ClassificationLayer, ...],
+        *,
+        reset_global_controls: bool = True,
+    ) -> None:
         """Rebuild every row from scratch to reflect ``layers``.
 
-        Only called after a brand new classification result arrives, so a
-        full clear-and-rebuild (mirroring the block-signals-and-rebuild
-        pattern in ``docs/classification_layer_api.md``) is simplest and
-        avoids reordering/diffing logic this panel does not need. The
-        global opacity slider and outline toggle reset alongside the rows
-        because a fresh ``ClassificationLayerModel`` also starts at full
-        opacity and fill mode.
+        The default path resets global controls too (matching a fresh
+        ``ClassificationLayerModel``), but callers that only changed row
+        visibility can preserve them via ``reset_global_controls=False``.
         """
 
-        self.clear()
+        self.clear(reset_global_controls=reset_global_controls)
         for layer in layers:
             row = _LayerRowWidget(layer, self._rows_container)
             row.visibilityChanged.connect(self.visibilityChanged)
             row.opacityChanged.connect(self.opacityChanged)
             self._rows[layer.class_id] = row
             self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
-        self._reset_global_controls()
         self._update_empty_state()
 
-    def clear(self) -> None:
+    def clear(self, *, reset_global_controls: bool = True) -> None:
         """Remove all rows and show the empty-state message."""
 
         for row in self._rows.values():
             self._rows_layout.removeWidget(row)
             row.deleteLater()
         self._rows.clear()
-        self._reset_global_controls()
+        if reset_global_controls:
+            self._reset_global_controls()
         self._update_empty_state()
 
     def _on_toggle_all_clicked(self) -> None:

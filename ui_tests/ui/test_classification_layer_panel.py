@@ -375,6 +375,22 @@ def test_enabling_all_restores_every_class(qtbot):
     assert all(row._toggle.isChecked() for row in layer_panel._rows.values())
 
 
+def test_toggle_all_preserves_global_opacity_and_outline_mode(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    controller._on_result(_make_unsupervised_result(class_map))
+    layer_panel._global_opacity_slider.setValue(40)
+    layer_panel._outline_toggle_button.setChecked(True)
+
+    controller._on_set_all_visible_requested(False)
+
+    assert controller._layers.global_opacity == 0.4
+    assert controller._layers.outline_mode
+    assert layer_panel._global_opacity_slider.value() == 40
+    assert layer_panel._outline_toggle_button.isChecked()
+    assert layer_panel._outline_toggle_button.text() == "Show Fill"
+
+
 def test_toggle_all_button_click_flows_through_to_the_model(qtbot):
     controller, viewer, layer_panel, source = _make_controller(qtbot)
     class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
