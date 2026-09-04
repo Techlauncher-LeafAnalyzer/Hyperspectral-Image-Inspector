@@ -383,7 +383,12 @@ class ClassificationService:
         """
 
         band_indices = self._resolve_band_indices(data, request.band_indices)
-        pixels = data.rows * data.columns
+        # A polygon crop clusters only its region, so that is the pixel budget.
+        pixels = (
+            int(np.count_nonzero(data.roi_mask))
+            if data.roi_mask is not None
+            else data.rows * data.columns
+        )
         if request.n_classes > pixels:
             raise ClassificationError(
                 f"Number of classes ({request.n_classes}) cannot exceed the "
@@ -406,6 +411,15 @@ class ClassificationService:
                 f"Could not read classification data: {exc}"
             ) from exc
 
+        # K-means is a global fit, so excluded pixels would pull the cluster
+        # centres and can claim whole classes of their own. Cluster the region
+        # of interest alone, as an (N, 1, bands) pseudo-image SPy accepts, and
+        # scatter the labels back into the full frame afterwards.
+        region = data.masked(cube)
+        cluster_input = (
+            region.select()[:, None, :] if region.is_masked else cube
+        )
+
         self._check_cancelled(is_cancelled)
         self._emit(progress, 10, "Running SPy K-means")
         iteration_count = 0
@@ -427,7 +441,7 @@ class ClassificationService:
 
         try:
             class_map, centers = spy_kmeans(
-                cube,
+                cluster_input,
                 nclusters=request.n_classes,
                 max_iterations=request.max_iterations,
                 compare=compare_iterations,
@@ -448,17 +462,24 @@ class ClassificationService:
         self._validate_spy_result(
             class_map,
             centers,
-            rows=data.rows,
-            columns=data.columns,
+            rows=cluster_input.shape[0],
+            columns=cluster_input.shape[1],
             n_classes=request.n_classes,
             n_bands=len(band_indices),
         )
         class_map = class_map.astype(np.int32, copy=False)
+        labels = class_map.reshape(-1)
+        if region.is_masked:
+            # -1 marks "outside the region": it matches no class ID, so every
+            # one-hot layer is zero there. ClassificationLayerModel already
+            # permits unclaimed pixels (it requires layers not to overlap,
+            # not to cover the frame).
+            class_map = region.scatter(labels, -1).astype(np.int32, copy=False)
 
         class_ids = np.arange(request.n_classes, dtype=np.int32)[:, None, None]
         one_hot_masks = (class_map[None, :, :] == class_ids).astype(np.uint8)
         class_pixel_counts = np.bincount(
-            class_map.ravel(), minlength=request.n_classes
+            labels, minlength=request.n_classes
         ).astype(np.int64, copy=False)
         wavelengths = data.wavelengths_nm[np.asarray(band_indices, dtype=np.intp)]
 
@@ -618,6 +639,13 @@ class ClassificationService:
         self._check_cancelled(is_cancelled)
         self._emit(progress, 90, "Building supervised one-hot masks")
         class_map = class_map.astype(np.int32, copy=False)
+        if target_data.roi_mask is not None:
+            # Gaussian/Mahalanobis label each pixel independently, so unlike
+            # K-means the excluded pixels never influenced the model; blanking
+            # them afterwards is both correct and cheaper than pre-selecting.
+            class_map = np.where(target_data.roi_mask, class_map, -1).astype(
+                np.int32, copy=False
+            )
         id_array = np.asarray(class_ids, dtype=np.int32)[:, None, None]
         one_hot_masks = (class_map[None, :, :] == id_array).astype(np.uint8)
         class_counts = np.asarray(

@@ -31,6 +31,7 @@ from .classification_layer_model import (
 )
 from .hsi_data import Functionality, HSIData, ImageFormat
 from .hsi_reader import HSIReader
+from .roi import Masked, polygon_mask
 from .super_resolution_model import (
     SuperResolutionRequest,
     SuperResolutionResult,
@@ -73,6 +74,8 @@ __all__ = [
     "HypercubeViewData",
     "ImageFormat",
     "ImageExportFormat",
+    "Masked",
+    "polygon_mask",
     "SpectrumResult",
     "SuperResolutionError",
     "SuperResolutionRequest",
