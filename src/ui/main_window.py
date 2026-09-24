@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Callable, Mapping, Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -67,6 +67,7 @@ class _CropSnapshot:
     rgb_array:    NDArray[np.uint8]
     mask_array:   NDArray[np.uint8]
     spectral_obj: Optional[object]
+    roi_mask:     Optional[NDArray[np.bool_]] = None
 
 
 class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
@@ -244,6 +245,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         for viewer in self._all_viewers():
             viewer.cropRequested.connect(self._on_crop_requested)
+            viewer.polygonCropRequested.connect(self._on_polygon_crop_requested)
             viewer.spectrumPlotRequested.connect(self._on_spectrum_plot)
             viewer.meanIndexRequested.connect(self._on_mean_index)
             viewer.pixel_value_provider = self._pixel_values_at
@@ -341,7 +343,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         new_scale = 2 if data is not self._hsi_data else 1
         self.superResViewer.rgb = data.rgb_array
         self.superResViewer.mask_array = data.mask_array
-        pixmap = hsi_utils.numpy_to_qpixmap(data.rgb_array)
+        pixmap = hsi_utils.numpy_to_qpixmap(data.rgb_array, data.roi_mask)
         self.superResViewer.set_photo(pixmap)
         factor = new_scale / self._sr_view_scale
         # Preserve comparison framing for LR/HR toggles, but refit after a
@@ -405,6 +407,26 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.runSuperResButton.setText("Cancelling…")
             self.statusbar.showMessage("Cancelling after the current SR operation…")
 
+    @staticmethod
+    def _scaled_roi_mask(
+        mask: Optional[NDArray[np.bool_]], shape: tuple[int, int]
+    ) -> Optional[NDArray[np.bool_]]:
+        """Resample a region-of-interest mask onto a differently sized frame.
+
+        Super-Resolution rebuilds the cube at 2x into a fresh ``HSIData``, so
+        an active polygon crop has to be carried over rather than inherited.
+        Nearest-neighbour indexing keeps this exact for the integer 2x case
+        and still correct if the scale factor ever changes.
+        """
+        if mask is None:
+            return None
+        rows, columns = int(shape[0]), int(shape[1])
+        if rows < 1 or columns < 1:
+            return None
+        row_index = np.arange(rows) * mask.shape[0] // rows
+        column_index = np.arange(columns) * mask.shape[1] // columns
+        return mask[np.ix_(row_index, column_index)]
+
     def _on_super_resolution_progress(self, value: int, message: str) -> None:
         self.superResProgressBar.setValue(value)
         self.superResProgressBar.setToolTip(message)
@@ -416,6 +438,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         result.data.rgb_array = display.display_rgb
         result.data.mask_array = np.zeros(display.display_rgb.shape[:2], dtype=np.uint8)
+        # SR upscales the source's bounding box 2x into a brand-new HSIData,
+        # which knows nothing of an active polygon crop. Carry the ROI across
+        # at the same 2x, or the high-res view would silently reinstate the
+        # pixels the user excluded.
+        result.data.roi_mask = self._scaled_roi_mask(
+            self._hsi_data.roi_mask, display.display_rgb.shape[:2]
+        )
         self._super_res_result = result
         # A fresh SR run invalidates any classification made against the
         # previous SR result -- the original-resolution slot is unaffected.
@@ -619,6 +648,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 VisualizationExportRequest(
                     output_path, overwrite=output_path.exists()
                 ),
+                # Keep a polygon crop's excluded pixels transparent rather
+                # than exporting them as black, which would read as data.
+                alpha_mask=self._display_data().roi_mask,
             )
         except VisualizationExportError as exc:
             QMessageBox.critical(self, "Unable to save image", str(exc))
@@ -681,7 +713,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             )
             viewer.rgb        = viewer_data.rgb_array
             viewer.mask_array = viewer_data.mask_array
-            pixmap = hsi_utils.numpy_to_qpixmap(viewer_display)
+            pixmap = hsi_utils.numpy_to_qpixmap(
+                viewer_display, viewer_data.roi_mask
+            )
             viewer.set_photo(pixmap)
             # Restore the previous pan/zoom, rescaled by `factor`, when the
             # image dimensions changed only because of a low/high-res swap
@@ -797,33 +831,36 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
-    def _on_crop_requested(self, rect: QtCore.QRectF) -> None:
+    def _crop_is_blocked(self) -> bool:
+        """Report whether the pipeline can accept a crop right now.
+
+        Shared by the rectangle and polygon paths; both invalidate the same
+        downstream state, so both are subject to the same guards.
+        """
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Cancel or finish SR before cropping")
-            return
+            return True
         if self.highResButton.isChecked() and self._super_res_result is not None:
-            # Every viewer displays the SR result at 2x; crop rectangles are
+            # Every viewer displays the SR result at 2x; crop selections are
             # only valid against the Original the rest of the pipeline crops.
             self.statusbar.showMessage("Select Original before cropping, then rerun SR", 5000)
-            return
+            return True
         if not self._hsi_data.is_loaded():
-            return
+            return True
         if self._classification_controller.is_running():
             self.statusbar.showMessage(
                 "Cancel classification before changing the image crop",
                 5000,
             )
-            return
+            return True
+        return False
 
+    def _apply_crop(self, crop: Callable[[], tuple[int, int] | None], label: str) -> None:
+        """Snapshot, apply a crop operation, and refresh, or roll back."""
         self._crop_undo_stack.append(self._snapshot_current_state())
         self._crop_redo_stack.clear()
 
-        cropped_size = self._hsi_data.crop(
-            rect.left(),
-            rect.top(),
-            rect.right(),
-            rect.bottom(),
-        )
+        cropped_size = crop()
         if cropped_size is None:
             self._crop_undo_stack.pop()
             return
@@ -831,7 +868,33 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._classification_controller.clear_result()
         self._push_image_to_viewers()
         self.statusbar.showMessage(
-            f"Cropped to {cropped_size[0]}x{cropped_size[1]}"
+            f"{label} to {cropped_size[0]}x{cropped_size[1]}"
+        )
+
+    def _on_crop_requested(self, rect: QtCore.QRectF) -> None:
+        if self._crop_is_blocked():
+            return
+        self._apply_crop(
+            lambda: self._hsi_data.crop(
+                rect.left(), rect.top(), rect.right(), rect.bottom()
+            ),
+            "Cropped",
+        )
+
+    def _on_polygon_crop_requested(self, vertices: list) -> None:
+        """Apply an irregular crop: bounding box plus a region-of-interest mask.
+
+        The cube stays rectangular (SPy has no other representation), so this
+        crops to the polygon's bounding box and records the polygon itself on
+        ``HSIData.roi_mask``. Visualization stretches, index means, and
+        classification then read through ``HSIData.masked`` and skip the
+        excluded pixels.
+        """
+        if self._crop_is_blocked():
+            return
+        self._apply_crop(
+            lambda: self._hsi_data.crop_polygon(vertices),
+            "Cropped to polygon within",
         )
 
     # ------------------------------------------------------------------ #
@@ -896,12 +959,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             rgb_array=self._hsi_data.rgb_array,
             mask_array=self._hsi_data.mask_array,
             spectral_obj=self._hsi_data.spectral_obj,
+            roi_mask=self._hsi_data.roi_mask,
         )
 
     def _restore_snapshot(self, snapshot: _CropSnapshot) -> None:
         self._hsi_data.rgb_array    = snapshot.rgb_array
         self._hsi_data.mask_array   = snapshot.mask_array
         self._hsi_data.spectral_obj = snapshot.spectral_obj
+        self._hsi_data.roi_mask     = snapshot.roi_mask
         self._classification_controller.clear_result()
         self._push_image_to_viewers()
 

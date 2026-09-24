@@ -337,14 +337,33 @@ class VisualizationService:
             name: data.nearest_band(target, tolerance_nm=20)
             for name, target in self.RGB_TARGETS.items()
         }
-        rgb = get_rgb(
-            data.image,
-            (indices["red"], indices["green"], indices["blue"]),
-            stretch=(stretch.lower_percentile / 100, stretch.upper_percentile / 100),
-            stretch_all=True,
-        )
+        if data.roi_mask is None:
+            rgb = get_rgb(
+                data.image,
+                (indices["red"], indices["green"], indices["blue"]),
+                stretch=(stretch.lower_percentile / 100, stretch.upper_percentile / 100),
+                stretch_all=True,
+            )
+            rgb = np.asarray(rgb, dtype=np.float32)
+        else:
+            # SPy's get_rgb percentiles over the whole rectangle, which a
+            # polygon crop's excluded corners would skew. Stretch each
+            # channel over the region of interest only; `stretch_all=True`
+            # is per-channel, so this matches its semantics.
+            cube = data.read_bands(
+                [indices["red"], indices["green"], indices["blue"]]
+            )
+            rgb = np.stack(
+                [
+                    self._percentile_stretch(
+                        data.masked(cube[:, :, channel]).fill(), stretch
+                    )[0]
+                    for channel in range(3)
+                ],
+                axis=2,
+            )
         display = np.round(
-            np.clip(np.nan_to_num(np.asarray(rgb, dtype=np.float32)), 0, 1) * 255
+            np.clip(np.nan_to_num(rgb), 0, 1) * 255
         ).astype(np.uint8)
         wavelengths = self._wavelength_map(data, indices)
         return VisualizationResult(
@@ -364,11 +383,13 @@ class VisualizationService:
     def _render_band(
         self, data: HSIData, band_index: int, stretch: DisplayStretch
     ) -> VisualizationResult:
-        values = data.read_band(band_index)
+        values = data.masked(data.read_band(band_index)).fill()
         normalized, value_range = self._percentile_stretch(values, stretch)
-        display = np.round(np.repeat(normalized[:, :, None], 3, axis=2) * 255).astype(
-            np.uint8
-        )
+        # Excluded pixels stay NaN in `values` (so hover and statistics report
+        # "no data") but must be finite before the uint8 display cast.
+        display = np.round(
+            np.repeat(np.nan_to_num(normalized)[:, :, None], 3, axis=2) * 255
+        ).astype(np.uint8)
         wavelength = float(data.wavelengths_nm[band_index])
         return VisualizationResult(
             mode=VisualizationMode.BAND,
@@ -396,6 +417,11 @@ class VisualizationService:
         bands = {name: cube[:, :, position] for position, name in enumerate(indices)}
         values = self._calculate_index(mode, bands)
         values = np.nan_to_num(values.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        # Re-introduce NaN *after* neutralising genuine division artefacts, so
+        # only ROI-excluded pixels stay non-finite. `_percentile_stretch` and
+        # the Index Mean's `np.nanmean` then both skip them; Matplotlib
+        # colormaps render them as the colormap's "bad" colour.
+        values = data.masked(values).fill()
         normalized, value_range = self._percentile_stretch(values, request.stretch)
         colormap = request.colormap or self.DEFAULT_COLORMAPS[mode]
         try:

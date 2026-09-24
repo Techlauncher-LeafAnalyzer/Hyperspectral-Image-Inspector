@@ -48,6 +48,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
     spectrumPlotRequested = pyqtSignal(QPointF)
     meanIndexRequested    = pyqtSignal(str)
     cropRequested         = pyqtSignal(QtCore.QRectF)
+    # Payload is a list of (x, y) image-pixel vertex tuples, already clamped
+    # to the image. Kept separate from `cropRequested` so the rectangle path
+    # and its regression tests stay untouched.
+    polygonCropRequested  = pyqtSignal(list)
 
     # All visualization modes except HyperCube, in display order.
     VISUALIZATION_NAMES = ("RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI")
@@ -64,6 +68,11 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._crop_start: Optional[QPointF] = None
         self._crop_rect_item: Optional[QGraphicsRectItem] = None
         self._crop_overlay_item: Optional[QtWidgets.QGraphicsPathItem] = None
+
+        # --- polygon crop mode state ---
+        self._polygon_cropping: bool = False
+        self._polygon_points: list[QPointF] = []
+        self._polygon_item: Optional[QtWidgets.QGraphicsPathItem] = None
 
         # --- image data ---
         self._zoom: int = 0
@@ -255,13 +264,33 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._zoom = 0
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._polygon_cropping:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._add_polygon_vertex(
+                    self.mapToScene(event.position().toPoint())
+                )
+            elif event.button() == Qt.MouseButton.RightButton:
+                self._finish_polygon_crop()
+            return
         if self._cropping:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._crop_start = self.mapToScene(event.position().toPoint())
             return
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._polygon_cropping:
+            self._finish_polygon_crop()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._polygon_cropping:
+            if self._polygon_points:
+                self._update_polygon_overlay(
+                    self.mapToScene(event.position().toPoint())
+                )
+            return
         if self._cropping and self._crop_start is not None:
             current = self.mapToScene(event.position().toPoint())
             image_rect = QtCore.QRectF(self._photo.pixmap().rect())
@@ -360,6 +389,17 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._render_mask()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if self._polygon_cropping:
+            if event.key() == Qt.Key.Key_Escape:
+                self._end_crop_mode()
+                return
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._finish_polygon_crop()
+                return
+            if event.key() == Qt.Key.Key_Backspace and self._polygon_points:
+                self._polygon_points.pop()
+                self._update_polygon_overlay(None)
+                return
         if event.key() == Qt.Key.Key_Escape and self._cropping:
             self._end_crop_mode()
             return
@@ -410,15 +450,25 @@ class HSIViewer(QtWidgets.QGraphicsView):
         pixel_values_action.toggled.connect(self._set_pixel_overlay_enabled)
 
         crop_action = None
+        polygon_action = None
         if self.has_photo():
             menu.addSeparator()
             crop_action = menu.addAction("Crop", self._begin_crop_mode)
+            polygon_action = menu.addAction(
+                "Crop to Polygon", self._begin_polygon_crop_mode
+            )
+            polygon_action.setToolTip(
+                "Click each corner; double-click, right-click or Enter to "
+                "apply, Backspace to undo a corner, Esc to cancel"
+            )
 
         spectrum_action.setIcon(QtGui.QIcon(f"{icon_dir}/spectrum_plot.svg"))
         index_menu.setIcon(QtGui.QIcon(f"{icon_dir}/index_mean.svg"))
         pixel_values_action.setIcon(QtGui.QIcon(f"{icon_dir}/pixel_values.svg"))
         if crop_action is not None:
             crop_action.setIcon(QtGui.QIcon(f"{icon_dir}/crop.svg"))
+        if polygon_action is not None:
+            polygon_action.setIcon(QtGui.QIcon(f"{icon_dir}/crop.svg"))
 
         return menu
 
@@ -439,6 +489,68 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
+    def _begin_polygon_crop_mode(self) -> None:
+        """Start collecting polygon vertices for an irregular crop."""
+        self._polygon_cropping = True
+        self._polygon_points = []
+        self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _add_polygon_vertex(self, point: QPointF) -> None:
+        image_rect = QtCore.QRectF(self._photo.pixmap().rect())
+        clamped = QPointF(
+            min(max(point.x(), image_rect.left()), image_rect.right()),
+            min(max(point.y(), image_rect.top()), image_rect.bottom()),
+        )
+        self._polygon_points.append(clamped)
+        self._update_polygon_overlay(None)
+
+    def _update_polygon_overlay(self, cursor: Optional[QPointF]) -> None:
+        """Redraw the in-progress polygon and its dimmed exterior.
+
+        ``cursor`` previews the edge back to the pointer without committing a
+        vertex. The exterior uses the same odd-even fill trick as the
+        rectangle overlay, so a polygon needs no new drawing machinery.
+        """
+        if not self._polygon_points:
+            return
+        image_rect = QtCore.QRectF(self._photo.pixmap().rect())
+        polygon = QtGui.QPolygonF(
+            self._polygon_points + ([cursor] if cursor is not None else [])
+        )
+
+        overlay_path = QPainterPath()
+        overlay_path.addRect(image_rect)
+        overlay_path.addPolygon(polygon)
+        overlay_path.setFillRule(Qt.FillRule.OddEvenFill)
+        if self._crop_overlay_item is None:
+            self._crop_overlay_item = self._scene.addPath(
+                overlay_path, QPen(Qt.PenStyle.NoPen), QBrush(CROP_OVERLAY_COLOR)
+            )
+            self._crop_overlay_item.setZValue(10)
+        else:
+            self._crop_overlay_item.setPath(overlay_path)
+
+        outline = QPainterPath()
+        outline.addPolygon(polygon)
+        outline.closeSubpath()
+        if self._polygon_item is None:
+            self._polygon_item = self._scene.addPath(
+                outline, QPen(CROP_SELECTION_COLOR, 0, Qt.PenStyle.DashLine)
+            )
+            self._polygon_item.setZValue(11)
+        else:
+            self._polygon_item.setPath(outline)
+
+    def _finish_polygon_crop(self) -> None:
+        points = list(self._polygon_points)
+        self._end_crop_mode()
+        if len(points) >= 3:
+            self.polygonCropRequested.emit(
+                [(point.x(), point.y()) for point in points]
+            )
+
     def _end_crop_mode(self) -> None:
         if self._crop_rect_item is not None:
             self._scene.removeItem(self._crop_rect_item)
@@ -446,8 +558,13 @@ class HSIViewer(QtWidgets.QGraphicsView):
         if self._crop_overlay_item is not None:
             self._scene.removeItem(self._crop_overlay_item)
             self._crop_overlay_item = None
+        if self._polygon_item is not None:
+            self._scene.removeItem(self._polygon_item)
+            self._polygon_item = None
         self._cropping = False
         self._crop_start = None
+        self._polygon_cropping = False
+        self._polygon_points = []
         if self.has_photo():
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
         self._apply_idle_cursor()
@@ -481,7 +598,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         over whatever cursor the enclosing view has while the mouse is over
         it, so overriding self.setCursor() here would have no visible effect.
         """
-        if self._cropping:
+        if self._cropping or self._polygon_cropping:
             return
         if self._pixel_overlay_enabled:
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
