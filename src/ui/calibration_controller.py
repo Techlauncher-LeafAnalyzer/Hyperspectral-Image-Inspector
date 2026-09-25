@@ -33,7 +33,7 @@ class CalibrationController(QtCore.QObject):
     readyToClose = QtCore.pyqtSignal()
     runningChanged = QtCore.pyqtSignal(bool)
     resultReady = QtCore.pyqtSignal(bool)
-    referencesChanged = QtCore.pyqtSignal()
+    referencesChanged = QtCore.pyqtSignal(bool)
 
     def __init__(
         self,
@@ -58,7 +58,7 @@ class CalibrationController(QtCore.QObject):
         parent_widget: QtWidgets.QWidget,
         display_data: Callable[[], HSIData] | None = None,
         is_high_resolution: Callable[[], bool] | None = None,
-        can_calibrate_source: Callable[[], bool] | None = None,
+        before_calibration: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(parent_widget)
         self._source_data = source_data
@@ -80,7 +80,7 @@ class CalibrationController(QtCore.QObject):
         self._parent = parent_widget
         self._display_data = display_data or (lambda: self._source_data)
         self._is_high_resolution = is_high_resolution or (lambda: False)
-        self._can_calibrate_source = can_calibrate_source or (lambda: True)
+        self._before_calibration = before_calibration or (lambda: True)
 
         self._worker: CalibrationWorker | None = None
         self._results: dict[bool, CalibrationResult | None] = {False: None, True: None}
@@ -243,13 +243,14 @@ class CalibrationController(QtCore.QObject):
         return path
 
     def _reference_changed(self) -> None:
+        had_result = self._results[False] is not None
         self._tracks_source = {False: False, True: False}
         self._stop_hypercube()
         self.clear_result()
         if self._source_data.is_loaded():
             self._refresh_current_views()
         self._update_ready()
-        self.referencesChanged.emit()
+        self.referencesChanged.emit(had_result)
 
     def _set_paths(self, dark: Path | None, bright: Path | None) -> None:
         self._dark_path = dark
@@ -267,8 +268,6 @@ class CalibrationController(QtCore.QObject):
             self._cancel()
             return
         if self._external_running:
-            return
-        if not self._can_calibrate_source():
             return
         if not self._source_data.is_loaded():
             QMessageBox.information(
@@ -292,20 +291,21 @@ class CalibrationController(QtCore.QObject):
             return
         if (dark, bright) != (self._dark_path, self._bright_path):
             self._set_paths(dark, bright)
+        if not self._before_calibration():
+            return
 
         self._error = None
         self._stop_hypercube()
-        source_data = self._display_data()
-        high = self._is_high_resolution()
+        source_data = self._source_data
         worker = CalibrationWorker(
             self._service,
             source_data,
             dark,
             bright,
             parent=self,
-            reference_source=self._source_data if high else None,
+            reference_source=None,
         )
-        self._working_resolution = high
+        self._working_resolution = False
         self._completed_resolution = None
         self._worker = worker
         worker.progress.connect(self._on_progress)
@@ -413,7 +413,6 @@ class CalibrationController(QtCore.QObject):
             and self._source_data.is_loaded()
             and self._dark_path is not None
             and self._bright_path is not None
-            and self._can_calibrate_source()
         )
         self._calibrate_button.setEnabled(ready)
         self._calibrate_button.setText("Calibrate")
@@ -423,8 +422,6 @@ class CalibrationController(QtCore.QObject):
             tooltip = "Load a source image before calibration"
         elif self._external_running:
             tooltip = "Wait for the current cube-processing task to finish"
-        elif not self._can_calibrate_source():
-            tooltip = "Switch to low resolution to calibrate the raw image"
         else:
             tooltip = "Select both dark and bright reference cubes"
         self._calibrate_button.setToolTip(tooltip)
