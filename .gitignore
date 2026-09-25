@@ -231,3 +231,12 @@ __marimo__/
 
 # loacal test files
 local_test_folder/
+
+# Nuitka build output (scripts/build_nuitka.sh)
+main.build/
+main.dist/
+main.onefile-build/
+main.onefile-nozip-build/
+main.bin
+main.exe
+nuitka-crash-report.xml

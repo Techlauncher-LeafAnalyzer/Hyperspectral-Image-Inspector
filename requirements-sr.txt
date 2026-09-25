@@ -1,3 +1,9 @@
 # Install alongside requirements.txt, using the same Python environment.
+# CPU-only build: SR here never calls a torch.cuda compute op beyond the
+# is_available() capability check, and this app has no CUDA requirement -
+# the CPU wheel avoids shipping ~1GB of CUDA/cuDNN/NCCL libraries that would
+# otherwise be copied into the standalone Nuitka build for that check alone.
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
 torch>=2.6,<3
 scipy>=1.14,<2
