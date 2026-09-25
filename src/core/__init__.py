@@ -1,6 +1,7 @@
 """Stable public Model API consumed by application Controllers."""
 
 from .errors import (
+    CalibrationError,
     CancelledError,
     ClassificationError,
     HSIError,
@@ -21,6 +22,14 @@ from .classification_model import (
     UnsupervisedClassificationRequest,
     UnsupervisedClassificationResult,
     load_binary_training_mask,
+)
+from .calibration_model import (
+    CalibrationFramePair,
+    CalibrationFrameResolver,
+    CalibrationRequest,
+    CalibrationResult,
+    CalibrationService,
+    order_calibration_frame_paths,
 )
 from .classification_layer_model import (
     ClassIndexStatistics,
@@ -55,6 +64,12 @@ from .visualization_export_model import (
 )
 
 __all__ = [
+    "CalibrationError",
+    "CalibrationFramePair",
+    "CalibrationFrameResolver",
+    "CalibrationRequest",
+    "CalibrationResult",
+    "CalibrationService",
     "CancelledError",
     "ClassificationError",
     "ClassificationIndexAnalysis",
@@ -99,4 +114,5 @@ __all__ = [
     "UnsupervisedClassificationResult",
     "WavelengthError",
     "load_binary_training_mask",
+    "order_calibration_frame_paths",
 ]
