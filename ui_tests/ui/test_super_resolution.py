@@ -88,13 +88,13 @@ def test_canvas_resolution_switches_follow_the_toggle(loaded_window, stub_sr, qt
     assert all(switch.isChecked() for switch in switches)
 
 
-def test_calibration_and_super_resolution_are_exclusive_operations(
+def test_super_resolution_uses_calibrated_low_resolution_source(
     loaded_window, stub_sr, qtbot, file_dialog, tmp_path, dialogs
 ):
     window = loaded_window
     source = window._hsi_data
     reference_shape = (21, source.original_shape[1], source.bands)
-    for name, value in (("dark", 0.0), ("bright", 1.0)):
+    for name, value in (("dark", 0.0), ("bright", 2.0)):
         path = tmp_path / f"{name}.hdr"
         envi.save_image(
             str(path), np.full(reference_shape, value, dtype=np.float32),
@@ -110,36 +110,93 @@ def test_calibration_and_super_resolution_are_exclusive_operations(
     assert low_result is not None
     assert low_result.data.shape == source.shape
 
-    toggle = window._visualization_calibration.toggle
-    assert toggle.isChecked()
-    assert window._visualization_data() is low_result.data
+    assert window._display_data() is low_result.data
     stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
     assert window._calibration_controller.result is None
-    assert window._visualization_data() is window._super_res_result.data
-    assert not toggle.isChecked()
-    assert toggle.y() > window._resolution_switches.switches[0].y()
-    assert toggle.parent() is window.visualizationStack
-    assert not window.calibrateButton.isEnabled()
-    window.calibrateButton.click()
-    assert not window._calibration_controller.is_running()
+    assert window._display_data() is window._super_res_result.data
+    assert window._sr_from_calibration
+    expected = low_result.data.read_bands(range(source.bands)).repeat(2, 0).repeat(2, 1)
+    np.testing.assert_allclose(
+        window._super_res_result.data.read_bands(range(source.bands)), expected
+    )
     assert not dialogs.critical
 
     window._resolution_switches.switches[1].click()
     assert window._calibration_controller.result is low_result
-    assert window._visualization_data() is low_result.data
+    assert window._display_data() is low_result.data
     np.testing.assert_array_equal(window.calibrationViewer.rgb, low_result.data.rgb_array)
-    toggle.click()
-    assert window._visualization_data() is source
-    toggle.click()
-    assert window._visualization_data() is low_result.data
-
     window.highResButton.setChecked(True)
-    assert window._visualization_data() is window._super_res_result.data
-    toggle.click()
+    assert window._display_data() is window._super_res_result.data
+
+    replacement = tmp_path / "replacement_bright.hdr"
+    envi.save_image(
+        str(replacement), np.full(reference_shape, 3, dtype=np.float32),
+        ext=".bip", interleave="bip",
+        metadata={"wavelength": source.wavelengths},
+    )
+    file_dialog.open_return = (str(replacement), "")
+    window.referenceFileButton.click()
+    assert window._calibration_controller.result is None
+    assert window._super_res_result is None
     assert window.lowResButton.isChecked()
-    assert window._visualization_data() is low_result.data
+    assert window._display_data() is source
+
+
+def test_calibration_after_sr_requires_confirmation_and_discards_high_results(
+    loaded_window, stub_sr, qtbot, file_dialog, tmp_path, monkeypatch
+):
+    window = loaded_window
+    source = window._hsi_data
+    shape = (21, source.original_shape[1], source.bands)
+    for name, value in (("dark", 0.0), ("bright", 2.0)):
+        path = tmp_path / f"{name}.hdr"
+        envi.save_image(
+            str(path), np.full(shape, value, dtype=np.float32),
+            ext=".bip", interleave="bip",
+            metadata={"wavelength": source.wavelengths},
+        )
+        file_dialog.open_return = (str(path), "")
+        (window.darkFileButton if name == "dark" else window.referenceFileButton).click()
+
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    previous_sr = window._super_res_result
+    window.numOfClassesEdit.setText("2")
+    window.maxIterationsEdit.setText("3")
+    window.unsupervisedClassifyButton.click()
+    qtbot.waitUntil(lambda: window._classification_controller._thread is None)
+    assert window._classification_controller._slots[True].result is not None
+    answers = [QtWidgets.QMessageBox.StandardButton.No,
+               QtWidgets.QMessageBox.StandardButton.Yes]
+    prompts = []
+
+    def answer(*args):
+        prompts.append(args[2])
+        return answers.pop(0)
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(answer))
+    window.calibrateButton.click()
+    assert window._super_res_result is previous_sr
+    assert not window._calibration_controller.is_running()
+    assert window.highResButton.isChecked()
+    assert window._classification_controller._slots[True].result is not None
+
+    window.calibrateButton.click()
+    qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
+    assert len(prompts) == 2
+    assert "delete" in prompts[0]
+    assert window._super_res_result is None
+    assert window.lowResButton.isChecked()
+    assert window._calibration_controller.result is not None
+    assert all(slot.result is None for slot in window._classification_controller._slots.values())
+    assert window._display_data() is window._calibration_controller.result.data
+    np.testing.assert_allclose(
+        window._display_data().read_bands(range(source.bands)),
+        source.read_bands(range(source.bands)) / 2,
+    )
 
 
 def test_super_resolution_clears_crop_history(loaded_window, stub_sr, qtbot):
@@ -451,10 +508,10 @@ def test_high_res_notice_not_shown_for_low_res_selection(loaded_window, qtbot, d
     assert not dialogs.information
 
 
-def test_classification_follows_the_low_high_res_toggle_with_separate_results(
+def test_super_resolution_clears_prior_classification_results(
     loaded_window, stub_sr, qtbot, dialogs
 ):
-    """Each resolution keeps its own classification, refreshed like Visualization."""
+    """A new SR source invalidates classifications at both resolutions."""
 
     window = loaded_window
     window.numOfClassesEdit.setText("2")
@@ -485,13 +542,10 @@ def test_classification_follows_the_low_high_res_toggle_with_separate_results(
     high_res_image = window.classificationViewer._photo.pixmap().toImage().copy()
     assert high_res_image != low_res_image
 
-    # Swap back to low-res: the earlier result, and the layer visibility
-    # choice made against it, must both still be there -- untouched by the
-    # high-res classification that ran afterward.
+    # The pre-SR low-res classification is obsolete, while the classification
+    # made after SR remains available on the high-res result.
     window.lowResButton.setChecked(True)
-    assert len(window.classificationLayerPanel._rows) == 2
-    assert not window.classificationLayerPanel._rows[1]._toggle.isChecked()
-    assert window.classificationViewer._photo.pixmap().toImage() == low_res_image
+    assert len(window.classificationLayerPanel._rows) == 0
 
     window.highResButton.setChecked(True)
     assert len(window.classificationLayerPanel._rows) == 2

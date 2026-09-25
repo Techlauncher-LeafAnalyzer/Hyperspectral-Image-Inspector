@@ -314,10 +314,8 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
         np.testing.assert_array_equal(np.asarray(image), result.data.rgb_array)
 
     window.tabWidget.setCurrentWidget(window.Visualization)
-    toggle = window._visualization_calibration.toggle
-    assert toggle.parent() is window.visualizationStack
-    assert not toggle.isHidden() and toggle.isChecked()
-    assert window._visualization_data() is result.data
+    assert window._display_data() is result.data
+    assert window.visualizationStack.findChild(QtCore.QObject, "visualizationCalibrationSwitch") is None
     window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
     np.testing.assert_allclose(
         received[-1].values, result.data.read_pixel(1, 2), atol=1e-6
@@ -326,14 +324,6 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
     window.actionSaveImage.trigger()
     with Image.open(tmp_path / "visualized_calibrated.png") as image:
         np.testing.assert_array_equal(np.asarray(image), window.viewer.rgb)
-
-    toggle.click()
-    assert window._visualization_data() is window._hsi_data
-    assert not toggle.isChecked()
-    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
-    np.testing.assert_allclose(
-        received[-1].values, window._hsi_data.read_pixel(1, 2), atol=1e-6
-    )
 
 
 def test_calibration_tracks_crop_from_any_tab_and_clears_history(
@@ -392,3 +382,25 @@ def test_calibration_tracks_crop_from_any_tab_and_clears_history(
     assert window._calibration_controller.result is calibrated
     assert window._hsi_data.shape == (4, 4, bands)
     assert window.calibrationViewer.rgb.shape == (4, 4, 3)
+
+
+def test_calibration_clears_obsolete_classification(
+    loaded_window, file_dialog, tmp_path, qtbot
+):
+    window = loaded_window
+    window.numOfClassesEdit.setText("2")
+    window.maxIterationsEdit.setText("3")
+    window.unsupervisedClassifyButton.click()
+    qtbot.waitUntil(lambda: window._classification_controller._thread is None)
+    assert window._classification_controller._slots[False].result is not None
+
+    shape = (21, SYNTHETIC_COLUMNS, len(SYNTHETIC_WAVELENGTHS_NM))
+    dark = _write_reference(tmp_path, "dark", np.zeros(shape, dtype=np.float32))
+    bright = _write_reference(tmp_path, "bright", np.full(shape, 2, dtype=np.float32))
+    _select_references(window, file_dialog, dark, bright)
+    assert window._classification_controller._slots[False].result is not None
+    qtbot.waitUntil(lambda: window.calibrateButton.isEnabled())
+    window.calibrateButton.click()
+    _wait_for_calibration(qtbot, window)
+    assert window._calibration_controller.result is not None
+    assert all(slot.result is None for slot in window._classification_controller._slots.values())

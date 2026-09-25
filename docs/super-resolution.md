@@ -86,14 +86,18 @@ spectrum disk reads are paused to serialize source access, while tabs, cached
 visualization modes, and pan/zoom remain interactive. Closing requests cancellation
 and waits asynchronously for the worker to finish.
 
-The original `HSIData` remains unchanged. The SR tab shows RGB from the selected
-Original/Processed dataset; other tabs retain original data. Pan/zoom coordinates
+The raw `HSIData` remains unchanged. If calibration has completed, its result is
+the low-resolution input to SR; otherwise SR reads the raw cube. The SR tab shows
+RGB from the selected low/high-resolution dataset. Pan/zoom coordinates
 are scaled when switching between resolutions. SR pixel RGB, spectrum lookup,
 and File → Save Image use the displayed dataset. Save Image exports the preview,
 not the complete 480-band cube. Index means remain available on the original
 image; crop the original and rerun SR instead of applying HR coordinates to LR.
-Loading or cropping/undoing a source invalidates the old SR result. Failures and
-cancellation retain the previous successful result.
+Loading or cropping/undoing a source invalidates the old SR result. Confirming
+calibration after SR also discards that result and its high-resolution derivatives.
+Every successful SR run clears previous classification at both resolutions and
+crop undo/redo history. Failures and cancellation retain the previous successful
+result.
 
 ```sh
 OMP_NUM_THREADS=2 python -m pytest -q

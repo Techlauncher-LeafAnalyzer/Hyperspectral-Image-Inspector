@@ -33,10 +33,12 @@ For a 2× Super-Resolution result, pass the current original image as
 original image's detector columns, then linearly interpolated at high-resolution
 pixel centres and broadcast across the 2× result. This is an approximation:
 the calibration frames were captured at the original resolution. The service
-supports this API, but the GUI deliberately keeps calibration and
-Super-Resolution as separate operations on the raw source. The Visualization
-page offers a raw/calibrated switch, and the shared resolution switch selects
-the independent Super-Resolution result. Changing references clears calibration.
+supports this API, but the GUI always calibrates the raw low-resolution source.
+Afterward, that calibrated cube becomes the displayed low-resolution image and
+the input to Super-Resolution. If SR was run first, starting calibration asks
+for confirmation and discards the SR image and its high-resolution derivatives.
+There is no calibrated/raw display switch. Changing references clears the
+calibration and any SR result derived from it.
 
 Facility calibration names start with `YYYY-MM-DD--HH-MM-SS` and end in
 `_calibFrame`. When both selected files follow that convention, the GUI orders
@@ -93,11 +95,13 @@ the window closes. Cancellation and failures remove incomplete output.
 - The button becomes Cancel while the worker is active; progress is reported
   in the status bar and other cube readers are paused.
 - Success renders calibrated RGB in `calibrationViewer`; spectrum plotting and
-  File → Save Image use that calibrated result on the Calibration tab. The
-  Visualization page can switch between calibrated and raw low-resolution data.
-- Calibration is disabled while the high-resolution result is selected; switch
-  to low resolution to calibrate the raw image. SR always reads the raw image.
+  File → Save Image use that calibrated result. All low-resolution views now use
+  the calibrated cube; SR uses it as input when subsequently run.
+- Starting calibration when SR exists asks whether to discard the high-resolution
+  image and its dependent results. No keeps the existing image unchanged; Yes
+  discards them and runs calibration on the raw source.
 - Cropping from any 2D tab automatically rebuilds an existing calibrated result
   against the new cumulative source bounds. Each completed calibration or SR
-  operation clears crop undo/redo history. Loading another source or replacing
-  a reference clears the calibration result. Errors leave the source unchanged.
+  operation clears crop undo/redo history and all prior classification results.
+  Loading another source or replacing a reference clears calibration. Errors
+  leave the raw source unchanged.
