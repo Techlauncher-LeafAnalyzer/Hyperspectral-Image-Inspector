@@ -32,6 +32,8 @@ class CalibrationController(QtCore.QObject):
 
     readyToClose = QtCore.pyqtSignal()
     runningChanged = QtCore.pyqtSignal(bool)
+    resultReady = QtCore.pyqtSignal(bool)
+    referencesChanged = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -56,6 +58,7 @@ class CalibrationController(QtCore.QObject):
         parent_widget: QtWidgets.QWidget,
         display_data: Callable[[], HSIData] | None = None,
         is_high_resolution: Callable[[], bool] | None = None,
+        can_calibrate_source: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(parent_widget)
         self._source_data = source_data
@@ -77,10 +80,12 @@ class CalibrationController(QtCore.QObject):
         self._parent = parent_widget
         self._display_data = display_data or (lambda: self._source_data)
         self._is_high_resolution = is_high_resolution or (lambda: False)
+        self._can_calibrate_source = can_calibrate_source or (lambda: True)
 
         self._worker: CalibrationWorker | None = None
         self._results: dict[bool, CalibrationResult | None] = {False: None, True: None}
         self._working_resolution = False
+        self._completed_resolution: bool | None = None
         self._error: str | None = None
         self._dark_path: Path | None = None
         self._bright_path: Path | None = None
@@ -104,7 +109,10 @@ class CalibrationController(QtCore.QObject):
 
     @property
     def result(self) -> CalibrationResult | None:
-        return self._results[self._is_high_resolution()]
+        return self.result_for_resolution(self._is_high_resolution())
+
+    def result_for_resolution(self, high: bool) -> CalibrationResult | None:
+        return self._results[high]
 
     @property
     def last_error(self) -> str | None:
@@ -138,6 +146,7 @@ class CalibrationController(QtCore.QObject):
         """Reset stale state and optionally discover a nearby calibration pair."""
 
         self._tracks_source = {False: False, True: False}
+        self._stop_hypercube()
         self.clear_result()
         pair = self._frame_resolver.resolve(source_path)
         if pair is None:
@@ -156,6 +165,7 @@ class CalibrationController(QtCore.QObject):
         """Rebuild an existing result after crop, undo, or redo."""
 
         recalibrate = self._tracks_source[False]
+        self._stop_hypercube()
         self.clear_result()
         self._refresh_source_views()
         if recalibrate:
@@ -234,10 +244,12 @@ class CalibrationController(QtCore.QObject):
 
     def _reference_changed(self) -> None:
         self._tracks_source = {False: False, True: False}
+        self._stop_hypercube()
         self.clear_result()
         if self._source_data.is_loaded():
             self._refresh_current_views()
         self._update_ready()
+        self.referencesChanged.emit()
 
     def _set_paths(self, dark: Path | None, bright: Path | None) -> None:
         self._dark_path = dark
@@ -255,6 +267,8 @@ class CalibrationController(QtCore.QObject):
             self._cancel()
             return
         if self._external_running:
+            return
+        if not self._can_calibrate_source():
             return
         if not self._source_data.is_loaded():
             QMessageBox.information(
@@ -292,6 +306,7 @@ class CalibrationController(QtCore.QObject):
             reference_source=self._source_data if high else None,
         )
         self._working_resolution = high
+        self._completed_resolution = None
         self._worker = worker
         worker.progress.connect(self._on_progress)
         worker.result_ready.connect(self._on_result)
@@ -345,6 +360,7 @@ class CalibrationController(QtCore.QObject):
         self._clear_resolution(self._working_resolution)
         self._results[self._working_resolution] = result
         self._tracks_source[self._working_resolution] = True
+        self._completed_resolution = self._working_resolution
         if self._is_high_resolution() == self._working_resolution:
             self._show_result()
         minimum, maximum = result.reflectance_range
@@ -374,6 +390,9 @@ class CalibrationController(QtCore.QObject):
         self._load_image_action.setEnabled(True)
         self._update_ready()
         self.runningChanged.emit(False)
+        if self._completed_resolution is not None:
+            self.resultReady.emit(self._completed_resolution)
+            self._completed_resolution = None
         if self._error:
             self._statusbar.showMessage(self._error, 8000)
         if self._close_after_calibration:
@@ -394,19 +413,18 @@ class CalibrationController(QtCore.QObject):
             and self._source_data.is_loaded()
             and self._dark_path is not None
             and self._bright_path is not None
+            and self._can_calibrate_source()
         )
         self._calibrate_button.setEnabled(ready)
         self._calibrate_button.setText("Calibrate")
         if ready:
-            tooltip = (
-                "Calibrate 2× image using interpolated original-resolution references"
-                if self._is_high_resolution()
-                else "Apply dark/bright radiometric calibration"
-            )
+            tooltip = "Apply dark/bright radiometric calibration"
         elif not self._source_data.is_loaded():
             tooltip = "Load a source image before calibration"
         elif self._external_running:
             tooltip = "Wait for the current cube-processing task to finish"
+        elif not self._can_calibrate_source():
+            tooltip = "Switch to low resolution to calibrate the raw image"
         else:
             tooltip = "Select both dark and bright reference cubes"
         self._calibrate_button.setToolTip(tooltip)

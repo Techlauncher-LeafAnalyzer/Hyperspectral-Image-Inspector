@@ -15,12 +15,26 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
     INSET = 12
     KNOB = 30
 
-    def __init__(self, parent: QtWidgets.QWidget, name: str) -> None:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget,
+        name: str,
+        *,
+        low_label: str = "LOW RES",
+        high_label: str = "HIGH RES",
+        low_symbol: str = "1×",
+        high_symbol: str = "2×",
+        width: int = WIDTH,
+    ) -> None:
         super().__init__(parent)
+        self._low_label = low_label
+        self._high_label = high_label
+        self._low_symbol = low_symbol
+        self._high_symbol = high_symbol
         self.setObjectName(name)
-        self.setAccessibleName("Image resolution switch")
+        self.setAccessibleName(f"{low_label} or {high_label} switch")
         self.setCheckable(True)
-        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self.setFixedSize(width, self.HEIGHT)
         self.move(self.INSET, self.INSET)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
@@ -43,7 +57,7 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         self.update()
 
     def _update_hint(self, high_resolution: bool) -> None:
-        destination = "original (low-res)" if high_resolution else "Super-Resolution (high-res)"
+        destination = self._low_label if high_resolution else self._high_label
         self.setToolTip(f"Switch to {destination}")
         self.setAccessibleDescription(f"Switch to {destination}")
         self._animation.stop()
@@ -56,7 +70,8 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         progress = self._progress
-        track = QtCore.QRectF(0.5, 0.5, self.WIDTH - 1, self.HEIGHT - 1)
+        width = self.width()
+        track = QtCore.QRectF(0.5, 0.5, width - 1, self.HEIGHT - 1)
         light = QtGui.QColor("#eceef1")
         dark = QtGui.QColor("#121417")
         def blend(start: QtGui.QColor, end: QtGui.QColor) -> QtGui.QColor:
@@ -69,7 +84,7 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         painter.setBrush(blend(light, dark))
         painter.drawRoundedRect(track, self.HEIGHT / 2, self.HEIGHT / 2)
 
-        circle_x = 3 + (self.WIDTH - self.KNOB - 6) * (1 - progress)
+        circle_x = 3 + (width - self.KNOB - 6) * (1 - progress)
         circle = QtCore.QRectF(circle_x, 3, self.KNOB, self.KNOB)
         painter.setPen(QtGui.QPen(blend(QtGui.QColor("#ccd0d6"), QtGui.QColor("#ffffff"))))
         painter.setBrush(QtGui.QColor("#ffffff"))
@@ -81,22 +96,22 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         painter.setFont(font)
         painter.setPen(QtGui.QColor("#14181d"))
         painter.setOpacity(1 - progress)
-        painter.drawText(circle, QtCore.Qt.AlignmentFlag.AlignCenter, "1×")
+        painter.drawText(circle, QtCore.Qt.AlignmentFlag.AlignCenter, self._low_symbol)
         painter.setOpacity(progress)
-        painter.drawText(circle, QtCore.Qt.AlignmentFlag.AlignCenter, "2×")
+        painter.drawText(circle, QtCore.Qt.AlignmentFlag.AlignCenter, self._high_symbol)
         painter.setOpacity(1 - progress)
         painter.setPen(QtGui.QColor("#1d2228"))
         painter.drawText(
-            QtCore.QRectF(3, 0, self.WIDTH - 39, self.HEIGHT),
+            QtCore.QRectF(3, 0, width - 39, self.HEIGHT),
             QtCore.Qt.AlignmentFlag.AlignCenter,
-            "LOW RES",
+            self._low_label,
         )
         painter.setOpacity(progress)
         painter.setPen(QtGui.QColor("#ffffff"))
         painter.drawText(
-            QtCore.QRectF(36, 0, self.WIDTH - 40, self.HEIGHT),
+            QtCore.QRectF(36, 0, width - 40, self.HEIGHT),
             QtCore.Qt.AlignmentFlag.AlignCenter,
-            "HIGH RES",
+            self._high_label,
         )
 
 

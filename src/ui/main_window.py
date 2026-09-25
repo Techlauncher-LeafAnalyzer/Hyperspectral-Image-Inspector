@@ -38,6 +38,7 @@ from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
 from ui.resolution_toggle import ResolutionSwitchGroup
+from ui.visualization_processing_controls import VisualizationCalibrationController
 from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
 from ui.super_resolution_worker import SuperResolutionWorker
@@ -145,7 +146,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             load_image_action=self.actionLoadImage,
             stop_hypercube=lambda: self._hypercube_controller.stop_and_wait(),
             resume_hypercube=lambda: self._hypercube_controller.resume(
-                self._display_data()
+                self._visualization_data()
             ),
             refresh_source_views=self._push_image_to_viewers,
             refresh_current_views=self._refresh_viewers_display,
@@ -153,6 +154,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             parent_widget=self,
             display_data=self._display_data,
             is_high_resolution=self._is_super_resolution_active,
+            can_calibrate_source=lambda: not self._is_super_resolution_active(),
         )
         self._classification_controller.readyToClose.connect(self.close)
         self._calibration_controller.readyToClose.connect(self.close)
@@ -161,6 +163,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         self._calibration_controller.runningChanged.connect(
             self._on_calibration_running_changed
+        )
+        self._calibration_controller.resultReady.connect(
+            self._on_calibration_result_ready
+        )
+        self._calibration_controller.referencesChanged.connect(
+            self._on_calibration_references_changed
         )
         self._configure_tabs()
         self._configure_file_menu()
@@ -173,8 +181,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._select_canvas_resolution,
             self,
         )
+        self._visualization_calibration = VisualizationCalibrationController(
+            self.visualizationStack,
+            lambda: self._calibration_controller.result_for_resolution(False),
+            self._is_super_resolution_active,
+            lambda: self.lowResButton.setChecked(True),
+            self._refresh_visualization_pipeline,
+            self,
+        )
         self.visualizationStack.currentChanged.connect(
-            lambda _index: self._resolution_switches.schedule_raise()
+            lambda _index: self._schedule_canvas_controls_raise()
         )
         self._connect_signals()
         self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
@@ -331,11 +347,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         high = self._is_super_resolution_active()
         self._calibration_controller.resolution_changed()
-        self._resolution_switches.sync(
-            available=self._super_res_result is not None,
-            high_resolution=high,
-            enabled=True,
-        )
+        self._sync_processing_controls()
         self._refresh_super_resolution_display()
         self.superResStatusStack.setCurrentWidget(self.superResIdlePage)
         if not self._hsi_data.is_loaded():
@@ -354,6 +366,27 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_result is not None:
             self._refresh_visualization_pipeline()
             self._classification_controller.refresh_display()
+
+    def _schedule_canvas_controls_raise(self) -> None:
+        self._resolution_switches.schedule_raise()
+        self._visualization_calibration.schedule_raise()
+
+    def _sync_processing_controls(self) -> None:
+        high = self._is_super_resolution_active()
+        sr_available = self._super_res_result is not None
+        self._resolution_switches.sync(
+            available=sr_available,
+            high_resolution=high,
+            enabled=self._super_res_worker is None,
+        )
+        self._visualization_calibration.sync(
+            resolution_available=sr_available,
+            enabled=self._super_res_worker is None
+            and not self._calibration_controller.is_running(),
+        )
+
+    def _visualization_data(self) -> HSIData:
+        return self._visualization_calibration.data(self._display_data())
 
     def _display_data(self) -> HSIData:
         """Return the dataset every tab should currently render.
@@ -451,6 +484,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         worker = SuperResolutionWorker(self._super_resolution_service, self._hsi_data,
                                        self._super_resolution_request, parent=self)
         self._super_res_worker = worker
+        self._sync_processing_controls()
         worker.progress.connect(self._on_super_resolution_progress)
         worker.result_ready.connect(self._on_super_resolution_result)
         worker.failed.connect(self._on_super_resolution_failed)
@@ -512,6 +546,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.highResButton.setChecked(True)
         self._refresh_super_resolution_display()
         self.superResProgressBar.setValue(100)
+        self._crop_undo_stack.clear()
+        self._crop_redo_stack.clear()
         self.statusbar.showMessage("Super-Resolution complete", 5000)
 
     def _on_super_resolution_failed(self, message: str) -> None:
@@ -537,7 +573,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         else:
             # A cube build cancelled to make room for SR must not remain stuck
             # at "Computing hypercube". The original source is still unchanged.
-            self._hypercube_controller.resume(self._display_data())
+            self._hypercube_controller.resume(self._visualization_data())
 
     def _set_super_resolution_ready(self) -> None:
         self.actionLoadImage.setEnabled(True)
@@ -580,6 +616,22 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         else:
             self._set_super_resolution_ready()
             self._set_classification_controls_available(True)
+        self._sync_processing_controls()
+
+    @QtCore.pyqtSlot(bool)
+    def _on_calibration_result_ready(self, high: bool) -> None:
+        self._crop_undo_stack.clear()
+        self._crop_redo_stack.clear()
+        self._visualization_calibration.calibration_ready()
+        self._sync_processing_controls()
+        self._refresh_visualization_pipeline()
+
+    @QtCore.pyqtSlot()
+    def _on_calibration_references_changed(self) -> None:
+        self._visualization_calibration.reset()
+        self._sync_processing_controls()
+        if self._hsi_data.is_loaded():
+            self._refresh_visualization_pipeline()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._hypercube_controller.shutdown()
@@ -672,6 +724,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._classification_controller.set_image_loaded(True)
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
+        self._visualization_calibration.reset()
         self._active_visualization_mode = VisualizationMode.RGB
         self.modeRGB.setChecked(True)
         self._push_image_to_viewers()
@@ -685,12 +738,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             QMessageBox.information(self, "Nothing to save", "Load an image first.")
             return
 
-        rgb_result = self._visualization_results.get(VisualizationMode.RGB)
-        display_rgb = (
-            rgb_result.display_rgb
-            if rgb_result is not None
-            else self._display_data().rgb_array
-        )
+        display_rgb = self._display_data().rgb_array
         if self.tabWidget.currentWidget() is self.Visualization:
             result = self._visualization_results.get(self._active_visualization_mode)
             if result is not None:
@@ -729,7 +777,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 ),
                 # Keep a polygon crop's excluded pixels transparent rather
                 # than exporting them as black, which would read as data.
-                alpha_mask=self._display_data().roi_mask,
+                alpha_mask=(
+                    self._visualization_data().roi_mask
+                    if self.tabWidget.currentWidget() is self.Visualization
+                    else self._display_data().roi_mask
+                ),
             )
         except VisualizationExportError as exc:
             QMessageBox.critical(self, "Unable to save image", str(exc))
@@ -752,7 +804,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _recompute_visualizations(self) -> None:
         self._hypercube_controller.stop_and_wait()
         self._visualization_results = {}
-        data = self._display_data()
+        data = self._visualization_data()
         for mode in _CACHED_VISUALIZATION_MODES:
             try:
                 self._visualization_results[mode] = self._visualization_service.render(
@@ -769,10 +821,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _refresh_viewers_display(self) -> None:
         data = self._display_data()
+        visualization_data = self._visualization_data()
         result = self._visualization_results.get(self._active_visualization_mode)
-        display_rgb = result.display_rgb if result is not None else data.rgb_array
-        rgb_result = self._visualization_results.get(VisualizationMode.RGB)
-        rgb_display = rgb_result.display_rgb if rgb_result is not None else data.rgb_array
+        display_rgb = (
+            result.display_rgb if result is not None else visualization_data.rgb_array
+        )
+        rgb_display = data.rgb_array
         new_scale = 2 if data is not self._hsi_data else 1
         factor = new_scale / self._viz_view_scale
         for viewer in self._all_viewers():
@@ -801,6 +855,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 if use_calibration
                 else self._classification_controller.display_data
                 if use_classification
+                else visualization_data
+                if viewer is self.viewer
                 else data
             )
             viewer.rgb        = viewer_data.rgb_array
@@ -880,6 +936,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         data = (
             calibration_result.data
             if self.sender() is self.calibrationViewer and calibration_result
+            else self._visualization_data()
+            if self.sender() is self.viewer
             else self._display_data()
         )
         if self.sender() is self.superResViewer and not self.superResViewer.has_photo():
@@ -1034,7 +1092,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         return self._viz_view_scale
 
     def _on_tab_changed(self, index: int) -> None:
-        self._resolution_switches.schedule_raise()
+        self._schedule_canvas_controls_raise()
         new_viewer = self._viewer_for_tab(index)
         if new_viewer is None:
             return
@@ -1096,4 +1154,4 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _refresh_visualization_pipeline(self) -> None:
         self._recompute_visualizations()
         self._refresh_viewers_display()
-        self._hypercube_controller.refresh(self._display_data())
+        self._hypercube_controller.refresh(self._visualization_data())
