@@ -184,7 +184,6 @@ QComboBox::down-arrow {
 
 QComboBox#comboBox {
     color: #173532;
-    border-color: #b9d0ca;
     border-radius: 7px;
     padding: 7px 40px 7px 12px;
     font-weight: 600;
@@ -194,19 +193,16 @@ QComboBox#comboBox {
 
 QComboBox#comboBox:hover {
     background: #f7fbfa;
-    border-color: #83b8ad;
 }
 
 QComboBox#comboBox:focus,
 QComboBox#comboBox:on {
     background: #ffffff;
-    border-color: #168b7b;
 }
 
 QComboBox#comboBox:disabled {
     color: #9ba9a6;
     background: #f0f3f2;
-    border-color: #dde5e2;
 }
 
 QComboBox#comboBox::drop-down {
@@ -949,6 +945,15 @@ QSlider#globalOpacitySlider::handle:horizontal:hover {
     background: #dff1ed;
     border-color: #0d6a5f;
 }
+"""
+
+
+CLASSIFIER_BORDER_QSS = """
+QComboBox#comboBox { border: 1px solid #b9d0ca; }
+QComboBox#comboBox:hover { border: 1px solid #83b8ad; }
+QComboBox#comboBox:focus,
+QComboBox#comboBox:on { border: 1px solid #168b7b; }
+QComboBox#comboBox:disabled { border: 1px solid #dde5e2; }
 """
 
 
