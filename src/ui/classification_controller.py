@@ -228,7 +228,6 @@ class ClassificationController(QObject):
             True: _ClassificationSlot(),
         }
         self._pending_slot_key = False
-        self._sr_notice_shown = False
         self._opacity_refresh_timer = QtCore.QTimer(self)
         self._opacity_refresh_timer.setSingleShot(True)
         self._opacity_refresh_timer.setInterval(_OPACITY_REFRESH_INTERVAL_MS)
@@ -550,7 +549,6 @@ class ClassificationController(QObject):
         if estimate >= 1_000_000_000 and not self._confirm_large_job(estimate):
             return
 
-        self._notify_if_classifying_super_resolution()
         self._pending_slot_key = self._is_super_resolution_active()
         self._slots[self._pending_slot_key].active_data = data
         worker = _ClassificationWorker(self._service, data, request)
@@ -587,7 +585,6 @@ class ClassificationController(QObject):
             return
         request = SupervisedClassificationRequest(classifier)
 
-        self._notify_if_classifying_super_resolution()
         self._pending_slot_key = self._is_super_resolution_active()
         self._slots[self._pending_slot_key].active_data = data
         worker = _SupervisedClassificationWorker(
@@ -610,23 +607,6 @@ class ClassificationController(QObject):
             self._active_button.setText("Cancelling…")
         self._statusbar.showMessage(
             "Cancelling after the current classification stage…"
-        )
-
-    def _notify_if_classifying_super_resolution(self) -> None:
-        """Tell the user, once per session, that classification targets the SR result.
-
-        Mirrors ``MainWindowController``'s one-time "Viewing Super-Resolution
-        image" notice for the Visualization tab.
-        """
-
-        if self._sr_notice_shown or not self._is_super_resolution_active():
-            return
-        self._sr_notice_shown = True
-        QMessageBox.information(
-            self._parent,
-            "Classifying Super-Resolution image",
-            "Classification is running on the Super-Resolution (high-res) "
-            "result instead of the original image.",
         )
 
     def _confirm_large_job(self, estimated_bytes: int) -> bool:

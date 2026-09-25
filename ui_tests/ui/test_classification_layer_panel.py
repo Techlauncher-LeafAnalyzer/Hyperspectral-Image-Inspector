@@ -463,7 +463,7 @@ def test_outline_mode_reveals_background_in_class_interiors(qtbot):
 # ---------------------------------------------------------------------- #
 
 
-def test_classifying_with_super_resolution_active_targets_its_data_and_notifies(
+def test_classifying_with_super_resolution_active_targets_its_data_without_notice(
     qtbot, synthetic_cube_path, monkeypatch
 ):
     controller, viewer, layer_panel, source = _make_controller(qtbot)
@@ -481,8 +481,7 @@ def test_classifying_with_super_resolution_active_targets_its_data_and_notifies(
     qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
 
     assert controller._current_slot.active_data is source.data
-    assert len(infos) == 1
-    assert "Super-Resolution" in infos[0][1]
+    assert not infos
 
 
 def test_classifying_without_super_resolution_active_shows_no_notice(
@@ -506,7 +505,7 @@ def test_classifying_without_super_resolution_active_shows_no_notice(
     assert len(infos) == 0
 
 
-def test_super_resolution_notice_is_shown_only_once(
+def test_repeated_super_resolution_classification_shows_no_notice(
     qtbot, synthetic_cube_path, monkeypatch
 ):
     controller, viewer, layer_panel, source = _make_controller(qtbot)
@@ -525,7 +524,7 @@ def test_super_resolution_notice_is_shown_only_once(
     controller._on_unsupervised_classify_clicked()
     qtbot.waitUntil(lambda: not controller.is_running(), timeout=5000)
 
-    assert len(infos) == 1
+    assert not infos
 
 
 # ---------------------------------------------------------------------- #
