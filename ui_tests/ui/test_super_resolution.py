@@ -432,7 +432,7 @@ def test_high_res_notice_not_shown_for_low_res_selection(loaded_window, qtbot, d
 
 
 def test_classification_follows_the_low_high_res_toggle_with_separate_results(
-    loaded_window, stub_sr, qtbot
+    loaded_window, stub_sr, qtbot, dialogs
 ):
     """Each resolution keeps its own classification, refreshed like Visualization."""
 
@@ -461,6 +461,7 @@ def test_classification_follows_the_low_high_res_toggle_with_separate_results(
     window.unsupervisedClassifyButton.click()
     qtbot.waitUntil(lambda: not window._classification_controller.is_running(), timeout=5000)
     assert len(window.classificationLayerPanel._rows) == 2
+    assert not dialogs.information
     high_res_image = window.classificationViewer._photo.pixmap().toImage().copy()
     assert high_res_image != low_res_image
 
@@ -476,6 +477,32 @@ def test_classification_follows_the_low_high_res_toggle_with_separate_results(
     assert len(window.classificationLayerPanel._rows) == 2
     assert window.classificationLayerPanel._rows[1]._toggle.isChecked()
     assert window.classificationViewer._photo.pixmap().toImage() == high_res_image
+
+
+def test_supervised_high_res_classification_has_no_resolution_popup(
+    loaded_window, synthetic_cube_path, stub_sr, file_dialog, qtbot, dialogs
+):
+    window = loaded_window
+    labels = np.ones((8, 8), dtype=np.uint8)
+    labels[4:] = 2
+    mask_path = synthetic_cube_path.with_name("synthetic_mask.png")
+    Image.fromarray(labels).save(mask_path)
+    file_dialog.open_return = (str(mask_path), "")
+    window.pushButton.click()
+
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    assert window.highResButton.isChecked()
+
+    window.pushButton_2.click()
+    qtbot.waitUntil(
+        lambda: window._classification_controller._thread is None,
+        timeout=10000,
+    )
+    assert not dialogs.information
+    assert not dialogs.critical
+    assert window._classification_controller._current_slot.result is not None
 
 
 def test_rerunning_super_resolution_discards_the_stale_high_res_classification(
