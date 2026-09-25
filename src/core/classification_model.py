@@ -62,7 +62,8 @@ class TrainingPairResolver:
     case-insensitive and never searches outside the selected mask directory.
     """
 
-    def resolve(self, mask_path: str | Path) -> TrainingFilePair:
+    @staticmethod
+    def validate_mask_path(mask_path: str | Path) -> Path:
         mask = Path(mask_path).expanduser().resolve()
         if not mask.is_file():
             raise ClassificationError(f"Ground-truth mask does not exist: {mask}")
@@ -70,6 +71,54 @@ class TrainingPairResolver:
             raise ClassificationError(
                 "Ground-truth mask must be PNG, TIFF, BMP, or JPEG."
             )
+        return mask
+
+    @staticmethod
+    def validate_cube_path(cube_path: str | Path) -> Path:
+        """Return the data file for a manually selected header or cube file."""
+
+        selected = Path(cube_path).expanduser().resolve()
+        if not selected.is_file():
+            raise ClassificationError(f"Hyperspectral image does not exist: {selected}")
+        files = {path.name.casefold(): path for path in selected.parent.iterdir() if path.is_file()}
+        suffix = selected.suffix.casefold()
+        if suffix == ".hdr":
+            data = next(
+                (
+                    files.get(f"{selected.stem}{extension}".casefold())
+                    for extension in SUPPORTED_CUBE_EXTENSIONS
+                    if files.get(f"{selected.stem}{extension}".casefold()) is not None
+                ),
+                None,
+            )
+            if data is None:
+                raise ClassificationError(
+                    f"No hyperspectral data file is paired with {selected.name}."
+                )
+            return data
+        if suffix not in SUPPORTED_CUBE_EXTENSIONS:
+            raise ClassificationError(
+                "Hyperspectral image must be an .hdr file or supported data file."
+            )
+        if files.get(f"{selected.stem}.hdr".casefold()) is None:
+            raise ClassificationError(
+                f"Paired .hdr file is missing for {selected.name}."
+            )
+        return selected
+
+    def resolve_manual(
+        self, mask_path: str | Path, cube_path: str | Path
+    ) -> TrainingFilePair:
+        """Use an explicitly selected cube instead of filename-based pairing."""
+
+        return TrainingFilePair(
+            self.validate_mask_path(mask_path),
+            self.validate_cube_path(cube_path),
+            "manual selection",
+        )
+
+    def resolve(self, mask_path: str | Path) -> TrainingFilePair:
+        mask = self.validate_mask_path(mask_path)
 
         stem = mask.stem
         if stem.casefold().endswith("_mask"):
@@ -369,8 +418,8 @@ class ClassificationService:
 
         The method loads the selected bands into memory because SPy's official
         guidance notes that iterative algorithms are substantially faster this
-        way. It then calls :func:`spectral.kmeans` and converts SPy's HxW class
-        map to the requested class-first one-hot representation.
+        way. With a polygon crop, only selected pixels enter K-means. It then
+        converts SPy's class map to the requested class-first one-hot form.
 
         Run this method in a Controller worker. Progress callbacks execute on
         that worker thread. Cancellation is checked before/after the cube read
@@ -419,6 +468,10 @@ class ClassificationService:
         cluster_input = (
             region.select()[:, None, :] if region.is_masked else cube
         )
+        if not np.all(np.isfinite(cluster_input)):
+            raise ClassificationError(
+                "Selected classification pixels contain non-finite values."
+            )
 
         self._check_cancelled(is_cancelled)
         self._emit(progress, 10, "Running SPy K-means")
@@ -539,7 +592,13 @@ class ClassificationService:
             training_mask_path,
             (training_data.rows, training_data.columns),
         )
+        if training_data.roi_mask is not None:
+            labels = np.where(training_data.roi_mask, labels, 0).astype(np.int16)
         class_ids = tuple(int(value) for value in np.unique(labels) if value > 0)
+        if len(class_ids) < 2:
+            raise ClassificationError(
+                "Training crop must retain target and background pixels."
+            )
         training_counts = np.asarray(
             [np.count_nonzero(labels == class_id) for class_id in class_ids],
             dtype=np.int64,
@@ -569,8 +628,8 @@ class ClassificationService:
             ) from exc
         except Exception as exc:
             raise ClassificationError(f"Could not read training cube: {exc}") from exc
-        if not np.all(np.isfinite(training_cube)):
-            raise ClassificationError("Training cube contains non-finite values.")
+        if not np.all(np.isfinite(training_cube[labels > 0])):
+            raise ClassificationError("Labeled training pixels contain non-finite values.")
 
         self._check_cancelled(is_cancelled)
         self._emit(progress, 30, f"Training SPy {request.classifier.value}")
@@ -606,13 +665,17 @@ class ClassificationService:
             ) from exc
         except Exception as exc:
             raise ClassificationError(f"Could not read target cube: {exc}") from exc
-        if not np.all(np.isfinite(target_cube)):
-            raise ClassificationError("Target cube contains non-finite values.")
+        region = target_data.masked(target_cube)
+        if region.is_masked and region.count == 0:
+            raise ClassificationError("Polygon crop contains no pixels to classify.")
+        target_input = region.select()[:, None, :] if region.is_masked else target_cube
+        if not np.all(np.isfinite(target_input)):
+            raise ClassificationError("Selected target pixels contain non-finite values.")
 
         self._check_cancelled(is_cancelled)
         self._emit(progress, 65, f"Classifying with {request.classifier.value}")
         try:
-            class_map = np.asarray(classifier.classify_image(target_cube))
+            class_map = np.asarray(classifier.classify_image(target_input))
         except MemoryError as exc:
             raise ClassificationError(
                 "Not enough memory to classify the target image; crop it first."
@@ -621,10 +684,10 @@ class ClassificationService:
             raise ClassificationError(
                 f"SPy {request.classifier.value} classification failed: {exc}"
             ) from exc
-        if class_map.shape != (target_data.rows, target_data.columns):
+        if class_map.shape != target_input.shape[:2]:
             raise ClassificationError(
                 f"SPy returned class map shape {class_map.shape}; expected "
-                f"{(target_data.rows, target_data.columns)}."
+                f"{target_input.shape[:2]}."
             )
         if not np.issubdtype(class_map.dtype, np.integer):
             raise ClassificationError("SPy returned non-integer supervised labels.")
@@ -639,13 +702,8 @@ class ClassificationService:
         self._check_cancelled(is_cancelled)
         self._emit(progress, 90, "Building supervised one-hot masks")
         class_map = class_map.astype(np.int32, copy=False)
-        if target_data.roi_mask is not None:
-            # Gaussian/Mahalanobis label each pixel independently, so unlike
-            # K-means the excluded pixels never influenced the model; blanking
-            # them afterwards is both correct and cheaper than pre-selecting.
-            class_map = np.where(target_data.roi_mask, class_map, -1).astype(
-                np.int32, copy=False
-            )
+        if region.is_masked:
+            class_map = region.scatter(class_map.reshape(-1), -1)
         id_array = np.asarray(class_ids, dtype=np.int32)[:, None, None]
         one_hot_masks = (class_map[None, :, :] == id_array).astype(np.uint8)
         class_counts = np.asarray(
