@@ -625,31 +625,8 @@
                   <string>Classifier</string>
                  </property>
                  <property name="sizeAdjustPolicy">
-                  <enum>QComboBox::SizeAdjustPolicy::AdjustToMinimumContentsLengthWithIcon</enum>
+                  <enum>QComboBox::SizeAdjustPolicy::AdjustToContents</enum>
                  </property>
-                 <property name="minimumContentsLength">
-                  <number>25</number>
-                 </property>
-                 <item>
-                  <property name="text">
-                   <string>GaussianClassifier</string>
-                  </property>
-                 </item>
-                 <item>
-                  <property name="text">
-                   <string>MahalanobisDistanceClassifier</string>
-                  </property>
-                 </item>
-                 <item>
-                  <property name="text">
-                   <string>PerceptronClassifier</string>
-                  </property>
-                 </item>
-                 <item>
-                  <property name="text">
-                   <string>TBD</string>
-                  </property>
-                 </item>
                 </widget>
                </item>
                <item row="0" column="4">
