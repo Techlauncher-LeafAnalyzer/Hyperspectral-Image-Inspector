@@ -32,9 +32,11 @@ For a 2× Super-Resolution result, pass the current original image as
 `reference_source` to `calibrate`. The same 21-row means are cropped to the
 original image's detector columns, then linearly interpolated at high-resolution
 pixel centres and broadcast across the 2× result. This is an approximation:
-the calibration frames were captured at the original resolution. The UI keeps
-separate calibrated results for original and super-resolved images; the shared
-canvas switch selects which one is shown. Changing references clears both.
+the calibration frames were captured at the original resolution. The service
+supports this API, but the GUI deliberately keeps calibration and
+Super-Resolution as separate operations on the raw source. The Visualization
+page offers a raw/calibrated switch, and the shared resolution switch selects
+the independent Super-Resolution result. Changing references clears calibration.
 
 Facility calibration names start with `YYYY-MM-DD--HH-MM-SS` and end in
 `_calibFrame`. When both selected files follow that convention, the GUI orders
@@ -91,8 +93,11 @@ the window closes. Cancellation and failures remove incomplete output.
 - The button becomes Cancel while the worker is active; progress is reported
   in the status bar and other cube readers are paused.
 - Success renders calibrated RGB in `calibrationViewer`; spectrum plotting and
-  File → Save Image use that calibrated result on the Calibration tab.
-- Cropping from any 2D tab, crop undo, and crop redo automatically rebuild an
-  existing calibrated result against the new cumulative source bounds. Loading
-  another source or replacing a reference clears the result until the user runs
-  calibration again. Errors are surfaced without replacing the source cube.
+  File → Save Image use that calibrated result on the Calibration tab. The
+  Visualization page can switch between calibrated and raw low-resolution data.
+- Calibration is disabled while the high-resolution result is selected; switch
+  to low resolution to calibrate the raw image. SR always reads the raw image.
+- Cropping from any 2D tab automatically rebuilds an existing calibrated result
+  against the new cumulative source bounds. Each completed calibration or SR
+  operation clears crop undo/redo history. Loading another source or replacing
+  a reference clears the calibration result. Errors leave the source unchanged.

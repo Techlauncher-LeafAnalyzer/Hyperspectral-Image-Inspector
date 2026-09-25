@@ -88,7 +88,7 @@ def test_canvas_resolution_switches_follow_the_toggle(loaded_window, stub_sr, qt
     assert all(switch.isChecked() for switch in switches)
 
 
-def test_calibration_keeps_separate_low_and_high_results(
+def test_calibration_and_super_resolution_are_exclusive_operations(
     loaded_window, stub_sr, qtbot, file_dialog, tmp_path, dialogs
 ):
     window = loaded_window
@@ -110,30 +110,50 @@ def test_calibration_keeps_separate_low_and_high_results(
     assert low_result is not None
     assert low_result.data.shape == source.shape
 
+    toggle = window._visualization_calibration.toggle
+    assert toggle.isChecked()
+    assert window._visualization_data() is low_result.data
     stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
     assert window._calibration_controller.result is None
+    assert window._visualization_data() is window._super_res_result.data
+    assert not toggle.isChecked()
+    assert toggle.y() > window._resolution_switches.switches[0].y()
+    assert toggle.parent() is window.visualizationStack
+    assert not window.calibrateButton.isEnabled()
     window.calibrateButton.click()
-    qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
-    high_result = window._calibration_controller.result
-    assert high_result is not None
-    assert high_result.data.shape == tuple(2 * size if axis < 2 else size
-                                           for axis, size in enumerate(source.shape))
+    assert not window._calibration_controller.is_running()
     assert not dialogs.critical
 
     window._resolution_switches.switches[1].click()
     assert window._calibration_controller.result is low_result
+    assert window._visualization_data() is low_result.data
     np.testing.assert_array_equal(window.calibrationViewer.rgb, low_result.data.rgb_array)
-    window._resolution_switches.switches[1].click()
-    assert window._calibration_controller.result is high_result
-    np.testing.assert_array_equal(window.calibrationViewer.rgb, high_result.data.rgb_array)
+    toggle.click()
+    assert window._visualization_data() is source
+    toggle.click()
+    assert window._visualization_data() is low_result.data
 
+    window.highResButton.setChecked(True)
+    assert window._visualization_data() is window._super_res_result.data
+    toggle.click()
+    assert window.lowResButton.isChecked()
+    assert window._visualization_data() is low_result.data
+
+
+def test_super_resolution_clears_crop_history(loaded_window, stub_sr, qtbot):
+    window = loaded_window
+    window.viewer.cropRequested.emit(QtCore.QRectF(0, 0, 6, 6))
+    assert window._crop_undo_stack
+    stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
-    assert window._calibration_controller.result is None
+    assert not window._crop_undo_stack
+    assert not window._crop_redo_stack
     window.lowResButton.setChecked(True)
-    assert window._calibration_controller.result is low_result
+    window._undo_crop()
+    assert window._hsi_data.shape[:2] == (6, 6)
 
 
 def test_background_run_comparison_and_export(loaded_window, stub_sr, qtbot, file_dialog, tmp_path):

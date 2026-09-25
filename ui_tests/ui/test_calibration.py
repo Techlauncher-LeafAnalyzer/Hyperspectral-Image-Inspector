@@ -313,8 +313,30 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
     with Image.open(output) as image:
         np.testing.assert_array_equal(np.asarray(image), result.data.rgb_array)
 
+    window.tabWidget.setCurrentWidget(window.Visualization)
+    toggle = window._visualization_calibration.toggle
+    assert toggle.parent() is window.visualizationStack
+    assert not toggle.isHidden() and toggle.isChecked()
+    assert window._visualization_data() is result.data
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
+    np.testing.assert_allclose(
+        received[-1].values, result.data.read_pixel(1, 2), atol=1e-6
+    )
+    file_dialog.save_return = (str(tmp_path / "visualized_calibrated.png"), "")
+    window.actionSaveImage.trigger()
+    with Image.open(tmp_path / "visualized_calibrated.png") as image:
+        np.testing.assert_array_equal(np.asarray(image), window.viewer.rgb)
 
-def test_calibration_tracks_crop_from_any_tab_and_undo_redo(
+    toggle.click()
+    assert window._visualization_data() is window._hsi_data
+    assert not toggle.isChecked()
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
+    np.testing.assert_allclose(
+        received[-1].values, window._hsi_data.read_pixel(1, 2), atol=1e-6
+    )
+
+
+def test_calibration_tracks_crop_from_any_tab_and_clears_history(
     loaded_window, file_dialog, tmp_path, qtbot
 ):
     window = loaded_window
@@ -346,19 +368,14 @@ def test_calibration_tracks_crop_from_any_tab_and_undo_redo(
     np.testing.assert_allclose(
         calibrated.data.read_bands(range(bands)), raw[:6, :6, :], atol=1e-6
     )
+    assert not window._crop_undo_stack
+    assert not window._crop_redo_stack
 
     window._undo_crop()
-    _wait_for_calibration(qtbot, window)
-    calibrated = window._calibration_controller.result
-    assert calibrated is not None
-    assert calibrated.data.shape == raw.shape
-    assert calibrated.source_spatial_bounds == ((0, 8), (0, 8))
-    np.testing.assert_allclose(
-        calibrated.data.read_bands(range(bands)), raw, atol=1e-6
-    )
+    assert window._calibration_controller.result is calibrated
+    assert calibrated.data.shape == (6, 6, bands)
 
-    # Apply a different crop from another page, then exercise both history
-    # directions. All 2D viewers share the same crop signal handler.
+    # Cropping from another page also rebuilds the reference geometry.
     window.viewer.cropRequested.emit(QtCore.QRectF(1, 1, 4, 4))
     _wait_for_calibration(qtbot, window)
     calibrated = window._calibration_controller.result
@@ -368,14 +385,10 @@ def test_calibration_tracks_crop_from_any_tab_and_undo_redo(
     np.testing.assert_allclose(
         calibrated.data.read_bands(range(bands)), raw[1:5, 1:5, :], atol=1e-6
     )
-
+    assert not window._crop_undo_stack
+    assert not window._crop_redo_stack
     window._undo_crop()
-    _wait_for_calibration(qtbot, window)
-    assert window._calibration_controller.result is not None
-    assert window._calibration_controller.result.data.shape == raw.shape
-
     window._redo_crop()
-    _wait_for_calibration(qtbot, window)
-    assert window._calibration_controller.result is not None
-    assert window._calibration_controller.result.data.shape == (4, 4, bands)
+    assert window._calibration_controller.result is calibrated
+    assert window._hsi_data.shape == (4, 4, bands)
     assert window.calibrationViewer.rgb.shape == (4, 4, 3)
