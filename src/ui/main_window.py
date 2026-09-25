@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
 from core import (
+    CalibrationFrameResolver,
+    CalibrationService,
     ClassificationService,
     HSIData,
     HSIError,
@@ -31,9 +33,11 @@ from core import (
     VisualizationService,
     WavelengthError,
 )
+from ui.calibration_controller import CalibrationController
 from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
+from ui.resolution_toggle import ResolutionSwitchGroup
 from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
 from ui.super_resolution_worker import SuperResolutionWorker
@@ -94,7 +98,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._super_res_error: str | None = None
         self._sr_view_scale = 1
         self._viz_view_scale = 1
-        self._high_res_notice_shown = False
+        self._last_resolution_high = False
+        self._viewer_resolution_states: dict[tuple[HSIViewer, bool], tuple] = {}
+        self._restore_resolution_state = False
         self._close_after_sr = False
         self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
@@ -118,17 +124,61 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.unsupervisedClassifyButton,
             self.pushButton_2,
             self.pushButton,
+            self.hyperspectralImageButton,
             self.comboBox,
             self.numOfClassesEdit,
             self.maxIterationsEdit,
             self.lineEdit,
+            self.hyperspectralImageEdit,
             self.actionLoadImage,
             lambda: self._hypercube_controller.stop_and_wait(),
             self,
         )
+        self._calibration_controller = CalibrationController(
+            self._hsi_data,
+            service=CalibrationService(),
+            frame_resolver=CalibrationFrameResolver(),
+            viewer=self.calibrationViewer,
+            statusbar=self.statusbar,
+            dark_button=self.darkFileButton,
+            dark_edit=self.darkFileEdit,
+            bright_button=self.referenceFileButton,
+            bright_edit=self.referenceFileEdit,
+            calibrate_button=self.calibrateButton,
+            load_image_action=self.actionLoadImage,
+            stop_hypercube=lambda: self._hypercube_controller.stop_and_wait(),
+            resume_hypercube=lambda: self._hypercube_controller.resume(
+                self._display_data()
+            ),
+            refresh_source_views=self._push_image_to_viewers,
+            refresh_current_views=self._refresh_viewers_display,
+            fallback_pixel_values=self._pixel_values_at,
+            parent_widget=self,
+            display_data=self._display_data,
+            is_high_resolution=self._is_super_resolution_active,
+        )
         self._classification_controller.readyToClose.connect(self.close)
+        self._calibration_controller.readyToClose.connect(self.close)
+        self._classification_controller.runningChanged.connect(
+            self._on_classification_running_changed
+        )
+        self._calibration_controller.runningChanged.connect(
+            self._on_calibration_running_changed
+        )
         self._configure_tabs()
         self._configure_file_menu()
+        self._resolution_switches = ResolutionSwitchGroup(
+            (
+                (self.visualizationStack, "visualizationResolutionSwitch"),
+                (self.calibrationViewer.viewport(), "calibrationResolutionSwitch"),
+                (self.classificationViewer.viewport(), "classificationResolutionSwitch"),
+            ),
+            self._select_canvas_resolution,
+            self,
+        )
+        self.visualizationStack.currentChanged.connect(
+            lambda _index: self._resolution_switches.raise_switches()
+        )
         self._connect_signals()
         self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
 
@@ -225,8 +275,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _connect_signals(self) -> None:
         self.actionLoadImage.triggered.connect(self._load_image)
         self.actionSaveImage.triggered.connect(self._save_image)
-        self.darkFileButton.clicked.connect(self._select_dark_file)
-        self.referenceFileButton.clicked.connect(self._select_reference_file)
         self.highResButton.toggled.connect(
             self._update_super_resolution_view_state
         )
@@ -236,8 +284,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.highResButton.setToolTip(
             "View the processed result after Super-Resolution"
         )
-        self.calibrateButton.setEnabled(False)
-        self.calibrateButton.setToolTip("Calibration is not implemented yet")
         self.runSuperResButton.clicked.connect(self._run_super_resolution)
         self._set_super_resolution_ready()
         self._update_super_resolution_view_state(self.highResButton.isChecked())
@@ -250,6 +296,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             viewer.meanIndexRequested.connect(self._on_mean_index)
             viewer.pixel_value_provider = self._pixel_values_at
         self.superResViewer.pixel_value_provider = self._sr_pixel_values_at
+        self.calibrationViewer.pixel_value_provider = (
+            self._calibration_controller.pixel_values_at
+        )
         self.classificationViewer.pixel_value_provider = (
             self._classification_pixel_values_at
         )
@@ -283,8 +332,26 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _update_super_resolution_view_state(self, show_processed: bool) -> None:
         if self._super_res_worker is not None:
             return
+        high = self._is_super_resolution_active()
+        self._restore_resolution_state = high != self._last_resolution_high
+        if self._restore_resolution_state:
+            for viewer in self._all_viewers():
+                if viewer is self.superResViewer:
+                    continue
+                state = viewer.get_view_state()
+                size = viewer.photo_size()
+                if state is not None and size is not None:
+                    self._viewer_resolution_states[(viewer, self._last_resolution_high)] = (
+                        size, state
+                    )
+        self._last_resolution_high = high
+        self._calibration_controller.resolution_changed()
+        self._resolution_switches.sync(
+            available=self._super_res_result is not None,
+            high_resolution=high,
+            enabled=True,
+        )
         self._refresh_super_resolution_display()
-        self._update_classification_resolution_label()
         self.superResStatusStack.setCurrentWidget(self.superResIdlePage)
         if not self._hsi_data.is_loaded():
             status = "Load an image to compare the original and processed result"
@@ -302,6 +369,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_result is not None:
             self._refresh_visualization_pipeline()
             self._classification_controller.refresh_display()
+        self._restore_resolution_state = False
 
     def _display_data(self) -> HSIData:
         """Return the dataset every tab should currently render.
@@ -319,15 +387,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         return self.highResButton.isChecked() and self._super_res_result is not None
 
-    def _update_classification_resolution_label(self) -> None:
-        """Tell the Classification tab which resolution it is currently showing."""
-
-        text = (
-            "Viewing: Super-Resolution (high-res)"
-            if self._is_super_resolution_active()
-            else "Viewing: Original (low-res)"
-        )
-        self.classificationResolutionText.setText(text)
+    def _select_canvas_resolution(self, high_resolution: bool) -> None:
+        if high_resolution:
+            self.highResButton.setChecked(True)
+        else:
+            self.lowResButton.setChecked(True)
 
     def _refresh_super_resolution_display(self) -> None:
         previous_size = self.superResViewer.photo_size()
@@ -367,6 +431,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         return {"RGB": PixelValueEntry(value=color, color=color)}
 
     def _run_super_resolution(self) -> None:
+        if self._calibration_controller.is_running():
+            return
+        if self._classification_controller.is_running():
+            return
         if self._super_res_worker is not None:
             self._cancel_super_resolution()
             return
@@ -381,7 +449,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._super_res_error = None
         self.lowResButton.setEnabled(False)
         self.highResButton.setEnabled(False)
+        self._resolution_switches.sync(
+            available=self._super_res_result is not None,
+            high_resolution=self._is_super_resolution_active(),
+            enabled=False,
+        )
         self.actionLoadImage.setEnabled(False)
+        self._calibration_controller.set_external_running(True)
+        self._set_classification_controls_available(False)
         self.runSuperResButton.setText("Cancel")
         self.runSuperResButton.setToolTip("Cancel after the current inference tile")
         self.superResProgressBar.setValue(0)
@@ -449,6 +524,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         # A fresh SR run invalidates any classification made against the
         # previous SR result -- the original-resolution slot is unaffected.
         self._classification_controller.clear_super_resolution_result()
+        self._calibration_controller.clear_super_resolution_result()
         self.highResButton.setChecked(True)
         self._refresh_super_resolution_display()
         self.superResProgressBar.setValue(100)
@@ -466,6 +542,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _finish_super_resolution(self) -> None:
         self._super_res_worker = None
         self._set_super_resolution_ready()
+        self._calibration_controller.set_external_running(False)
+        self._set_classification_controls_available(True)
         self._update_super_resolution_view_state(self.highResButton.isChecked())
         if self._super_res_error:
             self.superResStatusText.setText(self._super_res_error)
@@ -492,9 +570,39 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.superResProgressBar.setValue(0)
         self._set_super_resolution_ready()
         self._update_super_resolution_view_state(False)
+        self._viewer_resolution_states.clear()
+
+    def _set_classification_controls_available(self, available: bool) -> None:
+        self.numOfClassesEdit.setEnabled(available)
+        self.maxIterationsEdit.setEnabled(available)
+        self.pushButton.setEnabled(available)
+        self.comboBox.setEnabled(available)
+        self._classification_controller.set_image_loaded(
+            available and self._hsi_data.is_loaded()
+        )
+
+    @QtCore.pyqtSlot(bool)
+    def _on_classification_running_changed(self, running: bool) -> None:
+        self._calibration_controller.set_external_running(running)
+        if running:
+            self.runSuperResButton.setEnabled(False)
+        else:
+            self._set_super_resolution_ready()
+
+    @QtCore.pyqtSlot(bool)
+    def _on_calibration_running_changed(self, running: bool) -> None:
+        if running:
+            self.runSuperResButton.setEnabled(False)
+            self._set_classification_controls_available(False)
+        else:
+            self._set_super_resolution_ready()
+            self._set_classification_controls_available(True)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._hypercube_controller.shutdown()
+        if self._calibration_controller.request_close():
+            event.ignore()
+            return
         if self._classification_controller.request_close():
             event.ignore()
             return
@@ -511,40 +619,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     # Private: image I/O                                                   #
     # ------------------------------------------------------------------ #
 
-    def _select_dark_file(self) -> None:
-        self._select_supporting_file(
-            self.darkFileEdit,
-            "Open Dark File",
-        )
-
-    def _select_reference_file(self) -> None:
-        self._select_supporting_file(
-            self.referenceFileEdit,
-            "Open Reference File",
-        )
-
-    def _select_supporting_file(
-        self,
-        target_edit: QtWidgets.QLineEdit,
-        dialog_title: str,
-    ) -> None:
-        file_path_str, _ = QFileDialog.getOpenFileName(
-            self,
-            dialog_title,
-            "",
-            (
-                "Supported Images (*.bil *.bip *.bsq *.png *.jpg *.jpeg "
-                "*.tif *.tiff);;All Files (*)"
-            ),
-        )
-        if not file_path_str:
-            return
-
-        file_path = Path(file_path_str)
-        target_edit.setText(str(file_path))
-        target_edit.setToolTip(str(file_path))
-        self.statusbar.showMessage(f"Selected {file_path.name}")
-
     def _load_image(self) -> None:
         if self._super_res_worker is not None:
             return
@@ -560,6 +634,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.load_image_from_path(Path(image_path_str))
 
     def load_image_from_path(self, image_path: Path) -> None:
+        if self._calibration_controller.is_running():
+            self.statusbar.showMessage(
+                "Cancel or finish calibration before loading another image"
+            )
+            return
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Cancel or finish SR before loading another image")
             return
@@ -595,6 +674,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         candidate.mask_array = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
         self._hsi_data.update_from(candidate)
         self._classification_controller.clear_result()
+        calibration_status = self._calibration_controller.source_loaded(
+            self._hsi_data.source_path
+        )
         loaded_path = self._hsi_data.data_path
 
         loaded_file_text = f"File Loaded: {loaded_path}"
@@ -605,12 +687,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.classificationFilePath.setText(loaded_file_text)
         self.classificationFilePath.setToolTip(str(loaded_path))
         self._classification_controller.set_image_loaded(True)
-        self.statusbar.showMessage(f"Loaded {loaded_path.name}")
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
         self._active_visualization_mode = VisualizationMode.RGB
         self.modeRGB.setChecked(True)
         self._push_image_to_viewers()
+        self.statusbar.showMessage(
+            f"Loaded {loaded_path.name}. {calibration_status}",
+            8000,
+        )
 
     def _save_image(self) -> None:
         if not self._hsi_data.is_loaded():
@@ -626,6 +711,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         if classification_rgb is not None:
             display_rgb = classification_rgb
+        calibration_result = self._calibration_controller.result
+        if self._active_viewer is self.calibrationViewer and calibration_result:
+            display_rgb = calibration_result.data.rgb_array
         if self.tabWidget.currentWidget() is self.SuperResolution:
             if self.highResButton.isChecked() and self._super_res_result is None:
                 QMessageBox.information(self, "Nothing to save", "Run Super-Resolution first.")
@@ -704,10 +792,20 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 if viewer is self.classificationViewer
                 else None
             )
+            calibration_result = self._calibration_controller.result
+            use_calibration = viewer is self.calibrationViewer and calibration_result
             use_classification = classification_rgb is not None
-            viewer_display = classification_rgb if use_classification else display_rgb
+            viewer_display = (
+                calibration_result.data.rgb_array
+                if use_calibration
+                else classification_rgb
+                if use_classification
+                else display_rgb
+            )
             viewer_data = (
-                self._classification_controller.display_data
+                calibration_result.data
+                if use_calibration
+                else self._classification_controller.display_data
                 if use_classification
                 else data
             )
@@ -717,13 +815,23 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 viewer_display, viewer_data.roi_mask
             )
             viewer.set_photo(pixmap)
+            saved = (
+                self._viewer_resolution_states.get(
+                    (viewer, self._is_super_resolution_active())
+                )
+                if self._restore_resolution_state
+                else None
+            )
+            if saved is not None and saved[0] == pixmap.size():
+                viewer.queue_view_state(saved[1])
+                continue
             # Restore the previous pan/zoom, rescaled by `factor`, when the
             # image dimensions changed only because of a low/high-res swap
             # (factor==1 covers the unchanged-size case, e.g. switching
             # visualization mode). Otherwise (e.g. after a crop) let
             # set_photo's fresh fit_in_view() stand, so the view actually
             # rescales to the new image size.
-            viewer_factor = 1.0 if use_classification else factor
+            viewer_factor = factor
             if (
                 state is not None
                 and previous_size is not None
@@ -768,6 +876,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _on_spectrum_plot(self, pos: QPointF) -> None:
         if not self._hsi_data.is_loaded():
             return
+        if self._calibration_controller.is_running():
+            self.statusbar.showMessage(
+                "Spectrum reads are unavailable while calibration is running",
+                5000,
+            )
+            return
         if self._classification_controller.is_running():
             self.statusbar.showMessage(
                 "Spectrum reads are unavailable while classification is running",
@@ -778,7 +892,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Spectrum reads are paused during SR")
             return
-        data = self._display_data()
+        calibration_result = self._calibration_controller.result
+        data = (
+            calibration_result.data
+            if self.sender() is self.calibrationViewer and calibration_result
+            else self._display_data()
+        )
         if self.sender() is self.superResViewer and not self.superResViewer.has_photo():
             return
         row, column = int(pos.y()), int(pos.x())
@@ -837,6 +956,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         Shared by the rectangle and polygon paths; both invalidate the same
         downstream state, so both are subject to the same guards.
         """
+        if self._calibration_controller.is_running():
+            self.statusbar.showMessage("Cancel or finish calibration before cropping")
+            return True
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Cancel or finish SR before cropping")
             return True
@@ -866,7 +988,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
 
         self._classification_controller.clear_result()
-        self._push_image_to_viewers()
+        self._calibration_controller.source_geometry_changed()
         self.statusbar.showMessage(
             f"{label} to {cropped_size[0]}x{cropped_size[1]}"
         )
@@ -923,6 +1045,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         """
         if viewer is self.superResViewer:
             return self._sr_view_scale
+        if viewer is self.calibrationViewer and self._calibration_controller.result:
+            return 2 if self._is_super_resolution_active() else 1
         return self._viz_view_scale
 
     def _on_tab_changed(self, index: int) -> None:
@@ -937,20 +1061,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 target_scale = self._resolution_scale_for(new_viewer)
                 factor = target_scale / source_scale
                 new_viewer.queue_view_state((state[0] / factor, state[1] * factor))
-
-        if (
-            not self._high_res_notice_shown
-            and self.tabWidget.widget(index) is self.Visualization
-            and self.highResButton.isChecked()
-            and self._super_res_result is not None
-        ):
-            self._high_res_notice_shown = True
-            QMessageBox.information(
-                self,
-                "Viewing Super-Resolution image",
-                "Visualization is now showing the Super-Resolution (high-res) "
-                "result instead of the original image.",
-            )
 
         self._active_viewer = new_viewer
 
@@ -968,11 +1078,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data.spectral_obj = snapshot.spectral_obj
         self._hsi_data.roi_mask     = snapshot.roi_mask
         self._classification_controller.clear_result()
-        self._push_image_to_viewers()
+        self._calibration_controller.source_geometry_changed()
 
     def _undo_crop(self) -> None:
         if (
             self._super_res_worker is not None
+            or self._calibration_controller.is_running()
             or self._classification_controller.is_running()
             or not self._crop_undo_stack
         ):
@@ -984,6 +1095,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _redo_crop(self) -> None:
         if (
             self._super_res_worker is not None
+            or self._calibration_controller.is_running()
             or self._classification_controller.is_running()
             or not self._crop_redo_stack
         ):

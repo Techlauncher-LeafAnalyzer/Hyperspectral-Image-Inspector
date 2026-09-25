@@ -404,7 +404,7 @@
           <item row="1" column="0">
            <widget class="QPushButton" name="referenceFileButton">
             <property name="text">
-             <string>Reference File</string>
+             <string>Bright File</string>
             </property>
            </widget>
           </item>
@@ -414,7 +414,7 @@
              <bool>true</bool>
             </property>
             <property name="placeholderText">
-             <string>Select white reference file</string>
+             <string>Select bright calibration file</string>
             </property>
            </widget>
           </item>
@@ -693,16 +693,6 @@
             </widget>
            </item>
           </layout>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLabel" name="classificationResolutionText">
-          <property name="text">
-           <string>Viewing: Original (low-res)</string>
-          </property>
-          <property name="statusMessage" stdset="0">
-           <bool>true</bool>
-          </property>
          </widget>
         </item>
        </layout>

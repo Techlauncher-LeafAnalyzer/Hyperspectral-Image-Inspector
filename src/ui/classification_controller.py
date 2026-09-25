@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from threading import Event
+from pathlib import Path
 from typing import Callable, Optional, Union
 
 import numpy as np
@@ -177,6 +178,7 @@ class ClassificationController(QObject):
     """
 
     readyToClose = QtCore.pyqtSignal()
+    runningChanged = QtCore.pyqtSignal(bool)
 
     def __init__(
         self,
@@ -190,10 +192,12 @@ class ClassificationController(QObject):
         unsupervised_button: QtWidgets.QPushButton,
         supervised_button: QtWidgets.QPushButton,
         groundtruth_button: QtWidgets.QPushButton,
+        hyperspectral_button: QtWidgets.QPushButton,
         classifier_combo: QtWidgets.QComboBox,
         num_classes_edit: QtWidgets.QLineEdit,
         max_iterations_edit: QtWidgets.QLineEdit,
         groundtruth_path_edit: QtWidgets.QLineEdit,
+        hyperspectral_path_edit: QtWidgets.QLineEdit,
         load_image_action: QtGui.QAction,
         stop_hypercube: Callable[[], None],
         parent_widget: QtWidgets.QWidget,
@@ -209,10 +213,12 @@ class ClassificationController(QObject):
         self._unsupervised_button = unsupervised_button
         self._supervised_button = supervised_button
         self._groundtruth_button = groundtruth_button
+        self._hyperspectral_button = hyperspectral_button
         self._classifier_combo = classifier_combo
         self._num_classes_edit = num_classes_edit
         self._max_iterations_edit = max_iterations_edit
         self._groundtruth_path_edit = groundtruth_path_edit
+        self._hyperspectral_path_edit = hyperspectral_path_edit
         self._load_image_action = load_image_action
         self._stop_hypercube = stop_hypercube
         self._parent = parent_widget
@@ -233,6 +239,8 @@ class ClassificationController(QObject):
         ] = None
         self._active_button: Optional[QtWidgets.QPushButton] = None
         self._training_pair: Optional[TrainingFilePair] = None
+        self._training_mask_path: Optional[Path] = None
+        self._training_cube_path: Optional[Path] = None
         self._close_after_classification = False
 
         self._configure_controls()
@@ -279,7 +287,8 @@ class ClassificationController(QObject):
             and 0 <= column < result.class_map.shape[1]
         ):
             return None
-        return int(result.class_map[row, column])
+        class_id = int(result.class_map[row, column])
+        return class_id if class_id >= 0 else None
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.isRunning()
@@ -353,6 +362,7 @@ class ClassificationController(QObject):
 
     def _configure_controls(self) -> None:
         self._groundtruth_button.clicked.connect(self._on_select_groundtruth_clicked)
+        self._hyperspectral_button.clicked.connect(self._on_select_hyperspectral_clicked)
         self._supervised_button.clicked.connect(self._on_supervised_classify_clicked)
         self._unsupervised_button.clicked.connect(self._on_unsupervised_classify_clicked)
         self._layer_panel.visibilityChanged.connect(self._on_layer_visibility_changed)
@@ -388,6 +398,12 @@ class ClassificationController(QObject):
         self._groundtruth_path_edit.setPlaceholderText(
             "Select mask; matching cube is detected automatically"
         )
+        self._hyperspectral_button.setToolTip(
+            "Choose a training cube manually if automatic pairing is missing or wrong"
+        )
+        self._hyperspectral_path_edit.setPlaceholderText(
+            "Paired automatically, or select a hyperspectral image"
+        )
 
     # ------------------------------------------------------------------ #
     # Private: ground-truth file selection                                #
@@ -414,24 +430,90 @@ class ClassificationController(QObject):
             return
 
         try:
-            pair = self._training_pair_resolver.resolve(mask_path_str)
+            mask_path = self._training_pair_resolver.validate_mask_path(mask_path_str)
         except ClassificationError as exc:
-            self._training_pair = None
-            self._groundtruth_path_edit.clear()
-            self._groundtruth_path_edit.setToolTip("")
-            QMessageBox.critical(self._parent, "Invalid training-file pair", str(exc))
-            self._statusbar.showMessage("Training-file pairing failed", 8000)
+            QMessageBox.critical(self._parent, "Invalid ground-truth mask", str(exc))
             return
 
+        preselected_cube = (
+            self._training_cube_path if self._training_mask_path is None else None
+        )
+        self._training_mask_path = mask_path
+        self._groundtruth_path_edit.setText(str(mask_path))
+        self._groundtruth_path_edit.setToolTip(str(mask_path))
+        if preselected_cube is not None:
+            try:
+                pair = self._training_pair_resolver.resolve_manual(
+                    mask_path, preselected_cube
+                )
+            except ClassificationError:
+                self._set_training_cube(None)
+            else:
+                self._set_training_cube(pair.cube_path, pair=pair)
+                self._statusbar.showMessage(
+                    f"Using manually selected training cube {pair.cube_path.name}",
+                    8000,
+                )
+                return
+        try:
+            pair = self._training_pair_resolver.resolve(mask_path)
+        except ClassificationError:
+            self._set_training_cube(None)
+            self._statusbar.showMessage(
+                "No matching hyperspectral image found; select one manually",
+                8000,
+            )
+        else:
+            self._set_training_cube(pair.cube_path, pair=pair)
+            self._statusbar.showMessage(
+                f"Training mask paired with {pair.cube_path.name}", 8000
+            )
+
+    def _on_select_hyperspectral_clicked(self) -> None:
+        if self.is_running():
+            QMessageBox.information(
+                self._parent,
+                "Classification in progress",
+                "Cancel the current classification before changing training data.",
+            )
+            return
+        cube_path_str, _ = QFileDialog.getOpenFileName(
+            self._parent,
+            "Open Training Hyperspectral Image",
+            "",
+            (
+                "Hyperspectral Images (*.hdr *.bil *.bip *.bsq *.dat *.img *.raw);;"
+                "All Files (*)"
+            ),
+        )
+        if not cube_path_str:
+            return
+        try:
+            if self._training_mask_path is None:
+                pair = None
+                cube_path = self._training_pair_resolver.validate_cube_path(cube_path_str)
+            else:
+                pair = self._training_pair_resolver.resolve_manual(
+                    self._training_mask_path, cube_path_str
+                )
+                cube_path = pair.cube_path
+        except ClassificationError as exc:
+            QMessageBox.critical(self._parent, "Invalid hyperspectral image", str(exc))
+            return
+        self._set_training_cube(cube_path, pair=pair)
+        if pair is None:
+            message = "Training cube selected; choose a ground-truth mask"
+        else:
+            message = f"Using manually selected training cube {cube_path.name}"
+        self._statusbar.showMessage(message, 8000)
+
+    def _set_training_cube(
+        self, cube_path: Path | None, *, pair: TrainingFilePair | None = None
+    ) -> None:
+        self._training_cube_path = cube_path
         self._training_pair = pair
-        self._groundtruth_path_edit.setText(str(pair.mask_path))
-        self._groundtruth_path_edit.setToolTip(
-            f"Mask: {pair.mask_path}\nHyperspectral cube: {pair.cube_path}"
-        )
-        self._statusbar.showMessage(
-            f"Training mask paired with {pair.cube_path.name}",
-            8000,
-        )
+        self._hyperspectral_path_edit.setText(str(cube_path) if cube_path else "")
+        self._hyperspectral_path_edit.setToolTip(str(cube_path) if cube_path else "")
 
     # ------------------------------------------------------------------ #
     # Private: unsupervised / supervised classification                   #
@@ -487,15 +569,13 @@ class ClassificationController(QObject):
             QMessageBox.information(self._parent, "Nothing to classify", "Load an image first.")
             return
         if self._training_pair is None:
-            QMessageBox.critical(
-                self._parent,
-                "Training mask required",
-                (
-                    "Select a ground-truth mask first. The program will look beside "
-                    "it for a same-base hyperspectral cube or an "
-                    "_hyperspectral cube pair."
-                ),
-            )
+            if self._training_mask_path is None:
+                title = "Training mask required"
+                message = "Select a ground-truth mask first."
+            else:
+                title = "Training hyperspectral image required"
+                message = "Select the hyperspectral image paired with this mask."
+            QMessageBox.critical(self._parent, title, message)
             return
         classifier = self._classifier_combo.currentData()
         if not isinstance(classifier, SupervisedClassifierType):
@@ -591,6 +671,7 @@ class ClassificationController(QObject):
         self._num_classes_edit.setEnabled(False)
         self._max_iterations_edit.setEnabled(False)
         self._groundtruth_button.setEnabled(False)
+        self._hyperspectral_button.setEnabled(False)
         self._classifier_combo.setEnabled(False)
         self._load_image_action.setEnabled(False)
         self._unsupervised_button.setEnabled(active_button is self._unsupervised_button)
@@ -600,6 +681,7 @@ class ClassificationController(QObject):
             "Request cancellation after the current classification stage"
         )
         self._statusbar.showMessage(starting_message)
+        self.runningChanged.emit(True)
         thread.start()
 
     @QtCore.pyqtSlot(int, str)
@@ -661,6 +743,7 @@ class ClassificationController(QObject):
         self._num_classes_edit.setEnabled(True)
         self._max_iterations_edit.setEnabled(True)
         self._groundtruth_button.setEnabled(True)
+        self._hyperspectral_button.setEnabled(True)
         self._classifier_combo.setEnabled(True)
         self._load_image_action.setEnabled(True)
         loaded = self._display_data_provider().is_loaded()
@@ -672,7 +755,7 @@ class ClassificationController(QObject):
             "Group pixels by spectral similarity with K-means"
         )
         self._supervised_button.setToolTip(
-            "Classify from the selected reference mask and paired cube"
+            "Classify from the selected ground-truth mask and training cube"
         )
 
     @QtCore.pyqtSlot()
@@ -680,6 +763,7 @@ class ClassificationController(QObject):
         self._worker = None
         self._thread = None
         self._active_button = None
+        self.runningChanged.emit(False)
         if self._close_after_classification:
             self._close_after_classification = False
             QtCore.QTimer.singleShot(0, self.readyToClose.emit)
@@ -757,7 +841,13 @@ class ClassificationController(QObject):
         if composite_rgb is None:
             return
         state = self._viewer.get_view_state()
-        self._viewer.set_photo(hsi_utils.numpy_to_qpixmap(composite_rgb))
+        active_data = self._current_slot.active_data
+        self._viewer.set_photo(
+            hsi_utils.numpy_to_qpixmap(
+                composite_rgb,
+                active_data.roi_mask if active_data is not None else None,
+            )
+        )
         if state is not None:
             self._viewer.queue_view_state(state)
 

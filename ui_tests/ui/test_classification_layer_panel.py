@@ -81,20 +81,24 @@ def _make_controller(qtbot):
     unsupervised_button = QPushButton()
     supervised_button = QPushButton()
     groundtruth_button = QPushButton()
+    hyperspectral_button = QPushButton()
     classifier_combo = QComboBox()
     num_classes_edit = QLineEdit()
     max_iterations_edit = QLineEdit()
     groundtruth_path_edit = QLineEdit()
+    hyperspectral_path_edit = QLineEdit()
     parent = QWidget()
     qtbot.addWidget(parent)
     for widget in (
         unsupervised_button,
         supervised_button,
         groundtruth_button,
+        hyperspectral_button,
         classifier_combo,
         num_classes_edit,
         max_iterations_edit,
         groundtruth_path_edit,
+        hyperspectral_path_edit,
     ):
         qtbot.addWidget(widget)
     load_image_action = QAction(parent)
@@ -111,10 +115,12 @@ def _make_controller(qtbot):
         unsupervised_button,
         supervised_button,
         groundtruth_button,
+        hyperspectral_button,
         classifier_combo,
         num_classes_edit,
         max_iterations_edit,
         groundtruth_path_edit,
+        hyperspectral_path_edit,
         load_image_action,
         lambda: None,
         parent,
