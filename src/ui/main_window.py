@@ -98,9 +98,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._super_res_error: str | None = None
         self._sr_view_scale = 1
         self._viz_view_scale = 1
-        self._last_resolution_high = False
-        self._viewer_resolution_states: dict[tuple[HSIViewer, bool], tuple] = {}
-        self._restore_resolution_state = False
         self._close_after_sr = False
         self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
@@ -170,14 +167,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._resolution_switches = ResolutionSwitchGroup(
             (
                 (self.visualizationStack, "visualizationResolutionSwitch"),
-                (self.calibrationViewer.viewport(), "calibrationResolutionSwitch"),
-                (self.classificationViewer.viewport(), "classificationResolutionSwitch"),
+                (self.calibrationViewer, "calibrationResolutionSwitch"),
+                (self.classificationViewer, "classificationResolutionSwitch"),
             ),
             self._select_canvas_resolution,
             self,
         )
         self.visualizationStack.currentChanged.connect(
-            lambda _index: self._resolution_switches.raise_switches()
+            lambda _index: self._resolution_switches.schedule_raise()
         )
         self._connect_signals()
         self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
@@ -333,18 +330,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             return
         high = self._is_super_resolution_active()
-        self._restore_resolution_state = high != self._last_resolution_high
-        if self._restore_resolution_state:
-            for viewer in self._all_viewers():
-                if viewer is self.superResViewer:
-                    continue
-                state = viewer.get_view_state()
-                size = viewer.photo_size()
-                if state is not None and size is not None:
-                    self._viewer_resolution_states[(viewer, self._last_resolution_high)] = (
-                        size, state
-                    )
-        self._last_resolution_high = high
         self._calibration_controller.resolution_changed()
         self._resolution_switches.sync(
             available=self._super_res_result is not None,
@@ -369,7 +354,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_result is not None:
             self._refresh_visualization_pipeline()
             self._classification_controller.refresh_display()
-        self._restore_resolution_state = False
 
     def _display_data(self) -> HSIData:
         """Return the dataset every tab should currently render.
@@ -570,7 +554,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.superResProgressBar.setValue(0)
         self._set_super_resolution_ready()
         self._update_super_resolution_view_state(False)
-        self._viewer_resolution_states.clear()
 
     def _set_classification_controls_available(self, available: bool) -> None:
         self.numOfClassesEdit.setEnabled(available)
@@ -815,16 +798,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 viewer_display, viewer_data.roi_mask
             )
             viewer.set_photo(pixmap)
-            saved = (
-                self._viewer_resolution_states.get(
-                    (viewer, self._is_super_resolution_active())
-                )
-                if self._restore_resolution_state
-                else None
-            )
-            if saved is not None and saved[0] == pixmap.size():
-                viewer.queue_view_state(saved[1])
-                continue
             # Restore the previous pan/zoom, rescaled by `factor`, when the
             # image dimensions changed only because of a low/high-res swap
             # (factor==1 covers the unchanged-size case, e.g. switching
@@ -1050,6 +1023,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         return self._viz_view_scale
 
     def _on_tab_changed(self, index: int) -> None:
+        self._resolution_switches.schedule_raise()
         new_viewer = self._viewer_for_tab(index)
         if new_viewer is None:
             return

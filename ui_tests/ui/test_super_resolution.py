@@ -324,7 +324,9 @@ def test_sr_comparison_preserves_framing_when_toggling_resolution(loaded_window,
     assert window.superResViewer.get_view_state()[0] == pytest.approx(4.0)
 
 
-def test_visualization_view_remembers_framing_for_each_resolution(loaded_window, stub_sr, qtbot):
+def test_visualization_view_maps_framing_between_resolutions(
+    loaded_window, stub_sr, qtbot, monkeypatch
+):
     window = loaded_window
     stub_sr.release.set()
     window.runSuperResButton.click()
@@ -333,16 +335,75 @@ def test_visualization_view_remembers_framing_for_each_resolution(loaded_window,
     window.show()
     qtbot.waitExposed(window)
     qtbot.wait(50)
+    captured = []
+    original_queue = window.viewer.queue_view_state
+
+    def record_view_state(state):
+        captured.append(state)
+        original_queue(state)
+
+    monkeypatch.setattr(window.viewer, "queue_view_state", record_view_state)
     window.viewer.set_view_state((2.5, QtCore.QPointF(8, 8)))
+    high_state = window.viewer.get_view_state()
     window.lowResButton.setChecked(True)
     qtbot.wait(50)
+    assert window.viewer.get_view_state()[0] == pytest.approx(5.0)
+    assert captured[-1][0] == pytest.approx(5.0)
+    assert captured[-1][1].x() == pytest.approx(high_state[1].x() / 2)
+    assert captured[-1][1].y() == pytest.approx(high_state[1].y() / 2)
     window.viewer.set_view_state((4.0, QtCore.QPointF(4, 4)))
+    low_state = window.viewer.get_view_state()
     window.highResButton.setChecked(True)
     qtbot.wait(50)
-    assert window.viewer.get_view_state()[0] == pytest.approx(2.5)
+    assert window.viewer.get_view_state()[0] == pytest.approx(2.0)
+    assert captured[-1][0] == pytest.approx(2.0)
+    assert captured[-1][1].x() == pytest.approx(low_state[1].x() * 2)
+    assert captured[-1][1].y() == pytest.approx(low_state[1].y() * 2)
     window.lowResButton.setChecked(True)
     qtbot.wait(50)
     assert window.viewer.get_view_state()[0] == pytest.approx(4.0)
+
+
+def test_canvas_switches_stay_fixed_and_above_each_page(
+    loaded_window, stub_sr, qtbot
+):
+    window = loaded_window
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    cases = (
+        (window.Visualization, window.visualizationStack, 0),
+        (window.Calibration, window.calibrationViewer, 1),
+        (window.Classification, window.classificationViewer, 2),
+    )
+    for page, canvas, index in cases:
+        window.tabWidget.setCurrentWidget(page)
+        qtbot.wait(30)
+        switch = window._resolution_switches.switches[index]
+        assert switch.parentWidget() is canvas
+        assert switch.pos() == QtCore.QPoint(12, 12)
+        assert switch.isVisible()
+        assert canvas.childAt(switch.geometry().center()) is switch
+
+    window.resize(1100, 820)
+    window._refresh_viewers_display()
+    qtbot.wait(30)
+    for page, canvas, index in cases:
+        window.tabWidget.setCurrentWidget(page)
+        qtbot.wait(30)
+        switch = window._resolution_switches.switches[index]
+        assert switch.pos() == QtCore.QPoint(12, 12)
+        assert canvas.childAt(switch.geometry().center()) is switch
+
+    window.tabWidget.setCurrentWidget(window.Visualization)
+    window.modeHyperCube.setChecked(True)
+    qtbot.wait(30)
+    switch = window._resolution_switches.switches[0]
+    assert switch.pos() == QtCore.QPoint(12, 12)
+    assert window.visualizationStack.childAt(switch.geometry().center()) is switch
 
 
 def test_high_res_switch_shown_without_notice_when_switching_to_visualization(loaded_window, stub_sr, qtbot, dialogs):
