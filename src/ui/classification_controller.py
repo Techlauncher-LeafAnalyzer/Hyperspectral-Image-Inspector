@@ -366,12 +366,17 @@ class ClassificationController(QObject):
         self._num_classes_edit.setText("5")
         self._max_iterations_edit.setText("20")
 
-        # Keep the View's existing selector driven by the Model enum. Storing
-        # the enum as item data means the Controller does not depend on the
-        # user-visible label when it builds a classification request.
+        # Keep the selector driven by the Model enum while using readable
+        # labels in the UI. Classification requests still use the item data.
         self._classifier_combo.clear()
+        classifier_labels = {
+            SupervisedClassifierType.GAUSSIAN: "Gaussian",
+            SupervisedClassifierType.MAHALANOBIS: "Mahalanobis distance",
+        }
         for classifier in SupervisedClassifierType:
-            self._classifier_combo.addItem(classifier.value, classifier)
+            self._classifier_combo.addItem(
+                classifier_labels.get(classifier, classifier.value), classifier
+            )
         self._classifier_combo.setToolTip(
             "Choose the Spectral Python classifier used for one-example transfer"
         )

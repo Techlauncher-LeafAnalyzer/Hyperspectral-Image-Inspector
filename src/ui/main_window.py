@@ -38,6 +38,7 @@ from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
 from ui.super_resolution_worker import SuperResolutionWorker
 from ui.tab_transition.handler import TabTransitionHandler
+from ui.theme import CLASSIFIER_POPUP_QSS
 from ui.viewer import HSIViewer, PixelValueEntry
 
 
@@ -82,6 +83,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.setupUi(self)
+        # Qt renders the combo popup in a separate window, so style its view directly.
+        self.comboBox.view().setStyleSheet(CLASSIFIER_POPUP_QSS)
 
         self._hsi_data = HSIData()
         self._hsi_reader = HSIReader()
