@@ -685,8 +685,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             QMessageBox.information(self, "Nothing to save", "Load an image first.")
             return
 
-        result = self._visualization_results.get(self._active_visualization_mode)
-        display_rgb = result.display_rgb if result is not None else self._display_data().rgb_array
+        rgb_result = self._visualization_results.get(VisualizationMode.RGB)
+        display_rgb = (
+            rgb_result.display_rgb
+            if rgb_result is not None
+            else self._display_data().rgb_array
+        )
+        if self.tabWidget.currentWidget() is self.Visualization:
+            result = self._visualization_results.get(self._active_visualization_mode)
+            if result is not None:
+                display_rgb = result.display_rgb
         classification_rgb = (
             self._classification_controller.composited_rgb()
             if self._active_viewer is self.classificationViewer
@@ -763,6 +771,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         data = self._display_data()
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else data.rgb_array
+        rgb_result = self._visualization_results.get(VisualizationMode.RGB)
+        rgb_display = rgb_result.display_rgb if rgb_result is not None else data.rgb_array
         new_scale = 2 if data is not self._hsi_data else 1
         factor = new_scale / self._viz_view_scale
         for viewer in self._all_viewers():
@@ -778,13 +788,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             calibration_result = self._calibration_controller.result
             use_calibration = viewer is self.calibrationViewer and calibration_result
             use_classification = classification_rgb is not None
-            viewer_display = (
-                calibration_result.data.rgb_array
-                if use_calibration
-                else classification_rgb
-                if use_classification
-                else display_rgb
-            )
+            if use_calibration:
+                viewer_display = calibration_result.data.rgb_array
+            elif use_classification:
+                viewer_display = classification_rgb
+            elif viewer is self.viewer:
+                viewer_display = display_rgb
+            else:
+                viewer_display = rgb_display
             viewer_data = (
                 calibration_result.data
                 if use_calibration
