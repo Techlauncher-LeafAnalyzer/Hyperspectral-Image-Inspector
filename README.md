@@ -18,6 +18,12 @@ through a cancellable Calibration-tab worker without modifying the source.
 Nearby earlier `_calibFrame` pairs are selected automatically on source load,
 with manual Dark/Bright replacement always available.
 
+The top-right application header shows system-wide CPU usage as a percentage
+and this program's resident RAM in MB, updated once per second on every page.
+Hover over RAM to compare program usage with system-wide used/total memory
+in MB (1 MB = 1,000,000 bytes). CPU includes other applications; the RAM label
+measures only the inspector's process.
+
 Controllers should depend on the public Model surface:
 
 ```python
