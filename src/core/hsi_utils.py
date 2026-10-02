@@ -8,6 +8,7 @@ format/wavelength behavior so the two code paths cannot drift apart.
 from __future__ import annotations
 
 from hashlib import sha256
+import json
 from pathlib import Path
 import tempfile
 from typing import Any, Mapping, Optional, Sequence
@@ -205,6 +206,56 @@ def adapt_psi_header(header_path: Path) -> Path:
         raise HSIHeaderError(
             f"Could not prepare a temporary ENVI adapter for {source.name}: {exc}"
         ) from exc
+
+
+def adapt_json_header(metadata_path: Path) -> Path:
+    """Adapt Specim ``bil_hdr`` or flat ENVI JSON metadata, without source writes.
+
+    Frame IDs/timestamps are not pixel data and are deliberately ignored.
+    Only same-stem binary cubes are paired by HSIReader.
+    """
+    from spectral.io import envi
+
+    source = Path(metadata_path)
+    try:
+        raw = source.read_bytes()
+        document = json.loads(raw.decode("utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise HSIHeaderError(f"JSON metadata is unreadable or malformed: {source.name}") from exc
+    if not isinstance(document, dict):
+        raise HSIHeaderError(f"JSON metadata must be an object: {source.name}")
+    metadata = document.get("bil_hdr", document)
+    if not isinstance(metadata, dict):
+        raise HSIHeaderError(f"JSON 'bil_hdr' must be a metadata object: {source.name}")
+    metadata = {key.casefold(): value for key, value in metadata.items()}
+    required = ("samples", "lines", "bands", "data type", "interleave", "wavelength")
+    missing = [key for key in required if key not in metadata]
+    if missing:
+        raise HSIHeaderError(
+            f"JSON metadata is missing {', '.join(missing)}: {source.name}. "
+            "Use an ENVI metadata object or a Specim JSON containing 'bil_hdr'."
+        )
+    try:
+        for key in ("samples", "lines", "bands"):
+            if int(metadata[key]) <= 0:
+                raise ValueError(f"{key} must be positive")
+        if int(metadata.get("header offset", 0)) < 0:
+            raise ValueError("header offset must be nonnegative")
+        int(metadata["data type"])
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HSIHeaderError(f"JSON dimensions/data type/offset are invalid: {source.name}") from exc
+    if str(metadata["interleave"]).casefold() not in {"bil", "bip", "bsq"}:
+        raise HSIHeaderError(f"Unsupported JSON interleave: {metadata['interleave']!r}")
+    digest = sha256(raw).hexdigest()[:16]
+    output = (Path(tempfile.gettempdir()) / "hyperspectral_image_inspector"
+              / "envi_headers" / f"{source.stem}-json-{digest}.hdr")
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if not output.exists():
+            envi.write_envi_header(str(output), metadata)
+    except (OSError, TypeError, ValueError) as exc:
+        raise HSIHeaderError(f"Could not prepare an ENVI adapter for {source.name}: {exc}") from exc
+    return output
 
 
 def numpy_to_qpixmap(

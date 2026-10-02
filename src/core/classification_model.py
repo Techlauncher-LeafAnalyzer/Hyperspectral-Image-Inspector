@@ -22,13 +22,14 @@ from spectral import (
     kmeans as spy_kmeans,
 )
 
-from .errors import CancelledError, ClassificationError
+from .errors import CancelledError, ClassificationError, HSIFileError
 from .hsi_data import HSIData
+from .hsi_reader import DATA_EXTENSIONS, METADATA_EXTENSIONS, HSIReader
 
 
 ProgressCallback = Callable[[int, str], None]
 CancellationCheck = Callable[[], bool]
-SUPPORTED_CUBE_EXTENSIONS = (".bil", ".bip", ".bsq", ".dat", ".img", ".raw")
+SUPPORTED_CUBE_EXTENSIONS = DATA_EXTENSIONS
 SUPPORTED_MASK_EXTENSIONS = (".png", ".tif", ".tiff", ".bmp", ".jpg", ".jpeg")
 
 
@@ -58,7 +59,7 @@ class TrainingPairResolver:
     - ``image_XXX_mask.png`` with ``image_XXX.bil`` (mask suffix removed)
     - ``image_XXX_mask.png`` with ``image_XXX_hyperspectral.bil``
 
-    The cube data file must have a same-stem ``.hdr`` beside it. Resolution is
+    The cube data file must have same-stem ``.hdr`` or ``.json`` metadata. Resolution is
     case-insensitive and never searches outside the selected mask directory.
     """
 
@@ -75,36 +76,22 @@ class TrainingPairResolver:
 
     @staticmethod
     def validate_cube_path(cube_path: str | Path) -> Path:
-        """Return the data file for a manually selected header or cube file."""
+        """Validate a selected metadata/cube pair without reading pixels.
+
+        Native .hdr selections normalize to their binary cube; explicit JSON
+        selections retain that metadata path so the worker uses the same header.
+        """
 
         selected = Path(cube_path).expanduser().resolve()
         if not selected.is_file():
             raise ClassificationError(f"Hyperspectral image does not exist: {selected}")
-        files = {path.name.casefold(): path for path in selected.parent.iterdir() if path.is_file()}
-        suffix = selected.suffix.casefold()
-        if suffix == ".hdr":
-            data = next(
-                (
-                    files.get(f"{selected.stem}{extension}".casefold())
-                    for extension in SUPPORTED_CUBE_EXTENSIONS
-                    if files.get(f"{selected.stem}{extension}".casefold()) is not None
-                ),
-                None,
-            )
-            if data is None:
-                raise ClassificationError(
-                    f"No hyperspectral data file is paired with {selected.name}."
-                )
-            return data
-        if suffix not in SUPPORTED_CUBE_EXTENSIONS:
-            raise ClassificationError(
-                "Hyperspectral image must be an .hdr file or supported data file."
-            )
-        if files.get(f"{selected.stem}.hdr".casefold()) is None:
-            raise ClassificationError(
-                f"Paired .hdr file is missing for {selected.name}."
-            )
-        return selected
+        try:
+            _header, data = HSIReader.resolve_pair(selected)
+        except HSIFileError as exc:
+            raise ClassificationError(str(exc)) from exc
+        # Keep explicitly selected JSON metadata rather than silently substituting
+        # an adjacent .hdr when the training worker opens the selected capture.
+        return selected if selected.suffix.casefold() == ".json" else data
 
     def resolve_manual(
         self, mask_path: str | Path, cube_path: str | Path
@@ -143,7 +130,9 @@ class TrainingPairResolver:
         }
         incomplete: list[str] = []
         for candidate_stem, convention in candidates:
-            header = directory_files.get(f"{candidate_stem}.hdr".casefold())
+            header = next((directory_files[f"{candidate_stem}{ext}".casefold()]
+                           for ext in METADATA_EXTENSIONS
+                           if f"{candidate_stem}{ext}".casefold() in directory_files), None)
             data = next(
                 (
                     directory_files.get(
@@ -160,11 +149,11 @@ class TrainingPairResolver:
             if header is not None and data is not None:
                 return TrainingFilePair(mask, data, convention)
             if header is not None or data is not None:
-                missing = "data file" if data is None else ".hdr file"
+                missing = "data file" if data is None else ".hdr/.json metadata file"
                 incomplete.append(f"{candidate_stem}: missing {missing}")
 
         expected = (
-            f"{base_stem}.hdr plus {base_stem}.bil (or another supported "
+            f"{base_stem}.hdr (or .json) plus {base_stem}.bil (or another supported "
             f"cube extension), or {base_stem}_hyperspectral.hdr plus "
             f"{base_stem}_hyperspectral.bil"
         )

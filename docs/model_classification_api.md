@@ -115,7 +115,7 @@ same directory for a header/data pair using these conventions:
   `image_XXX_hyperspectral.bil`.
 
 The data extension may also be `.bip`, `.bsq`, `.dat`, `.img`, or `.raw`. A
-same-stem `.hdr` is always required. Pair resolution is case-insensitive and
+same-stem `.hdr` or supported `.json` metadata is required. Pair resolution is case-insensitive and
 never searches outside the mask directory. The Controller catches
 `ClassificationError` and shows the expected names when no complete pair is
 found.

@@ -38,7 +38,9 @@ def stub_sr(loaded_window, monkeypatch):
 
     service = loaded_window._super_resolution_service
     monkeypatch.setattr(service, "validate", lambda *args: None)
+    monkeypatch.setattr(service, "compatibility_error", lambda *args: None)
     monkeypatch.setattr(service, "run", run)
+    loaded_window._set_super_resolution_ready()
     yield control
     control.release.set()
 
@@ -47,11 +49,14 @@ def finish(qtbot, window):
     qtbot.waitUntil(lambda: window._super_res_worker is None, timeout=30000)
 
 
-def test_run_requires_input_and_rejects_wrong_bands(window, synthetic_cube_path, dialogs):
+def test_run_disabled_for_missing_input_or_incompatible_camera(window, synthetic_cube_path, dialogs):
     assert not window.runSuperResButton.isEnabled()
     window.load_image_from_path(synthetic_cube_path)
     window.runSuperResButton.click()
-    assert "exactly 480" in dialogs.critical[-1][-1]
+    assert not window.runSuperResButton.isEnabled()
+    assert "incompatible" in window.runSuperResButton.text()
+    assert "exactly 480" in window.runSuperResButton.toolTip()
+    assert not dialogs.critical
     assert window._super_res_worker is None
 
 

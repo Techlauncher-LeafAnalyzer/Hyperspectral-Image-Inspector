@@ -7,8 +7,8 @@ import pytest
 from PIL import Image
 from PyQt6.QtCore import QRectF
 
-from core import VisualizationMode
-from core.hsi_reader import DATA_EXTENSIONS
+from core import HSIFileError, HSIReader, VisualizationMode
+from core.hsi_reader import METADATA_EXTENSIONS
 
 RESOURCES_DIR = Path(__file__).resolve().parents[1] / "resources"
 
@@ -24,7 +24,7 @@ MODE_BUTTONS = (
 
 
 def _discover_sample_headers(base_dir: Path) -> list[Path]:
-    """Return every ``.hdr`` file under ``base_dir`` with a matching data file.
+    """Find supported metadata/data pairs, preferring .hdr over JSON sidecars.
 
     Testers drop their own captures into ``ui_tests/resources/`` locally
     (too large to commit — see that folder's README) rather than the suite
@@ -34,11 +34,34 @@ def _discover_sample_headers(base_dir: Path) -> list[Path]:
     """
     if not base_dir.is_dir():
         return []
-    return sorted(
-        hdr_path
-        for hdr_path in base_dir.rglob("*.hdr")
-        if any(hdr_path.with_suffix(ext).is_file() for ext in DATA_EXTENSIONS)
+    metadata_files = sorted(
+        (path for path in base_dir.rglob("*")
+         if path.is_file() and path.suffix.casefold() in METADATA_EXTENSIONS),
+        key=lambda path: METADATA_EXTENSIONS.index(path.suffix.casefold()),
     )
+    found = []
+    seen = set()
+    for path in metadata_files:
+        key = (path.parent, path.stem.casefold())
+        if key in seen:
+            continue
+        try:
+            HSIReader.resolve_pair(path)
+        except HSIFileError:
+            continue
+        seen.add(key)
+        found.append(path)
+    return sorted(found)
+
+
+def test_sample_discovery_includes_json_and_deduplicates_sidecars(tmp_path):
+    metadata = tmp_path / "Capture.JSON"
+    metadata.write_text('{"bil_hdr": {}}', encoding="utf-8")
+    (tmp_path / "capture.RAW").write_bytes(b"cube")
+    assert _discover_sample_headers(tmp_path) == [metadata]
+    header = tmp_path / "capture.hdr"
+    header.write_text("ENVI\n", encoding="utf-8")
+    assert _discover_sample_headers(tmp_path) == [header]
 
 
 SAMPLE_HEADERS = _discover_sample_headers(RESOURCES_DIR)
