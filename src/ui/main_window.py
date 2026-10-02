@@ -100,8 +100,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._super_resolution_request = SuperResolutionRequest()
         self._super_res_worker: SuperResolutionWorker | None = None
         self._super_res_result: SuperResolutionResult | None = None
-        self._sr_from_calibration = False
-        self._pending_sr_from_calibration = False
         self._super_res_error: str | None = None
         self._sr_view_scale = 1
         self._viz_view_scale = 1
@@ -160,7 +158,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             parent_widget=self,
             display_data=self._display_data,
             is_high_resolution=self._is_super_resolution_active,
-            before_calibration=self._confirm_calibration_after_sr,
+            super_resolution_source=self._super_resolution_data,
         )
         self._classification_controller.readyToClose.connect(self.close)
         self._calibration_controller.readyToClose.connect(self.close)
@@ -360,8 +358,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             data = self._display_data()
             if show_processed:
                 label = (
-                    "Calibration → MSDformer 2×"
-                    if self._sr_from_calibration else "MSDformer 2×"
+                    "Calibrated MSDformer 2×"
+                    if self._calibration_controller.result_for_resolution(True)
+                    else "MSDformer 2×"
                 )
             else:
                 label = (
@@ -387,8 +386,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         just the Super-Resolution tab's own comparison viewer.
         """
         if self._is_super_resolution_active():
+            calibration = self._calibration_controller.result_for_resolution(True)
+            if calibration is not None:
+                return calibration.data
             return self._super_res_result.data
         return self._low_resolution_data()
+
+    def _super_resolution_data(self) -> HSIData | None:
+        """Raw SR cube (SR only ever runs on uncalibrated data), if present."""
+        return None if self._super_res_result is None else self._super_res_result.data
 
     def _low_resolution_data(self) -> HSIData:
         calibration = self._calibration_controller.result_for_resolution(False)
@@ -454,7 +460,21 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         if not self._hsi_data.is_loaded():
             return
-        source_data = self._low_resolution_data()
+        if self._calibration_controller.result_for_resolution(False) is not None:
+            answer = QMessageBox.warning(
+                self,
+                "Super-Resolution needs uncalibrated data",
+                "Super-Resolution only runs on the uncalibrated image. Continuing "
+                "will revert the current calibration (and any classification made "
+                "from it) before running. Calibrate again after Super-Resolution "
+                "to calibrate both resolutions.",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Ok:
+                return
+            self._calibration_controller.revert_calibration()
+        source_data = self._hsi_data
         try:
             self._super_resolution_service.validate(source_data, self._super_resolution_request)
         except HSIError as exc:
@@ -482,9 +502,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         worker = SuperResolutionWorker(self._super_resolution_service, source_data,
                                        self._super_resolution_request, parent=self)
         self._super_res_worker = worker
-        self._pending_sr_from_calibration = (
-            self._calibration_controller.result_for_resolution(False) is not None
-        )
         worker.progress.connect(self._on_super_resolution_progress)
         worker.result_ready.connect(self._on_super_resolution_result)
         worker.failed.connect(self._on_super_resolution_failed)
@@ -539,7 +556,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._hsi_data.roi_mask, display.display_rgb.shape[:2]
         )
         self._super_res_result = result
-        self._sr_from_calibration = self._pending_sr_from_calibration
         # Either operation changes the cube used for classification.
         self._classification_controller.clear_result()
         self._calibration_controller.clear_super_resolution_result()
@@ -585,7 +601,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _reset_super_resolution(self) -> None:
         self._super_res_result = None
-        self._sr_from_calibration = False
         self._super_res_error = None
         self.lowResButton.setChecked(True)
         self.superResProgressBar.setValue(0)
@@ -623,26 +638,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             enabled=not running,
         )
 
-    def _confirm_calibration_after_sr(self) -> bool:
-        if self._super_res_result is not None:
-            answer = QMessageBox.question(
-                self,
-                "Discard high-resolution results?",
-                "Calibrating now will delete the Super-Resolution image and all "
-                "high-resolution classification results. Continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return False
-            self._classification_controller.clear_super_resolution_result()
-            self._calibration_controller.clear_super_resolution_result()
-            self._reset_super_resolution()
-            self._refresh_visualization_pipeline()
-        else:
-            self.lowResButton.setChecked(True)
-        return True
-
     @QtCore.pyqtSlot(bool)
     def _on_calibration_result_ready(self, high: bool) -> None:
         self._crop_undo_stack.clear()
@@ -652,8 +647,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     @QtCore.pyqtSlot(bool)
     def _on_calibration_references_changed(self, had_result: bool) -> None:
-        if self._sr_from_calibration:
-            self._reset_super_resolution()
         if had_result:
             self._classification_controller.clear_result()
         if self._hsi_data.is_loaded():

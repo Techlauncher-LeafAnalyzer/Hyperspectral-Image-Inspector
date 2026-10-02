@@ -58,7 +58,7 @@ class CalibrationController(QtCore.QObject):
         parent_widget: QtWidgets.QWidget,
         display_data: Callable[[], HSIData] | None = None,
         is_high_resolution: Callable[[], bool] | None = None,
-        before_calibration: Callable[[], bool] | None = None,
+        super_resolution_source: Callable[[], HSIData | None] | None = None,
     ) -> None:
         super().__init__(parent_widget)
         self._source_data = source_data
@@ -80,12 +80,14 @@ class CalibrationController(QtCore.QObject):
         self._parent = parent_widget
         self._display_data = display_data or (lambda: self._source_data)
         self._is_high_resolution = is_high_resolution or (lambda: False)
-        self._before_calibration = before_calibration or (lambda: True)
+        # Returns the raw 2x SR cube, or None when no SR image exists.
+        self._super_resolution_source = super_resolution_source or (lambda: None)
 
         self._worker: CalibrationWorker | None = None
         self._results: dict[bool, CalibrationResult | None] = {False: None, True: None}
         self._working_resolution = False
         self._completed_resolution: bool | None = None
+        self._pending_jobs: list = []
         self._error: str | None = None
         self._dark_path: Path | None = None
         self._bright_path: Path | None = None
@@ -242,6 +244,11 @@ class CalibrationController(QtCore.QObject):
         self._statusbar.showMessage(f"Selected {path.name}")
         return path
 
+    def revert_calibration(self) -> None:
+        """Discard every calibration result (e.g. before running SR)."""
+
+        self._reference_changed()
+
     def _reference_changed(self) -> None:
         had_result = self._results[False] is not None
         self._tracks_source = {False: False, True: False}
@@ -291,29 +298,19 @@ class CalibrationController(QtCore.QObject):
             return
         if (dark, bright) != (self._dark_path, self._bright_path):
             self._set_paths(dark, bright)
-        if not self._before_calibration():
-            return
+        # Calibrate the original and, when an SR image exists, the SR image
+        # in the same operation, so neither result is stale. The
+        # SR cube is 2x the original; its references are interpolated using
+        # the original as the geometry reference.
+        jobs = [(False, self._source_data, None, dark, bright)]
+        super_resolution = self._super_resolution_source()
+        if super_resolution is not None:
+            jobs.append((True, super_resolution, self._source_data, dark, bright))
 
         self._error = None
         self._stop_hypercube()
-        source_data = self._source_data
-        worker = CalibrationWorker(
-            self._service,
-            source_data,
-            dark,
-            bright,
-            parent=self,
-            reference_source=None,
-        )
-        self._working_resolution = False
+        self._pending_jobs = jobs[1:]
         self._completed_resolution = None
-        self._worker = worker
-        worker.progress.connect(self._on_progress)
-        worker.result_ready.connect(self._on_result)
-        worker.failed.connect(self._on_failed)
-        worker.cancelled.connect(self._on_cancelled)
-        worker.finished.connect(self._on_finished)
-        worker.finished.connect(worker.deleteLater)
         self._load_image_action.setEnabled(False)
         self._dark_button.setEnabled(False)
         self._bright_button.setEnabled(False)
@@ -323,6 +320,26 @@ class CalibrationController(QtCore.QObject):
         )
         self._statusbar.showMessage("Starting radiometric calibration…")
         self.runningChanged.emit(True)
+        self._launch(jobs[0])
+
+    def _launch(self, job) -> None:
+        high, source_data, reference_source, dark, bright = job
+        worker = CalibrationWorker(
+            self._service,
+            source_data,
+            dark,
+            bright,
+            parent=self,
+            reference_source=reference_source,
+        )
+        self._working_resolution = high
+        self._worker = worker
+        worker.progress.connect(self._on_progress)
+        worker.result_ready.connect(self._on_result)
+        worker.failed.connect(self._on_failed)
+        worker.cancelled.connect(self._on_cancelled)
+        worker.finished.connect(self._on_finished)
+        worker.finished.connect(worker.deleteLater)
         worker.start()
 
     def _cancel(self) -> None:
@@ -375,6 +392,7 @@ class CalibrationController(QtCore.QObject):
 
     @QtCore.pyqtSlot(str)
     def _on_failed(self, message: str) -> None:
+        self._pending_jobs = []
         self._error = f"Calibration failed: {message}"
         LOGGER.error("%s", self._error)
         if not self._close_after_calibration:
@@ -382,11 +400,15 @@ class CalibrationController(QtCore.QObject):
 
     @QtCore.pyqtSlot()
     def _on_cancelled(self) -> None:
+        self._pending_jobs = []
         self._error = "Calibration cancelled"
 
     @QtCore.pyqtSlot()
     def _on_finished(self) -> None:
         self._worker = None
+        if self._pending_jobs and not self._error and not self._close_after_calibration:
+            self._launch(self._pending_jobs.pop(0))
+            return
         self._load_image_action.setEnabled(True)
         self._update_ready()
         self.runningChanged.emit(False)
