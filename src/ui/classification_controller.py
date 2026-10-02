@@ -234,6 +234,7 @@ class ClassificationController(QObject):
             True: _ClassificationSlot(),
         }
         self._pending_slot_key = False
+        self._background_mode = VisualizationMode.RGB.value
         self._opacity_refresh_timer = QtCore.QTimer(self)
         self._opacity_refresh_timer.setSingleShot(True)
         self._opacity_refresh_timer.setInterval(_OPACITY_REFRESH_INTERVAL_MS)
@@ -321,6 +322,10 @@ class ClassificationController(QObject):
         self._visualization_results = results
         for slot in self._slots.values():
             slot.means = None
+        slot = self._current_slot
+        if slot.layers is not None:
+            self._populate_layer_panel(slot)
+            self._show_result()
 
     def clear_super_resolution_result(self) -> None:
         """Discard only the Super-Resolution slot, e.g. when its SR image is discarded.
@@ -385,6 +390,7 @@ class ClassificationController(QObject):
         self._layer_panel.setAllVisibleRequested.connect(self._on_set_all_visible_requested)
         self._layer_panel.globalOpacityChanged.connect(self._on_global_opacity_changed)
         self._layer_panel.outlineModeChanged.connect(self._on_outline_mode_changed)
+        self._layer_panel.backgroundChanged.connect(self._on_background_changed)
 
         self._num_classes_edit.setValidator(QtGui.QIntValidator(2, 65535, self))
         self._max_iterations_edit.setValidator(QtGui.QIntValidator(1, 10000, self))
@@ -817,9 +823,40 @@ class ClassificationController(QObject):
         layers.set_outline_mode(enabled)
         self._show_result()
 
+    def _on_background_changed(self, mode: str) -> None:
+        self._background_mode = mode
+        self._show_result()
+
+    def _background_names(self) -> tuple[str, ...]:
+        names = [VisualizationMode.RGB.value]
+        names += [
+            mode.value
+            for mode in self._visualization_results
+            if mode is not VisualizationMode.RGB
+        ]
+        return tuple(names)
+
+    def _background_rgb(self, slot: _ClassificationSlot) -> Optional[NDArray[np.uint8]]:
+        """Return the selected visualization's image, else the plain RGB."""
+
+        base_rgb = slot.active_data.rgb_array if slot.active_data is not None else None
+        if self._background_mode != VisualizationMode.RGB.value:
+            for mode, visualization in self._visualization_results.items():
+                if (
+                    mode.value == self._background_mode
+                    and slot.layers is not None
+                    and visualization.display_rgb.shape == (*slot.layers.image_shape, 3)
+                ):
+                    return visualization.display_rgb
+        return base_rgb
+
     def _populate_layer_panel(self, slot: _ClassificationSlot) -> None:
         if slot.layers is None:
             return
+        names = self._background_names()
+        if self._background_mode not in names:
+            self._background_mode = VisualizationMode.RGB.value
+        self._layer_panel.set_backgrounds(names, self._background_mode)
         self._layer_panel.set_layers(
             slot.layers.layers,
             global_opacity=slot.layers.global_opacity,
@@ -852,7 +889,7 @@ class ClassificationController(QObject):
         slot = self._current_slot
         if slot.rgb is None or slot.layers is None:
             return None
-        base_rgb = slot.active_data.rgb_array if slot.active_data is not None else None
+        base_rgb = self._background_rgb(slot)
         if base_rgb is not None and base_rgb.shape == (*slot.layers.image_shape, 3):
             return slot.layers.compose_display(slot.rgb, base_rgb=base_rgb)
         return slot.layers.compose_display(
