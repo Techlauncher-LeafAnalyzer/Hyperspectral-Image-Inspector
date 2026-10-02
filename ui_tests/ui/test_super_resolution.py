@@ -88,115 +88,117 @@ def test_canvas_resolution_switches_follow_the_toggle(loaded_window, stub_sr, qt
     assert all(switch.isChecked() for switch in switches)
 
 
-def test_super_resolution_uses_calibrated_low_resolution_source(
-    loaded_window, stub_sr, qtbot, file_dialog, tmp_path, dialogs
-):
-    window = loaded_window
-    source = window._hsi_data
-    reference_shape = (21, source.original_shape[1], source.bands)
-    for name, value in (("dark", 0.0), ("bright", 2.0)):
-        path = tmp_path / f"{name}.hdr"
-        envi.save_image(
-            str(path), np.full(reference_shape, value, dtype=np.float32),
-            ext=".bip", interleave="bip",
-            metadata={"wavelength": source.wavelengths},
-        )
-        file_dialog.open_return = (str(path), "")
-        (window.darkFileButton if name == "dark" else window.referenceFileButton).click()
-
-    window.calibrateButton.click()
-    qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
-    low_result = window._calibration_controller.result
-    assert low_result is not None
-    assert low_result.data.shape == source.shape
-
-    assert window._display_data() is low_result.data
-    stub_sr.release.set()
-    window.runSuperResButton.click()
-    finish(qtbot, window)
-    assert window._calibration_controller.result is None
-    assert window._display_data() is window._super_res_result.data
-    assert window._sr_from_calibration
-    expected = low_result.data.read_bands(range(source.bands)).repeat(2, 0).repeat(2, 1)
-    np.testing.assert_allclose(
-        window._super_res_result.data.read_bands(range(source.bands)), expected
-    )
-    assert not dialogs.critical
-
-    window._resolution_switches.switches[1].click()
-    assert window._calibration_controller.result is low_result
-    assert window._display_data() is low_result.data
-    np.testing.assert_array_equal(window.calibrationViewer.rgb, low_result.data.rgb_array)
-    window.highResButton.setChecked(True)
-    assert window._display_data() is window._super_res_result.data
-
-    replacement = tmp_path / "replacement_bright.hdr"
-    envi.save_image(
-        str(replacement), np.full(reference_shape, 3, dtype=np.float32),
-        ext=".bip", interleave="bip",
-        metadata={"wavelength": source.wavelengths},
-    )
-    file_dialog.open_return = (str(replacement), "")
-    window.referenceFileButton.click()
-    assert window._calibration_controller.result is None
-    assert window._super_res_result is None
-    assert window.lowResButton.isChecked()
-    assert window._display_data() is source
-
-
-def test_calibration_after_sr_requires_confirmation_and_discards_high_results(
+def test_super_resolution_on_calibrated_image_warns_and_reverts_calibration(
     loaded_window, stub_sr, qtbot, file_dialog, tmp_path, monkeypatch
 ):
     window = loaded_window
     source = window._hsi_data
     shape = (21, source.original_shape[1], source.bands)
-    for name, value in (("dark", 0.0), ("bright", 2.0)):
+    _set_references(window, file_dialog, tmp_path, np.zeros(shape), np.full(shape, 2.0))
+    window.calibrateButton.click()
+    qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
+    assert window._calibration_controller.result is not None
+    ok, cancel = QtWidgets.QMessageBox.StandardButton.Ok, QtWidgets.QMessageBox.StandardButton.Cancel
+    answers, prompts = [cancel, ok], []
+
+    def warn(*args):
+        prompts.append(args[1:3])
+        return answers.pop(0)
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", staticmethod(warn))
+
+    # Cancelling keeps the calibration and does not start SR.
+    window.runSuperResButton.click()
+    assert window._super_res_worker is None and window._super_res_result is None
+    assert window._calibration_controller.result_for_resolution(False) is not None
+
+    # Accepting reverts calibration and runs SR on the raw (uncalibrated) cube.
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    assert len(prompts) == 2 and "uncalibrated" in prompts[0][0] + prompts[0][1]
+    assert window._calibration_controller.result_for_resolution(False) is None
+    assert window._display_data() is window._super_res_result.data
+    np.testing.assert_allclose(
+        window._super_res_result.data.read_bands(range(source.bands)),
+        source.read_bands(range(source.bands)).repeat(2, 0).repeat(2, 1),
+    )
+
+
+def _set_references(window, file_dialog, tmp_path, dark, bright):
+    source = window._hsi_data
+    for name, values in (("dark", dark), ("bright", bright)):
         path = tmp_path / f"{name}.hdr"
         envi.save_image(
-            str(path), np.full(shape, value, dtype=np.float32),
-            ext=".bip", interleave="bip",
+            str(path), values.astype(np.float32), ext=".bip", interleave="bip",
             metadata={"wavelength": source.wavelengths},
         )
         file_dialog.open_return = (str(path), "")
         (window.darkFileButton if name == "dark" else window.referenceFileButton).click()
 
+
+def test_calibrating_with_raw_sr_calibrates_both_resolutions_without_prompt(
+    loaded_window, stub_sr, qtbot, file_dialog, tmp_path, monkeypatch
+):
+    window = loaded_window
+    source = window._hsi_data
+    shape = (21, source.original_shape[1], source.bands)
+    _set_references(window, file_dialog, tmp_path, np.zeros(shape), np.full(shape, 2.0))
     stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
     previous_sr = window._super_res_result
-    window.numOfClassesEdit.setText("2")
-    window.maxIterationsEdit.setText("3")
-    window.unsupervisedClassifyButton.click()
-    qtbot.waitUntil(lambda: window._classification_controller._thread is None)
-    assert window._classification_controller._slots[True].result is not None
-    answers = [QtWidgets.QMessageBox.StandardButton.No,
-               QtWidgets.QMessageBox.StandardButton.Yes]
-    prompts = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "question",
+        staticmethod(lambda *a: pytest.fail("calibration must not ask to discard SR")),
+    )
 
-    def answer(*args):
-        prompts.append(args[2])
-        return answers.pop(0)
+    for view in (window.lowResButton, window.highResButton):
+        view.setChecked(True)
+        window.calibrateButton.click()
+        qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
+        controller = window._calibration_controller
+        low, high = controller.result_for_resolution(False), controller.result_for_resolution(True)
+        assert low is not None and high is not None
+        assert window._super_res_result is previous_sr
+        bands = range(source.bands)
+        np.testing.assert_allclose(low.data.read_bands(bands), source.read_bands(bands) / 2)
+        np.testing.assert_allclose(high.data.read_bands(bands),
+                                   previous_sr.data.read_bands(bands) / 2)
 
-    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(answer))
-    window.calibrateButton.click()
-    assert window._super_res_result is previous_sr
-    assert not window._calibration_controller.is_running()
+
+def test_calibrating_super_resolution_image_interpolates_references(
+    loaded_window, stub_sr, qtbot, file_dialog, tmp_path, dialogs
+):
+    window = loaded_window
+    source = window._hsi_data
+    columns, bands = source.original_shape[1], source.bands
+    bright_row = (1.0 + np.arange(columns))[:, None] * np.ones((1, bands))
+    _set_references(
+        window, file_dialog, tmp_path,
+        np.zeros((21, columns, bands)), np.broadcast_to(bright_row, (21, columns, bands)),
+    )
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    sr = window._super_res_result
     assert window.highResButton.isChecked()
-    assert window._classification_controller._slots[True].result is not None
 
     window.calibrateButton.click()
     qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
-    assert len(prompts) == 2
-    assert "delete" in prompts[0]
-    assert window._super_res_result is None
-    assert window.lowResButton.isChecked()
-    assert window._calibration_controller.result is not None
-    assert all(slot.result is None for slot in window._classification_controller._slots.values())
-    assert window._display_data() is window._calibration_controller.result.data
-    np.testing.assert_allclose(
-        window._display_data().read_bands(range(source.bands)),
-        source.read_bands(range(source.bands)) / 2,
-    )
+
+    assert not dialogs.critical
+    result = window._calibration_controller.result
+    assert result is not None and result is window._calibration_controller.result_for_resolution(True)
+    assert result.data.shape == sr.data.shape
+    assert window._super_res_result is sr
+    low = window._calibration_controller.result_for_resolution(False)
+    assert low is not None and low.data.shape == source.shape
+    assert window._display_data() is result.data
+    positions = (np.arange(2 * columns) + 0.5) / 2 - 0.5
+    reference = np.interp(positions, np.arange(columns), bright_row[:, 0])
+    expected = sr.data.read_bands(range(bands)) / reference[None, :, None]
+    np.testing.assert_allclose(result.data.read_bands(range(bands)), expected, rtol=1e-5)
 
 
 def test_super_resolution_clears_crop_history(loaded_window, stub_sr, qtbot):
