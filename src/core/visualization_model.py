@@ -88,6 +88,22 @@ class VisualizationResult:
     band_indices: Mapping[str, int]
     band_wavelengths_nm: Mapping[str, float]
     colormap: str | None
+    # Percentile limits mapped to the colormap's ends; ``None`` for RGB.
+    display_limits: tuple[float, float] | None = None
+
+    def color_for(self, value: float) -> tuple[int, int, int] | None:
+        """Return the display colour this result's mapping gives ``value``.
+
+        Matches the per-pixel rendering in ``display_rgb``, so a derived
+        statistic (e.g. a class mean) can be shown in the same colour scale.
+        """
+
+        if self.display_limits is None or self.colormap is None:
+            return None
+        low, high = self.display_limits
+        normalized = np.clip(np.float32((value - low) / (high - low)), 0, 1)
+        rgba = colormaps[self.colormap](normalized)
+        return tuple(int(channel) for channel in np.round(np.asarray(rgba[:3]) * 255))
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,7 +400,7 @@ class VisualizationService:
         self, data: HSIData, band_index: int, stretch: DisplayStretch
     ) -> VisualizationResult:
         values = data.masked(data.read_band(band_index)).fill()
-        normalized, value_range = self._percentile_stretch(values, stretch)
+        normalized, value_range, limits = self._percentile_stretch(values, stretch)
         # Excluded pixels stay NaN in `values` (so hover and statistics report
         # "no data") but must be finite before the uint8 display cast.
         display = np.round(
@@ -400,6 +416,7 @@ class VisualizationService:
             band_indices=MappingProxyType({"band": band_index}),
             band_wavelengths_nm=MappingProxyType({"band": wavelength}),
             colormap="gray",
+            display_limits=limits,
         )
 
     def _render_index(
@@ -422,7 +439,9 @@ class VisualizationService:
         # the Index Mean's `np.nanmean` then both skip them; Matplotlib
         # colormaps render them as the colormap's "bad" colour.
         values = data.masked(values).fill()
-        normalized, value_range = self._percentile_stretch(values, request.stretch)
+        normalized, value_range, limits = self._percentile_stretch(
+            values, request.stretch
+        )
         colormap = request.colormap or self.DEFAULT_COLORMAPS[mode]
         try:
             display = np.round(colormaps[colormap](normalized)[..., :3] * 255).astype(np.uint8)
@@ -437,6 +456,7 @@ class VisualizationService:
             band_indices=MappingProxyType(indices),
             band_wavelengths_nm=MappingProxyType(self._wavelength_map(data, indices)),
             colormap=colormap,
+            display_limits=limits,
         )
 
     @staticmethod
@@ -494,17 +514,22 @@ class VisualizationService:
     @staticmethod
     def _percentile_stretch(
         values: np.ndarray, stretch: DisplayStretch
-    ) -> tuple[np.ndarray, tuple[float, float]]:
+    ) -> tuple[np.ndarray, tuple[float, float], tuple[float, float] | None]:
+        """Return normalized values, the raw finite range, and the display limits."""
         finite = values[np.isfinite(values)]
         if finite.size == 0:
-            return np.zeros(values.shape, dtype=np.float32), (0.0, 0.0)
+            return np.zeros(values.shape, dtype=np.float32), (0.0, 0.0), None
         low, high = np.percentile(
             finite, (stretch.lower_percentile, stretch.upper_percentile)
         )
         if high <= low:
             high = low + np.finfo(np.float32).eps
         normalized = np.clip((values - low) / (high - low), 0, 1).astype(np.float32)
-        return normalized, (float(finite.min()), float(finite.max()))
+        return (
+            normalized,
+            (float(finite.min()), float(finite.max())),
+            (float(low), float(high)),
+        )
 
     @staticmethod
     def _wavelength_map(data: HSIData, indices: Mapping[str, int]) -> dict[str, float]:

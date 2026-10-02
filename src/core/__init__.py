@@ -33,6 +33,7 @@ from .calibration_model import (
 )
 from .classification_layer_model import (
     ClassIndexStatistics,
+    ClassVisualizationMean,
     ClassificationIndexAnalysis,
     ClassificationLayer,
     ClassificationLayerComposite,
@@ -78,6 +79,7 @@ __all__ = [
     "ClassificationLayerModel",
     "ClassificationService",
     "ClassIndexStatistics",
+    "ClassVisualizationMean",
     "DisplayStretch",
     "Functionality",
     "HSIData",

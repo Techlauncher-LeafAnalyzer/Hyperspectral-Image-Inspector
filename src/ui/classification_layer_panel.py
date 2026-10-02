@@ -7,13 +7,14 @@ composited image.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Mapping, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from core import ClassificationLayer
 from ui.classification_colors import RGBColor, classification_palette
+from ui.viewer import PixelValueEntry, format_pixel_values_html
 
 
 _EXPANDED_WIDTH = 280
@@ -61,6 +62,7 @@ class _LayerRowWidget(QtWidgets.QWidget):
         self,
         layer: ClassificationLayer,
         color: RGBColor,
+        means: Optional[Mapping[str, PixelValueEntry]] = None,
         parent: Optional[QtWidgets.QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -134,6 +136,19 @@ class _LayerRowWidget(QtWidgets.QWidget):
         layout.addLayout(header_row)
         layout.addLayout(opacity_header)
         layout.addWidget(self._opacity_slider)
+
+        # Per-class means of each cached visualization, drawn with the same
+        # swatch-and-value markup as the viewer's hover pixel-value overlay.
+        self._means_label: Optional[QtWidgets.QLabel] = None
+        if means:
+            means_caption = QtWidgets.QLabel("Index means", self)
+            means_caption.setObjectName("layerIndexMeansCaption")
+            self._means_label = QtWidgets.QLabel(self)
+            self._means_label.setObjectName("layerIndexMeansLabel")
+            self._means_label.setTextFormat(Qt.TextFormat.RichText)
+            self._means_label.setText(format_pixel_values_html(means))
+            layout.addWidget(means_caption)
+            layout.addWidget(self._means_label)
 
         self._toggle.toggled.connect(self._on_toggled)
         self._opacity_slider.valueChanged.connect(self._on_slider_changed)
@@ -342,13 +357,24 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         *,
         global_opacity: float = 1.0,
         outline_mode: bool = False,
+        means: Optional[Mapping[int, Mapping[str, PixelValueEntry]]] = None,
     ) -> None:
-        """Rebuild rows to reflect the Model while preserving global controls."""
+        """Rebuild rows to reflect the Model while preserving global controls.
+
+        ``means`` maps a class ID to that class's per-visualization means,
+        keyed by visualization name; classes without an entry show none.
+        """
 
         self._clear_rows()
         colors = classification_palette(layer.class_id for layer in layers)
+        means = means or {}
         for layer in layers:
-            row = _LayerRowWidget(layer, colors[layer.class_id], self._rows_container)
+            row = _LayerRowWidget(
+                layer,
+                colors[layer.class_id],
+                means.get(layer.class_id),
+                self._rows_container,
+            )
             row.visibilityChanged.connect(self.visibilityChanged)
             row.opacityChanged.connect(self.opacityChanged)
             self._rows[layer.class_id] = row

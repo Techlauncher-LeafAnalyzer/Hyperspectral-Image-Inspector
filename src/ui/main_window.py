@@ -842,6 +842,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         rgb_result = self._visualization_results.get(VisualizationMode.RGB)
         if rgb_result is not None:
             data.rgb_array = rgb_result.display_rgb
+        self._classification_controller.set_visualization_results(
+            self._visualization_results
+        )
 
     def _refresh_viewers_display(self) -> None:
         data = self._display_data()

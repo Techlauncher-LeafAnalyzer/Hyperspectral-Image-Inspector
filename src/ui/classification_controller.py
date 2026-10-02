@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from threading import Event
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Callable, Mapping, Optional, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -29,11 +29,13 @@ from core import (
     TrainingPairResolver,
     UnsupervisedClassificationRequest,
     UnsupervisedClassificationResult,
+    VisualizationMode,
+    VisualizationResult,
 )
 from ui.classification_colors import classification_palette
 from ui.classification_layer_panel import ClassificationLayerPanel
 from ui.theme import VIEWER_SCENE_BACKGROUND
-from ui.viewer import HSIViewer
+from ui.viewer import HSIViewer, PixelValueEntry
 
 _LAYER_COMPOSITE_BACKGROUND = (
     VIEWER_SCENE_BACKGROUND.red(),
@@ -63,6 +65,7 @@ class _ClassificationSlot:
     rgb: Optional[NDArray[np.uint8]] = None
     layers: Optional[ClassificationLayerModel] = None
     active_data: Optional[HSIData] = None
+    means: Optional[dict[int, dict[str, PixelValueEntry]]] = None
 
 
 class _ClassificationWorker(QtCore.QObject):
@@ -222,6 +225,9 @@ class ClassificationController(QObject):
         self._load_image_action = load_image_action
         self._stop_hypercube = stop_hypercube
         self._parent = parent_widget
+        self._visualization_results: Mapping[
+            VisualizationMode, VisualizationResult
+        ] = {}
 
         self._slots: dict[bool, _ClassificationSlot] = {
             False: _ClassificationSlot(),
@@ -303,6 +309,19 @@ class ClassificationController(QObject):
         self._slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
         self._layer_panel.clear()
 
+    def set_visualization_results(
+        self, results: Mapping[VisualizationMode, VisualizationResult]
+    ) -> None:
+        """Use ``results`` (rendered from the displayed data) for class means.
+
+        Call whenever the visualizations are recomputed; cached means are
+        discarded and rebuilt on the next layer-panel refresh.
+        """
+
+        self._visualization_results = results
+        for slot in self._slots.values():
+            slot.means = None
+
     def clear_super_resolution_result(self) -> None:
         """Discard only the Super-Resolution slot, e.g. when its SR image is discarded.
 
@@ -328,11 +347,7 @@ class ClassificationController(QObject):
 
         slot = self._current_slot
         if slot.layers is not None:
-            self._layer_panel.set_layers(
-                slot.layers.layers,
-                global_opacity=slot.layers.global_opacity,
-                outline_mode=slot.layers.outline_mode,
-            )
+            self._populate_layer_panel(slot)
         else:
             self._layer_panel.clear()
 
@@ -697,11 +712,7 @@ class ClassificationController(QObject):
         slot.rgb = self._colorize_class_map(result.class_map, class_ids)
         slot.layers = ClassificationLayerModel(result)
         if slot_key == self._is_super_resolution_active():
-            self._layer_panel.set_layers(
-                slot.layers.layers,
-                global_opacity=slot.layers.global_opacity,
-                outline_mode=slot.layers.outline_mode,
-            )
+            self._populate_layer_panel(slot)
             self._show_result()
         populated = int(np.count_nonzero(result.class_pixel_counts))
         operation = (
@@ -783,11 +794,7 @@ class ClassificationController(QObject):
         if layers is None:
             return
         layers.set_all_visible(visible)
-        self._layer_panel.set_layers(
-            layers.layers,
-            global_opacity=layers.global_opacity,
-            outline_mode=layers.outline_mode,
-        )
+        self._populate_layer_panel(self._current_slot)
         self._show_result()
 
     @QtCore.pyqtSlot(float)
@@ -809,6 +816,37 @@ class ClassificationController(QObject):
             return
         layers.set_outline_mode(enabled)
         self._show_result()
+
+    def _populate_layer_panel(self, slot: _ClassificationSlot) -> None:
+        if slot.layers is None:
+            return
+        self._layer_panel.set_layers(
+            slot.layers.layers,
+            global_opacity=slot.layers.global_opacity,
+            outline_mode=slot.layers.outline_mode,
+            means=self._segment_means(slot),
+        )
+
+    def _segment_means(
+        self, slot: _ClassificationSlot
+    ) -> dict[int, dict[str, PixelValueEntry]]:
+        """Return (and cache) each class's mean for every cached visualization."""
+
+        if slot.means is not None:
+            return slot.means
+        means: dict[int, dict[str, PixelValueEntry]] = {}
+        for mode, visualization in self._visualization_results.items():
+            try:
+                class_means = slot.layers.visualization_means(visualization)
+            except ClassificationError as exc:
+                LOGGER.info("Skipping %s class means: %s", mode.value, exc)
+                continue
+            for class_id, mean in class_means.items():
+                means.setdefault(class_id, {})[mode.value] = PixelValueEntry(
+                    value=mean.value, color=mean.color
+                )
+        slot.means = means
+        return means
 
     def _composite(self) -> Optional[ClassificationLayerComposite]:
         slot = self._current_slot
