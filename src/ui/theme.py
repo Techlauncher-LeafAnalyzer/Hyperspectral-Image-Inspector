@@ -801,7 +801,9 @@ QWidget#classificationLayerRow[layerVisible="false"] {
 
 QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerNameLabel,
 QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerOpacityCaption,
-QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerOpacityValueLabel {
+QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerOpacityValueLabel,
+QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerIndexMeansCaption,
+QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerIndexMeansLabel {
     color: #869591;
 }
 
@@ -817,9 +819,15 @@ QLabel#layerPixelCountLabel {
 }
 
 QLabel#layerOpacityCaption,
-QLabel#layerOpacityValueLabel {
+QLabel#layerOpacityValueLabel,
+QLabel#layerIndexMeansCaption {
     color: #60736f;
     font-size: 10px;
+}
+
+QLabel#layerIndexMeansLabel {
+    color: #263735;
+    font-size: 11px;
 }
 
 QLabel#layerOpacityValueLabel,

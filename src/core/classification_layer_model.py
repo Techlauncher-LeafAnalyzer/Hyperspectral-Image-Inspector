@@ -99,6 +99,20 @@ class ClassIndexStatistics:
 
 
 @dataclass(frozen=True, slots=True)
+class ClassVisualizationMean:
+    """Mean of one rendered visualization inside one class.
+
+    ``value`` is the mean analytical index, or the mean display RGB triple for
+    the RGB mode. ``color`` is the on-screen colour representing that mean:
+    the RGB mean itself, or the index mean run through the visualization's
+    own colour mapping.
+    """
+
+    value: float | tuple[float, float, float]
+    color: tuple[int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
 class ClassificationIndexAnalysis:
     """One index calculation partitioned by classification masks.
 
@@ -210,6 +224,11 @@ class ClassificationLayerModel:
         self._class_ids = class_ids
         self._pixel_counts = tuple(
             int(np.count_nonzero(mask)) for mask in self._one_hot_masks
+        )
+        # Flat pixel indices per class, built once so per-visualization
+        # statistics gather only class pixels instead of rescanning masks.
+        self._pixel_indices = tuple(
+            np.flatnonzero(mask) for mask in self._one_hot_masks
         )
         self._names = {class_id: f"Class {class_id}" for class_id in class_ids}
         self._visibility = {class_id: True for class_id in class_ids}
@@ -504,12 +523,7 @@ class ClassificationLayerModel:
                 f"Index raster shape {visualization.values.shape} does not match "
                 f"classification shape {self.image_shape}."
             )
-        expected_display_shape = (*self.image_shape, 3)
-        if visualization.display_rgb.shape != expected_display_shape:
-            raise ClassificationError(
-                f"Index display shape {visualization.display_rgb.shape} does not "
-                f"match expected {expected_display_shape}."
-            )
+        self._validate_display_shape(visualization)
         if not 0 <= progress_start <= 100:
             raise ClassificationError("Progress start must be between 0 and 100.")
 
@@ -517,13 +531,12 @@ class ClassificationLayerModel:
         statistics: list[ClassIndexStatistics] = []
         total_pixels = int(np.prod(self.image_shape))
         remaining = 100 - progress_start
-        for position, (class_id, mask) in enumerate(
-            zip(self._class_ids, self._one_hot_masks, strict=True), start=1
+        for position, (class_id, indices) in enumerate(
+            zip(self._class_ids, self._pixel_indices, strict=True), start=1
         ):
             self._check_cancelled(is_cancelled)
-            selected = visualization.values[mask.astype(bool, copy=False)]
-            finite = selected[np.isfinite(selected)]
-            pixel_count = int(selected.size)
+            finite = self._finite_class_values(visualization.values, indices)
+            pixel_count = int(indices.size)
             finite_count = int(finite.size)
             if finite_count:
                 mean = float(np.mean(finite, dtype=np.float64))
@@ -563,6 +576,36 @@ class ClassificationLayerModel:
             _one_hot_masks=self._one_hot_masks,
         )
 
+    def visualization_means(
+        self, visualization: VisualizationResult
+    ) -> dict[int, ClassVisualizationMean]:
+        """Return each class's mean value and its display colour.
+
+        Classes with no finite values (e.g. entirely outside the ROI) are
+        omitted. Works for RGB and every index mode.
+        """
+
+        self._validate_display_shape(visualization)
+        flat_rgb = visualization.display_rgb.reshape(-1, 3)
+        means: dict[int, ClassVisualizationMean] = {}
+        for class_id, indices in zip(self._class_ids, self._pixel_indices, strict=True):
+            if visualization.values is None:
+                if indices.size == 0:
+                    continue
+                mean_rgb = flat_rgb[indices].mean(axis=0, dtype=np.float64)
+                value = tuple(float(channel) for channel in mean_rgb)
+                color = tuple(int(round(channel)) for channel in mean_rgb)
+            else:
+                finite = self._finite_class_values(visualization.values, indices)
+                if finite.size == 0:
+                    continue
+                value = float(np.mean(finite, dtype=np.float64))
+                color = visualization.color_for(value)
+                if color is None:
+                    continue
+            means[class_id] = ClassVisualizationMean(value=value, color=color)
+        return means
+
     def compose_index(
         self,
         analysis: ClassificationIndexAnalysis,
@@ -595,6 +638,23 @@ class ClassificationLayerModel:
         if values.dtype == np.uint8:
             return values
         return np.clip(values, 0, 255).astype(np.uint8)
+
+    def _validate_display_shape(self, visualization: VisualizationResult) -> None:
+        expected = (*self.image_shape, 3)
+        if visualization.display_rgb.shape != expected:
+            raise ClassificationError(
+                f"{visualization.mode.value} display shape "
+                f"{visualization.display_rgb.shape} does not match expected {expected}."
+            )
+
+    @staticmethod
+    def _finite_class_values(
+        values: np.ndarray, indices: np.ndarray
+    ) -> np.ndarray:
+        """Return one class's finite raster values."""
+
+        selected = values.reshape(-1)[indices]
+        return selected[np.isfinite(selected)]
 
     def _validate_data_shape(self, data: HSIData) -> None:
         if (data.rows, data.columns) != self.image_shape:

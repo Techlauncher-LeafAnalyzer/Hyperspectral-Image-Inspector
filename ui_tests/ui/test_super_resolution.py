@@ -12,7 +12,7 @@ from spectral.io import envi
 from core import CancelledError, HSIReader, SuperResolutionError, SuperResolutionResult, VisualizationMode
 from core.super_resolution_model import DEFAULT_CHECKPOINT
 from ui.index_mean_dialog import IndexMeanDialog
-from ui.viewer import PixelValueEntry
+from ui.viewer import PixelValueEntry, format_pixel_values_html
 
 
 @pytest.fixture
@@ -377,7 +377,7 @@ def test_sr_pixel_tiles_use_the_displayed_image(loaded_window, stub_sr, qtbot):
         entries = window.superResViewer.pixel_value_provider(row, column)
         color = tuple(int(value) for value in window.superResViewer.rgb[row, column])
         assert entries == {"RGB": PixelValueEntry(value=color, color=color)}
-        html = window.superResViewer._format_pixel_values(entries)
+        html = format_pixel_values_html(entries)
         assert 'bgcolor="#{:02x}{:02x}{:02x}"'.format(*color) in html
         assert "RGB: ({}, {}, {})".format(*color) in html
     assert window.superResViewer.pixel_value_provider(14, 15) == {}

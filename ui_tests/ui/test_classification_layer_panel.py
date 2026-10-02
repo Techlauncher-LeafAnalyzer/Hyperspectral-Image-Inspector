@@ -15,16 +15,19 @@ from PyQt6.QtGui import QAction
 
 from core import (
     ClassificationLayer,
+    ClassificationLayerModel,
     ClassificationService,
     HSIData,
     HSIReader,
     TrainingPairResolver,
+    VisualizationMode,
+    VisualizationResult,
 )
 from core.classification_model import UnsupervisedClassificationResult
 from ui.classification_colors import classification_palette
 from ui.classification_controller import _LAYER_COMPOSITE_BACKGROUND, ClassificationController
 from ui.classification_layer_panel import ClassificationLayerPanel
-from ui.viewer import HSIViewer
+from ui.viewer import HSIViewer, PixelValueEntry
 
 
 @dataclass
@@ -63,6 +66,25 @@ def _make_unsupervised_result(class_map: np.ndarray) -> UnsupervisedClassificati
         band_indices=(0, 1),
         band_wavelengths_nm=np.array([500.0, 600.0]),
         iterations_completed=1,
+    )
+
+
+def _make_visualization(
+    mode: VisualizationMode,
+    display_rgb: np.ndarray,
+    values: np.ndarray | None,
+) -> VisualizationResult:
+    is_index = values is not None
+    return VisualizationResult(
+        mode=mode,
+        display_rgb=display_rgb,
+        values=values,
+        title=mode.value,
+        value_range=(0.0, 1.0),
+        band_indices={},
+        band_wavelengths_nm={},
+        colormap="gray" if is_index else None,
+        display_limits=(0.0, 1.0) if is_index else None,
     )
 
 
@@ -676,3 +698,95 @@ def test_a_completed_worker_does_not_overwrite_the_slot_toggled_away_from(qtbot)
     # The currently-active (high-res) panel/viewer must not have been
     # disturbed by a result that belongs to the other resolution.
     assert len(layer_panel._rows) == 0
+
+
+# ---------------------------------------------------------------------- #
+# Per-class visualization means                                           #
+# ---------------------------------------------------------------------- #
+
+
+def test_visualization_means_average_each_class():
+    class_map = np.array([[0, 0, 1], [1, 1, 1]], dtype=np.int32)
+    model = ClassificationLayerModel(_make_unsupervised_result(class_map))
+    display = np.zeros((2, 3, 3), dtype=np.uint8)
+    display[0, 0] = (10, 20, 30)
+    display[0, 1] = (30, 40, 50)
+    display[class_map == 1] = (200, 0, 0)
+    display[1, 2] = (0, 0, 200)
+    values = np.array([[0.1, 0.3, 0.0], [0.5, 0.4, np.nan]], dtype=np.float32)
+
+    rgb_means = model.visualization_means(
+        _make_visualization(VisualizationMode.RGB, display, None)
+    )
+    ndvi_means = model.visualization_means(
+        _make_visualization(VisualizationMode.NDVI, display, values)
+    )
+
+    assert rgb_means[0].value == (20.0, 30.0, 40.0)
+    assert rgb_means[0].color == (20, 30, 40)
+    assert abs(ndvi_means[0].value - 0.2) < 1e-6
+    # Class 1 ignores the NaN pixel, and its swatch is the mean run through
+    # the visualization's own mapping (gray over 0..1), not a pixel colour.
+    assert abs(ndvi_means[1].value - 0.3) < 1e-6
+    assert ndvi_means[1].color == (76, 76, 76)
+
+
+def test_rows_show_index_means_with_swatches(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_layers(
+        _make_layers(count=2),
+        means={
+            0: {
+                "RGB": PixelValueEntry(value=(1.0, 2.0, 3.0), color=(1, 2, 3)),
+                "NDVI": PixelValueEntry(value=0.4567, color=(0, 128, 0)),
+            }
+        },
+    )
+
+    html = panel._rows[0]._means_label.text()
+    assert "RGB: (1, 2, 3)" in html
+    assert "NDVI: 0.457" in html
+    assert 'bgcolor="#008000"' in html
+    assert panel._rows[1]._means_label is None
+
+
+def test_controller_populates_panel_with_class_means(qtbot):
+    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+    display = np.full((2, 3, 3), 50, dtype=np.uint8)
+    values = np.array([[0.2, 0.4, 0.6], [0.6, 0.8, 1.0]], dtype=np.float32)
+    results = {
+        VisualizationMode.RGB: _make_visualization(VisualizationMode.RGB, display, None),
+        VisualizationMode.NDVI: _make_visualization(VisualizationMode.NDVI, display, values),
+    }
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    controller.set_visualization_results(results)
+
+    _classify_into_slot(controller, source, False, class_map)
+
+    html = layer_panel._rows[2]._means_label.text()
+    assert "NDVI: 0.900" in html
+    assert "RGB: (50, 50, 50)" in html
+    assert "EVI: —" in html
+
+
+def test_new_visualization_results_rebuild_cached_means(qtbot):
+    class_map = np.array([[0, 0, 1], [1, 1, 1]], dtype=np.int32)
+    display = np.zeros((2, 3, 3), dtype=np.uint8)
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    controller.set_visualization_results(
+        {VisualizationMode.NDVI: _make_visualization(
+            VisualizationMode.NDVI, display, np.full((2, 3), 0.25, dtype=np.float32)
+        )}
+    )
+    _classify_into_slot(controller, source, False, class_map)
+
+    controller.set_visualization_results(
+        {VisualizationMode.NDVI: _make_visualization(
+            VisualizationMode.NDVI, display, np.full((2, 3), 0.75, dtype=np.float32)
+        )}
+    )
+    controller.refresh_display()
+
+    assert "NDVI: 0.750" in layer_panel._rows[0]._means_label.text()

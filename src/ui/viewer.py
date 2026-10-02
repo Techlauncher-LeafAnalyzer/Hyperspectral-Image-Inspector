@@ -38,6 +38,53 @@ PixelValueProvider = Callable[
 ]
 
 
+# All visualization modes except HyperCube, in display order.
+VISUALIZATION_NAMES = ("RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI")
+
+
+def format_pixel_values_html(
+    values: Mapping[str, PixelValueEntry | int],
+) -> str:
+    """Render visualization readings as rich text: a colour swatch, then the value.
+
+    Shared by the hover pixel-value overlay and the classification layer
+    panel's per-class means, so both read identically. A missing entry shows
+    an empty swatch and an em dash.
+    """
+
+    rows: list[str] = []
+    class_id = values.get("Class")
+    if isinstance(class_id, (int, np.integer)):
+        rows.append(
+            '<tr><td width="10" height="10"></td>'
+            f'<td style="padding-left:6px;">Class: {int(class_id)}</td></tr>'
+        )
+    for name in VISUALIZATION_NAMES:
+        entry = values.get(name)
+        if not isinstance(entry, PixelValueEntry):
+            swatch_color = None
+            text = "—"
+        else:
+            swatch_color = entry.color
+            if isinstance(entry.value, tuple):
+                formatted = ", ".join(f"{component:.0f}" for component in entry.value)
+                text = f"({formatted})"
+            elif isinstance(entry.value, (int, float)):
+                text = f"{entry.value:.3f}"
+            else:
+                text = "—"
+        if swatch_color is not None:
+            hex_color = "#{:02x}{:02x}{:02x}".format(*swatch_color)
+            swatch = f'<td width="10" height="10" bgcolor="{hex_color}"></td>'
+        else:
+            swatch = '<td width="10" height="10"></td>'
+        rows.append(
+            f'<tr>{swatch}'
+            f'<td style="padding-left:6px;">{name}: {text}</td></tr>'
+        )
+    return f'<table cellspacing="3" cellpadding="0">{"".join(rows)}</table>'
+
+
 class HSIViewer(QtWidgets.QGraphicsView):
     """Interactive graphics view for hyperspectral image display and annotation.
 
@@ -52,9 +99,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
     # to the image. Kept separate from `cropRequested` so the rectangle path
     # and its regression tests stay untouched.
     polygonCropRequested  = pyqtSignal(list)
-
-    # All visualization modes except HyperCube, in display order.
-    VISUALIZATION_NAMES = ("RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI")
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -436,7 +480,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         index_menu.setObjectName("viewerIndexMenu")
         index_menu.setAccessibleName("Vegetation index mean")
         index_menu.setMinimumWidth(190)
-        for name in self.VISUALIZATION_NAMES:
+        for name in VISUALIZATION_NAMES:
             if name == "RGB":
                 continue
             index_menu.addAction(
@@ -620,7 +664,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             return
 
         values = self.pixel_value_provider(pixel.y(), pixel.x())
-        self._pixel_overlay.setText(self._format_pixel_values(values))
+        self._pixel_overlay.setText(format_pixel_values_html(values))
         self._pixel_overlay.adjustSize()
         self._position_pixel_overlay(view_pos)
         self._pixel_overlay.show()
@@ -633,41 +677,6 @@ class HSIViewer(QtWidgets.QGraphicsView):
         target.setX(min(target.x(), max(0, bounds.width() - self._pixel_overlay.width())))
         target.setY(min(target.y(), max(0, bounds.height() - self._pixel_overlay.height())))
         self._pixel_overlay.move(target)
-
-    def _format_pixel_values(
-        self, values: Mapping[str, PixelValueEntry | int]
-    ) -> str:
-        rows: list[str] = []
-        class_id = values.get("Class")
-        if isinstance(class_id, (int, np.integer)):
-            rows.append(
-                '<tr><td width="10" height="10"></td>'
-                f'<td style="padding-left:6px;">Class: {int(class_id)}</td></tr>'
-            )
-        for name in self.VISUALIZATION_NAMES:
-            entry = values.get(name)
-            if not isinstance(entry, PixelValueEntry):
-                swatch_color = None
-                text = "—"
-            else:
-                swatch_color = entry.color
-                if isinstance(entry.value, tuple):
-                    formatted = ", ".join(f"{component:.0f}" for component in entry.value)
-                    text = f"({formatted})"
-                elif isinstance(entry.value, (int, float)):
-                    text = f"{entry.value:.3f}"
-                else:
-                    text = "—"
-            if swatch_color is not None:
-                hex_color = "#{:02x}{:02x}{:02x}".format(*swatch_color)
-                swatch = f'<td width="10" height="10" bgcolor="{hex_color}"></td>'
-            else:
-                swatch = '<td width="10" height="10"></td>'
-            rows.append(
-                f'<tr>{swatch}'
-                f'<td style="padding-left:6px;">{name}: {text}</td></tr>'
-            )
-        return f'<table cellspacing="3" cellpadding="0">{"".join(rows)}</table>'
 
     @staticmethod
     def _no_pixel_values(row: int, column: int) -> Mapping[str, PixelValueEntry]:
