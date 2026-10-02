@@ -38,6 +38,7 @@ from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
 from ui.resolution_toggle import ResolutionSwitchGroup
+from ui.resource_usage import ResourceUsageWidget
 from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
 from ui.super_resolution_worker import SuperResolutionWorker
@@ -176,6 +177,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         self._configure_tabs()
         self._configure_file_menu()
+        self._resource_usage = ResourceUsageWidget(self.tabWidget)
+        self.tabWidget.setCornerWidget(
+            self._resource_usage, QtCore.Qt.Corner.TopRightCorner
+        )
         self._resolution_switches = ResolutionSwitchGroup(
             (
                 (self.visualizationStack, "visualizationResolutionSwitch"),
@@ -671,6 +676,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         for transition in self._tab_transitions:
             transition.stop()
         self._resolution_switches.stop()
+        self._resource_usage.stop()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
