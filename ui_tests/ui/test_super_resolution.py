@@ -92,12 +92,14 @@ def test_super_resolution_on_calibrated_image_warns_and_reverts_calibration(
     loaded_window, stub_sr, qtbot, file_dialog, tmp_path, monkeypatch
 ):
     window = loaded_window
+    badges = window._resolution_switches.calibration_badges
     source = window._hsi_data
     shape = (21, source.original_shape[1], source.bands)
     _set_references(window, file_dialog, tmp_path, np.zeros(shape), np.full(shape, 2.0))
     window.calibrateButton.click()
     qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
     assert window._calibration_controller.result is not None
+    assert all(not badge.isHidden() for badge in badges)
     ok, cancel = QtWidgets.QMessageBox.StandardButton.Ok, QtWidgets.QMessageBox.StandardButton.Cancel
     answers, prompts = [cancel, ok], []
 
@@ -111,6 +113,7 @@ def test_super_resolution_on_calibrated_image_warns_and_reverts_calibration(
     window.runSuperResButton.click()
     assert window._super_res_worker is None and window._super_res_result is None
     assert window._calibration_controller.result_for_resolution(False) is not None
+    assert all(not badge.isHidden() for badge in badges)
 
     # Accepting reverts calibration and runs SR on the raw (uncalibrated) cube.
     stub_sr.release.set()
@@ -118,6 +121,7 @@ def test_super_resolution_on_calibrated_image_warns_and_reverts_calibration(
     finish(qtbot, window)
     assert len(prompts) == 2 and "uncalibrated" in prompts[0][0] + prompts[0][1]
     assert window._calibration_controller.result_for_resolution(False) is None
+    assert all(badge.isHidden() for badge in badges)
     assert window._display_data() is window._super_res_result.data
     np.testing.assert_allclose(
         window._super_res_result.data.read_bands(range(source.bands)),
@@ -148,6 +152,8 @@ def test_calibrating_with_raw_sr_calibrates_both_resolutions_without_prompt(
     window.runSuperResButton.click()
     finish(qtbot, window)
     previous_sr = window._super_res_result
+    badges = window._resolution_switches.calibration_badges
+    assert all(badge.isHidden() for badge in badges)
     monkeypatch.setattr(
         QtWidgets.QMessageBox, "question",
         staticmethod(lambda *a: pytest.fail("calibration must not ask to discard SR")),
@@ -160,6 +166,7 @@ def test_calibrating_with_raw_sr_calibrates_both_resolutions_without_prompt(
         controller = window._calibration_controller
         low, high = controller.result_for_resolution(False), controller.result_for_resolution(True)
         assert low is not None and high is not None
+        assert all(not badge.isHidden() for badge in badges)
         assert window._super_res_result is previous_sr
         bands = range(source.bands)
         np.testing.assert_allclose(low.data.read_bands(bands), source.read_bands(bands) / 2)
