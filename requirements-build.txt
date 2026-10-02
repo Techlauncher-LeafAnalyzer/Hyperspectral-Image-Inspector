@@ -1,0 +1,3 @@
+# Packaging tooling for scripts/build_pyinstaller.sh; install into the same
+# environment as requirements.txt and requirements-sr.txt.
+pyinstaller~=6.22

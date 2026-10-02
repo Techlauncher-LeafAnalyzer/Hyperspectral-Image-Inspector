@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 from typing import Callable
 
@@ -21,7 +22,10 @@ from .hsi_data import HSIData
 from .hsi_reader import HSIReader
 
 
-DEFAULT_CHECKPOINT = Path(__file__).resolve().parents[2] / "model" / "fin_msdformer.pth"
+# PyInstaller builds unpack bundled data under sys._MEIPASS; from source the
+# model directory sits at the repository root.
+_RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+DEFAULT_CHECKPOINT = _RESOURCE_ROOT / "model" / "fin_msdformer.pth"
 ProgressCallback = Callable[[int, str], None]
 CancellationCheck = Callable[[], bool]
 
