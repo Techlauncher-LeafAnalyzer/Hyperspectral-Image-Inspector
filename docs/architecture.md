@@ -23,11 +23,14 @@
 src/
 ├── main.py                        Entry point — builds QApplication, applies theme, shows window
 ├── core/                          Pure Python — zero Qt imports
+│   ├── calibration_model.py       Cropped, chunked dark/bright correction
 │   ├── hsi_data.py                HSIData dataclass + enums
 │   └── hsi_utils.py               Stateless utility functions
 └── ui/                            All Qt-touching code
     ├── theme.py                   App-wide QSS stylesheet + font loading
     ├── viewer.py                  HSIViewer custom QGraphicsView
+    ├── calibration_controller.py  Calibration controls and result lifecycle
+    ├── calibration_worker.py      Calibration/reference I/O + RGB worker
     ├── main_window.py             MainWindowController (tab-based)
     └── generated/
         └── MainWindow.py          Build artifact — never hand-edited
@@ -311,7 +314,7 @@ Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as
 | `calibrationViewer` | `HSIViewer` | Calibration tab's image display |
 | `darkFileButton` / `darkFileEdit` | `QPushButton` / `QLineEdit` | Dark-frame file picker |
 | `referenceFileButton` / `referenceFileEdit` | `QPushButton` / `QLineEdit` | Reference-frame file picker |
-| `calibrateButton` | `QPushButton` | Always disabled — see `_connect_signals` |
+| `calibrateButton` | `QPushButton` | Starts/cancels calibration after source and references are selected |
 | `classificationViewer` | `HSIViewer` | Classification tab's image display |
 | `classificationFilePath` | `QLabel` | Loaded file path, Classification tab |
 | `classificationModeTabs` | `QTabWidget` | Nested Unsupervised / Supervised sub-tabs |
@@ -353,7 +356,7 @@ The `QMenuBar`/`menuFile` row above the tabs has been removed from `MainWindow.u
 
 ### `HSIData` consolidates scattered state
 
-`HSIData` still owns `image_path`, `spectral_obj`, `rgb_array`, `mask_array`, etc., written only by `_load_image`. In practice `_load_image` currently pushes data into the four `HSIViewer`s directly from its local variables rather than reading back through `self._hsi_data`, so `HSIData` is populated but not yet consumed as the single read path it was designed to be.
+`HSIData` owns `image_path`, `spectral_obj`, `rgb_array`, `mask_array`, and related metadata. Source loading updates the shared instance in place; feature services read through its lazy API. Temporary calibration and SR outputs each own a separate `HSIData` whose backing files live for the result lifetime.
 
 ### `core/` has zero Qt imports
 
@@ -398,6 +401,5 @@ are intentionally ignored and are not part of the shared production tree.
 
 Carried over from the current rubric self-assessment / sprint-1 backlog, listed here because they're structural rather than just "unfinished feature":
 
-- **Calibration is permanently disabled.** `calibrateButton` is disabled unconditionally in `_connect_signals` and nothing re-enables it after image load. Tracked by `LEAF-116`.
 - **Perceptron classification is not integrated.** The selector intentionally exposes only the reference-example Gaussian and Mahalanobis workflows connected through `pushButton_2`; SPy's perceptron still requires dimensionality-reduction and training-policy decisions.
-- **`_save_image` is a stub** with no format decided yet.
+- **Full calibrated-cube export is not integrated.** File → Save Image exports the rendered calibrated RGB preview, not the float32 ENVI result.

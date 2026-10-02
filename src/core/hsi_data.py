@@ -153,6 +153,30 @@ class HSIData:
         self.metadata_map = {}
         self.roi_mask = None
 
+    def close(self) -> None:
+        """Close SPy file handles and memory maps owned by this dataset.
+
+        Normal source datasets remain open for the application lifetime.
+        Temporary result owners call this before removing their backing files,
+        which is required on Windows where open mappings prevent deletion.
+        """
+
+        image = self.spectral_obj
+        if image is None:
+            return
+        while isinstance(image, SubImage):
+            image = image.parent
+        memmap = getattr(image, "_memmap", None)
+        mapped_file = getattr(memmap, "_mmap", None)
+        if mapped_file is not None:
+            mapped_file.close()
+        if hasattr(image, "_memmap"):
+            image._memmap = None
+        file_handle = getattr(image, "fid", None)
+        if file_handle is not None and not getattr(file_handle, "closed", False):
+            file_handle.close()
+        self.spectral_obj = None
+
     def update_from(self, other: "HSIData") -> None:
         """Replace dataset contents without replacing this state object.
 
@@ -227,6 +251,36 @@ class HSIData:
         """Return ``(rows, columns, bands)`` without loading pixels."""
 
         return tuple(int(value) for value in self.image.shape)
+
+    @property
+    def original_shape(self) -> tuple[int, int, int]:
+        """Return the pre-crop cube shape without loading pixel data.
+
+        Crops are represented by nested SPy ``SubImage`` objects. Walking to
+        the root preserves the capture geometry needed to align full-width
+        detector reference frames with the currently displayed crop.
+        """
+
+        image = self.image
+        while isinstance(image, SubImage):
+            image = image.parent
+        return tuple(int(value) for value in image.shape)
+
+    @property
+    def spatial_bounds(self) -> tuple[tuple[int, int], tuple[int, int]]:
+        """Return the current row/column bounds in pre-crop coordinates."""
+
+        row_start = 0
+        column_start = 0
+        image = self.image
+        while isinstance(image, SubImage):
+            row_start += int(image.row_offset)
+            column_start += int(image.col_offset)
+            image = image.parent
+        return (
+            (row_start, row_start + self.rows),
+            (column_start, column_start + self.columns),
+        )
 
     @property
     def rows(self) -> int:

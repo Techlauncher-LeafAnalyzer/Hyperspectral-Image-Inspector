@@ -34,6 +34,10 @@ class ClassificationError(HSIError):
     """A classification request is invalid or could not be computed."""
 
 
+class CalibrationError(HSIError):
+    """Calibration inputs or computed reflectance values are invalid."""
+
+
 class CancelledError(HSIError):
     """A Controller-requested cancellation stopped Model processing.
 

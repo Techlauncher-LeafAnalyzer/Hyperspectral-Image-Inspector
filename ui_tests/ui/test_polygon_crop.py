@@ -148,6 +148,27 @@ def test_kmeans_excludes_the_region_from_clustering(loaded_window):
     assert result.class_pixel_counts.sum() == int(mask.sum())
 
 
+def test_classification_view_hides_excluded_polygon_pixels(loaded_window, qtbot):
+    loaded_window.viewer.polygonCropRequested.emit(PENTAGON)
+    loaded_window.numOfClassesEdit.setText("3")
+    loaded_window.maxIterationsEdit.setText("5")
+
+    loaded_window.unsupervisedClassifyButton.click()
+    qtbot.waitUntil(
+        lambda: not loaded_window._classification_controller.is_running(),
+        timeout=10000,
+    )
+
+    result = loaded_window._classification_controller._current_slot.result
+    roi = loaded_window._hsi_data.roi_mask
+    assert result is not None
+    assert np.all(result.class_map[~roi] == -1)
+    assert loaded_window._classification_controller.class_id_at(7, 0) is None
+    image = loaded_window.classificationViewer._photo.pixmap().toImage()
+    assert image.pixelColor(0, 7).alpha() == 0
+    assert image.pixelColor(0, 0).alpha() == 255
+
+
 def test_viewer_polygon_tool_collects_vertices(loaded_window, qtbot):
     """The context-menu tool must emit the vertices it collected."""
     viewer = loaded_window.viewer
