@@ -674,6 +674,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             event.ignore()
             return
         self._super_res_result = None
+        for transition in self._tab_transitions:
+            transition.stop()
+        self._resolution_switches.stop()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #

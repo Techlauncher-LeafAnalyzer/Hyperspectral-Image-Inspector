@@ -61,9 +61,20 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         self.setToolTip(f"Switch to {destination}")
         self.setAccessibleDescription(f"Switch to {destination}")
         self._animation.stop()
+        target = 1.0 if high_resolution else 0.0
+        if self._progress == target:
+            return
         self._animation.setStartValue(self._progress)
-        self._animation.setEndValue(1.0 if high_resolution else 0.0)
+        self._animation.setEndValue(target)
         self._animation.start()
+
+    def stop_animation(self) -> None:
+        self._animation.stop()
+        self.progress = 1.0 if self.isChecked() else 0.0
+
+    def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        self.stop_animation()
+        super().hideEvent(event)
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         del event
@@ -130,6 +141,14 @@ class ResolutionSwitchGroup(QtCore.QObject):
         )
         for switch in self.switches:
             switch.clicked.connect(on_clicked)
+        self._raise_timer = QtCore.QTimer(self)
+        self._raise_timer.setSingleShot(True)
+        self._raise_timer.timeout.connect(self.raise_switches)
+
+    def stop(self) -> None:
+        self._raise_timer.stop()
+        for switch in self.switches:
+            switch.stop_animation()
 
     def sync(self, *, available: bool, high_resolution: bool, enabled: bool) -> None:
         for switch in self.switches:
@@ -139,6 +158,7 @@ class ResolutionSwitchGroup(QtCore.QObject):
             if available:
                 switch.raise_()
 
+    @QtCore.pyqtSlot()
     def raise_switches(self) -> None:
         for switch in self.switches:
             if not switch.isHidden():
@@ -146,4 +166,4 @@ class ResolutionSwitchGroup(QtCore.QObject):
                 switch.raise_()
 
     def schedule_raise(self) -> None:
-        QtCore.QTimer.singleShot(0, self.raise_switches)
+        self._raise_timer.start(0)
