@@ -10,7 +10,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 class ResolutionToggle(QtWidgets.QAbstractButton):
     """Pill switch: light 1× original, dark 2× super-resolved."""
 
-    WIDTH = 138
+    WIDTH = 116
     HEIGHT = 36
     INSET = 12
     KNOB = 30
@@ -113,32 +113,58 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         painter.setOpacity(1 - progress)
         painter.setPen(QtGui.QColor("#1d2228"))
         painter.drawText(
-            QtCore.QRectF(3, 0, width - 39, self.HEIGHT),
+            QtCore.QRectF(6, 0, width - self.KNOB - 12, self.HEIGHT),
             QtCore.Qt.AlignmentFlag.AlignCenter,
             self._low_label,
         )
         painter.setOpacity(progress)
         painter.setPen(QtGui.QColor("#ffffff"))
         painter.drawText(
-            QtCore.QRectF(36, 0, width - 40, self.HEIGHT),
+            QtCore.QRectF(self.KNOB + 6, 0, width - self.KNOB - 12, self.HEIGHT),
             QtCore.Qt.AlignmentFlag.AlignCenter,
             self._high_label,
         )
 
 
+class CalibrationBadge(QtWidgets.QLabel):
+    """Noninteractive status tag for the currently displayed calibrated cube."""
+
+    def __init__(self, canvas: QtWidgets.QWidget, name: str) -> None:
+        super().__init__("Calibrated", canvas)
+        self.setObjectName(name)
+        self.setAccessibleName("Calibrated image")
+        self.setToolTip("The displayed hyperspectral image is calibrated")
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.setFixedHeight(28)
+        self.setStyleSheet(
+            "color: #166534; background: #dcfce7; border: 1px solid #bbf7d0; "
+            "border-radius: 13px; padding: 0 10px; font-size: 12px; font-weight: 600;"
+        )
+        self.adjustSize()
+        self.hide()
+
+
 class ResolutionSwitchGroup(QtCore.QObject):
-    """Keep the three non-SR image canvases on one resolution selection."""
+    """Shared resolution selection and fixed-position calibration status tags."""
 
     def __init__(
         self,
         canvases: Iterable[tuple[QtWidgets.QWidget, str]],
         on_clicked: Callable[[bool], None],
         parent: QtCore.QObject,
+        *,
+        badge_only_canvases: Iterable[tuple[QtWidgets.QWidget, str]] = (),
     ) -> None:
         super().__init__(parent)
+        canvases = tuple(canvases)
         self.switches = tuple(
             ResolutionToggle(canvas, name) for canvas, name in canvases
         )
+        self.calibration_badges = tuple(
+            CalibrationBadge(canvas, name.replace("ResolutionSwitch", "CalibrationBadge"))
+            for canvas, name in canvases
+        ) + tuple(CalibrationBadge(canvas, name) for canvas, name in badge_only_canvases)
         for switch in self.switches:
             switch.clicked.connect(on_clicked)
         self._raise_timer = QtCore.QTimer(self)
@@ -157,6 +183,12 @@ class ResolutionSwitchGroup(QtCore.QObject):
             switch.setVisible(available)
             if available:
                 switch.raise_()
+        self.raise_switches()
+
+    def set_calibrated(self, calibrated: bool) -> None:
+        for badge in self.calibration_badges:
+            badge.setVisible(calibrated)
+        self.raise_switches()
 
     @QtCore.pyqtSlot()
     def raise_switches(self) -> None:
@@ -164,6 +196,15 @@ class ResolutionSwitchGroup(QtCore.QObject):
             if not switch.isHidden():
                 switch.move(switch.INSET, switch.INSET)
                 switch.raise_()
+        for index, badge in enumerate(self.calibration_badges):
+            if badge.isHidden():
+                continue
+            x = ResolutionToggle.INSET
+            if index < len(self.switches) and not self.switches[index].isHidden():
+                x += self.switches[index].width() + 8
+            y = ResolutionToggle.INSET + (ResolutionToggle.HEIGHT - badge.height()) // 2
+            badge.move(x, y)
+            badge.raise_()
 
     def schedule_raise(self) -> None:
         self._raise_timer.start(0)

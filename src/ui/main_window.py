@@ -184,6 +184,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             ),
             self._select_canvas_resolution,
             self,
+            badge_only_canvases=((self.superResViewer, "superResolutionCalibrationBadge"),),
         )
         self.visualizationStack.currentChanged.connect(
             lambda _index: self._resolution_switches.schedule_raise()
@@ -841,6 +842,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _refresh_viewers_display(self) -> None:
         data = self._display_data()
+        self._resolution_switches.set_calibrated(
+            self._calibration_controller.result_for_resolution(
+                self._is_super_resolution_active()
+            ) is not None
+        )
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else data.rgb_array
         rgb_display = data.rgb_array
