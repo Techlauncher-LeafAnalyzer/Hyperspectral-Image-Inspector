@@ -1009,6 +1009,19 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
+    def _pipeline_busy(self) -> bool:
+        """Report whether a background worker holds exclusive access to the cube.
+
+        Shared by `_crop_is_blocked` and crop undo/redo: all three must not
+        run while SR, calibration, or classification is mutating/reading the
+        same `_hsi_data`/SpyFile.
+        """
+        return (
+            self._super_res_worker is not None
+            or self._calibration_controller.is_running()
+            or self._classification_controller.is_running()
+        )
+
     def _crop_is_blocked(self) -> bool:
         """Report whether the pipeline can accept a crop right now.
 
@@ -1036,6 +1049,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return True
         return False
 
+    def _invalidate_for_crop_change(self) -> None:
+        """Discard classification/calibration state tied to the old crop geometry.
+
+        Shared by applying a new crop and restoring a crop snapshot (undo/redo);
+        both leave `_hsi_data` with a geometry that the prior results were not
+        computed against.
+        """
+        self._classification_controller.clear_result()
+        self._calibration_controller.source_geometry_changed()
+
     def _apply_crop(self, crop: Callable[[], tuple[int, int] | None], label: str) -> None:
         """Snapshot, apply a crop operation, and refresh, or roll back."""
         self._crop_undo_stack.append(self._snapshot_current_state())
@@ -1046,8 +1069,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._crop_undo_stack.pop()
             return
 
-        self._classification_controller.clear_result()
-        self._calibration_controller.source_geometry_changed()
+        self._invalidate_for_crop_change()
         self.statusbar.showMessage(
             f"{label} to {cropped_size[0]}x{cropped_size[1]}"
         )
@@ -1137,28 +1159,17 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data.mask_array   = snapshot.mask_array
         self._hsi_data.spectral_obj = snapshot.spectral_obj
         self._hsi_data.roi_mask     = snapshot.roi_mask
-        self._classification_controller.clear_result()
-        self._calibration_controller.source_geometry_changed()
+        self._invalidate_for_crop_change()
 
     def _undo_crop(self) -> None:
-        if (
-            self._super_res_worker is not None
-            or self._calibration_controller.is_running()
-            or self._classification_controller.is_running()
-            or not self._crop_undo_stack
-        ):
+        if self._pipeline_busy() or not self._crop_undo_stack:
             return
         self._crop_redo_stack.append(self._snapshot_current_state())
         self._restore_snapshot(self._crop_undo_stack.pop())
         self.statusbar.showMessage("Crop undone")
 
     def _redo_crop(self) -> None:
-        if (
-            self._super_res_worker is not None
-            or self._calibration_controller.is_running()
-            or self._classification_controller.is_running()
-            or not self._crop_redo_stack
-        ):
+        if self._pipeline_busy() or not self._crop_redo_stack:
             return
         self._crop_undo_stack.append(self._snapshot_current_state())
         self._restore_snapshot(self._crop_redo_stack.pop())

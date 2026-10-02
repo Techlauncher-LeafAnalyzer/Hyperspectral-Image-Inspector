@@ -76,20 +76,19 @@ class CalibrationFrameResolver:
         if source_time is None or not source.parent.is_dir():
             return None
 
-        directory_files = {
-            path.name.casefold(): path
-            for path in source.parent.iterdir()
-            if path.is_file()
-        }
+        directory_entries = [
+            path for path in source.parent.iterdir() if path.is_file()
+        ]
+        available_names = {path.name.casefold() for path in directory_entries}
         candidates: list[tuple[datetime, Path]] = []
-        for path in directory_files.values():
+        for path in directory_entries:
             if path.suffix.casefold() != ".hdr":
                 continue
             captured_at = self._capture_time(path, calibration_frame=True)
             if captured_at is None or captured_at >= source_time:
                 continue
             if not any(
-                f"{path.stem}{extension}".casefold() in directory_files
+                f"{path.stem}{extension}".casefold() in available_names
                 for extension in DATA_EXTENSIONS
             ):
                 continue

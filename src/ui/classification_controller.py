@@ -240,6 +240,7 @@ class ClassificationController(QObject):
         self._training_pair: Optional[TrainingFilePair] = None
         self._training_mask_path: Optional[Path] = None
         self._training_cube_path: Optional[Path] = None
+        self._manual_cube_path: Optional[Path] = None
         self._close_after_classification = False
 
         self._configure_controls()
@@ -303,11 +304,11 @@ class ClassificationController(QObject):
         self._layer_panel.clear()
 
     def clear_super_resolution_result(self) -> None:
-        """Discard only the Super-Resolution slot, e.g. before a fresh SR run.
+        """Discard only the Super-Resolution slot, e.g. when its SR image is discarded.
 
-        A new Super-Resolution result has different data than whatever the
-        stale high-res slot was classified against, while the
-        original-resolution slot is unaffected and stays valid.
+        Used when the high-res Super-Resolution result is thrown away (such as
+        before re-calibrating), leaving the original-resolution slot unaffected
+        and still valid.
         """
 
         self._slots[True] = _ClassificationSlot()
@@ -439,9 +440,7 @@ class ClassificationController(QObject):
             QMessageBox.critical(self._parent, "Invalid ground-truth mask", str(exc))
             return
 
-        preselected_cube = (
-            self._training_cube_path if self._training_mask_path is None else None
-        )
+        preselected_cube = self._manual_cube_path
         self._training_mask_path = mask_path
         self._groundtruth_path_edit.setText(str(mask_path))
         self._groundtruth_path_edit.setToolTip(str(mask_path))
@@ -504,6 +503,7 @@ class ClassificationController(QObject):
         except ClassificationError as exc:
             QMessageBox.critical(self._parent, "Invalid hyperspectral image", str(exc))
             return
+        self._manual_cube_path = cube_path
         self._set_training_cube(cube_path, pair=pair)
         if pair is None:
             message = "Training cube selected; choose a ground-truth mask"

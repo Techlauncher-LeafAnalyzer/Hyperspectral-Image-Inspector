@@ -164,6 +164,8 @@ class HSIData:
         image = self.spectral_obj
         if image is None:
             return
+        while isinstance(image, SubImage):
+            image = image.parent
         memmap = getattr(image, "_memmap", None)
         mapped_file = getattr(memmap, "_mmap", None)
         if mapped_file is not None:
