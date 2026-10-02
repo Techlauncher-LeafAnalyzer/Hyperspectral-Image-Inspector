@@ -182,6 +182,49 @@ QComboBox::down-arrow {
     height: 6px;
 }
 
+QComboBox#comboBox {
+    color: #173532;
+    border-radius: 7px;
+    padding: 7px 40px 7px 12px;
+    font-weight: 600;
+    selection-background-color: #e1f2ee;
+    selection-color: #124a40;
+}
+
+QComboBox#comboBox:hover {
+    background: #f7fbfa;
+}
+
+QComboBox#comboBox:focus,
+QComboBox#comboBox:on {
+    background: #ffffff;
+}
+
+QComboBox#comboBox:disabled {
+    color: #9ba9a6;
+    background: #f0f3f2;
+}
+
+QComboBox#comboBox::drop-down {
+    width: 34px;
+    border: 0;
+    border-left: 1px solid #dce8e4;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+    background: #f2f8f6;
+}
+
+QComboBox#comboBox::drop-down:hover,
+QComboBox#comboBox:on::drop-down {
+    background: #e3f2ee;
+    border-left-color: #b6d7d0;
+}
+
+QComboBox#comboBox:disabled::drop-down {
+    background: #edf1f0;
+    border-left-color: #dde5e2;
+}
+
 QRadioButton {
     color: #263735;
     background: transparent;
@@ -901,6 +944,39 @@ QSlider#layerOpacitySlider::handle:horizontal:hover,
 QSlider#globalOpacitySlider::handle:horizontal:hover {
     background: #dff1ed;
     border-color: #0d6a5f;
+}
+"""
+
+
+CLASSIFIER_BORDER_QSS = """
+QComboBox#comboBox { border: 1px solid #b9d0ca; }
+QComboBox#comboBox:hover { border: 1px solid #83b8ad; }
+QComboBox#comboBox:focus,
+QComboBox#comboBox:on { border: 1px solid #168b7b; }
+QComboBox#comboBox:disabled { border: 1px solid #dde5e2; }
+"""
+
+
+CLASSIFIER_POPUP_QSS = """
+QListView {
+    background: #ffffff;
+    color: #263735;
+    border: 1px solid #cbdad6;
+    border-radius: 6px;
+    padding: 4px;
+    outline: 0;
+    selection-background-color: #e1f2ee;
+    selection-color: #124a40;
+}
+
+QListView::item {
+    padding: 5px 10px;
+    border-radius: 4px;
+}
+
+QListView::item:hover {
+    background: #edf7f4;
+    color: #124a40;
 }
 """
 
