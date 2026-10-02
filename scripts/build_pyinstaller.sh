@@ -51,6 +51,10 @@ fi
   `# Collected explicitly: spectral's submodules are partly reached through` \
   `# package __init__ re-exports that static analysis can miss.` \
   --collect-submodules spectral \
+  `# PyOpenGL imports its platform backend by name at runtime, and the stock` \
+  `# hook only bundles glx on Linux. Wayland sessions select egl, so without` \
+  `# it the hypercube tab's initializeGL fails to import OpenGL.GL.` \
+  --hidden-import OpenGL.platform.egl \
   `# Resource paths: ui/*.py resolve Path(__file__).parent / "assets", and` \
   `# core/super_resolution_model.py resolves sys._MEIPASS / "model".` \
   --add-data "src/ui/assets:ui/assets" \
