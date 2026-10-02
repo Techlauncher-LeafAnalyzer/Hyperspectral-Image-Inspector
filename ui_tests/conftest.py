@@ -109,3 +109,22 @@ def sr_source(tmp_path):
     envi.save_image(str(path), cube, ext=".bip", interleave="bip",
                     metadata={"wavelength": np.linspace(352.49, 898.81, 480).tolist()})
     return HSIReader().open(path), cube
+
+
+@pytest.fixture
+def camera_cube_factory(tmp_path):
+    """Small captures with configurable camera wavelength grids and units."""
+    opened = []
+
+    def create(wavelengths, *, name="camera", units="nm"):
+        cube = np.random.default_rng(42).random((6, 8, len(wavelengths)), dtype=np.float32)
+        header = tmp_path / f"{name}.hdr"
+        envi.save_image(str(header), cube, ext=".bip", interleave="bip",
+                        metadata={"wavelength": list(wavelengths), "wavelength units": units})
+        data = HSIReader().open(header)
+        opened.append(data)
+        return data, cube
+
+    yield create
+    for data in opened:
+        data.close()

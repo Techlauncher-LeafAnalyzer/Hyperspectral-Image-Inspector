@@ -16,7 +16,7 @@ from matplotlib import colormaps
 import numpy as np
 from spectral import get_rgb
 
-from .errors import CancelledError, VisualizationError
+from .errors import CancelledError, VisualizationError, WavelengthError
 from .hsi_data import HSIData
 
 
@@ -157,6 +157,8 @@ class VisualizationService:
     """
 
     RGB_TARGETS = MappingProxyType({"red": 660.0, "green": 550.0, "blue": 470.0})
+    RGB_TOLERANCE_NM = 20.0
+    INDEX_TOLERANCE_NM = 15.0
     DEFAULT_COLORMAPS = MappingProxyType(
         {
             VisualizationMode.NDVI: "RdYlGn",
@@ -172,6 +174,18 @@ class VisualizationService:
     def supported_modes(self) -> tuple[VisualizationMode, ...]:
         """Return supported 2D modes for populating Controller actions."""
         return tuple(VisualizationMode)
+
+    def unavailable_reason(self, data: HSIData, mode: VisualizationMode | str) -> str | None:
+        """Check wavelength capabilities without reading any image pixels."""
+        if not data.is_loaded():
+            return "Load an image first."
+        mode = self._coerce_mode(mode)
+        if mode not in (VisualizationMode.RGB, VisualizationMode.BAND):
+            try:
+                self._index_band_indices(data, mode)
+            except WavelengthError as exc:
+                return f"{mode.value} unavailable: {exc}"
+        return None
 
     def render(
         self,
@@ -349,10 +363,19 @@ class VisualizationService:
         )
 
     def _render_rgb(self, data: HSIData, stretch: DisplayStretch) -> VisualizationResult:
-        indices = {
-            name: data.nearest_band(target, tolerance_nm=20)
-            for name, target in self.RGB_TARGETS.items()
-        }
+        false_colour = False
+        try:
+            indices = {
+                name: data.nearest_band(target, tolerance_nm=self.RGB_TOLERANCE_NM)
+                for name, target in self.RGB_TARGETS.items()
+            }
+        except WavelengthError:
+            # Missing visible coverage is not a load failure. Retain all original
+            # spectral data and use first/middle/last for the display channels.
+            if data.bands < 1 or data.wavelengths_nm.size != data.bands:
+                raise
+            indices = {"red": 0, "green": data.bands // 2, "blue": data.bands - 1}
+            false_colour = True
         if data.roi_mask is None:
             rgb = get_rgb(
                 data.image,
@@ -387,7 +410,8 @@ class VisualizationService:
             display_rgb=display,
             values=None,
             title=(
-                f"RGB ({wavelengths['red']:g}, {wavelengths['green']:g}, "
+                f"{'False-colour RGB' if false_colour else 'RGB'} "
+                f"({wavelengths['red']:g}, {wavelengths['green']:g}, "
                 f"{wavelengths['blue']:g} nm)"
             ),
             value_range=(0.0, 1.0),
@@ -425,11 +449,7 @@ class VisualizationService:
         mode: VisualizationMode,
         request: VisualizationRequest,
     ) -> VisualizationResult:
-        targets = self._index_targets(mode)
-        indices = {
-            name: data.nearest_band(wavelength, tolerance_nm=15)
-            for name, wavelength in targets.items()
-        }
+        indices = self._index_band_indices(data, mode)
         cube = data.read_bands(list(indices.values()))
         bands = {name: cube[:, :, position] for position, name in enumerate(indices)}
         values = self._calculate_index(mode, bands)
@@ -458,6 +478,13 @@ class VisualizationService:
             colormap=colormap,
             display_limits=limits,
         )
+
+    def _index_band_indices(self, data: HSIData, mode: VisualizationMode) -> dict[str, int]:
+        """Share exact target/tolerance rules between rendering and UI gating."""
+        return {
+            name: data.nearest_band(wavelength, tolerance_nm=self.INDEX_TOLERANCE_NM)
+            for name, wavelength in self._index_targets(mode).items()
+        }
 
     @staticmethod
     def _index_targets(mode: VisualizationMode) -> Mapping[str, float]:

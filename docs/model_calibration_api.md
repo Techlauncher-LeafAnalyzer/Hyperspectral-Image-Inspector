@@ -46,7 +46,9 @@ them automatically: the earlier capture is dark and the later capture is
 bright. Explicit picker order remains supported for legacy file names.
 
 On source load, `CalibrationFrameResolver` scans only the source folder for
-complete `_calibFrame.hdr` plus data-file pairs captured before the source.
+complete `_calibFrame.hdr` or `_calibFrame.json` plus data-file pairs captured
+before the source. When both metadata files exist for a frame, `.hdr` takes
+priority and the frame is counted only once.
 Frames are paired only when captured no more than 60 seconds apart, and the
 valid pair with the most recent bright frame is selected. This is a convenience,
 not a prerequisite: when no pair is found the fields remain empty, and either

@@ -22,6 +22,7 @@ from core import (
     HSIData,
     HSIError,
     HSIReader,
+    HSI_FILE_FILTER,
     SupervisedClassificationRequest,
     SupervisedClassificationResult,
     SupervisedClassifierType,
@@ -505,10 +506,7 @@ class ClassificationController(QObject):
             self._parent,
             "Open Training Hyperspectral Image",
             "",
-            (
-                "Hyperspectral Images (*.hdr *.bil *.bip *.bsq *.dat *.img *.raw);;"
-                "All Files (*)"
-            ),
+            HSI_FILE_FILTER,
         )
         if not cube_path_str:
             return

@@ -40,7 +40,7 @@ from .classification_layer_model import (
     ClassificationLayerModel,
 )
 from .hsi_data import Functionality, HSIData, ImageFormat
-from .hsi_reader import HSIReader
+from .hsi_reader import HSI_FILE_FILTER, HSIReader
 from .roi import Masked, polygon_mask
 from .super_resolution_model import (
     SuperResolutionRequest,
@@ -87,6 +87,7 @@ __all__ = [
     "HSIFileError",
     "HSIHeaderError",
     "HSIReader",
+    "HSI_FILE_FILTER",
     "HypercubeData",
     "HypercubeViewData",
     "ImageFormat",

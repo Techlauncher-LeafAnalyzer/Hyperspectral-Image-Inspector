@@ -17,6 +17,7 @@ from core import (
     CalibrationService,
     HSIData,
     HSIError,
+    HSI_FILE_FILTER,
     VisualizationResult,
     order_calibration_frame_paths,
 )
@@ -233,10 +234,7 @@ class CalibrationController(QtCore.QObject):
             self._parent,
             title,
             "",
-            (
-                "Hyperspectral Images (*.hdr *.bil *.bip *.bsq *.dat *.img *.raw);;"
-                "All Files (*)"
-            ),
+            HSI_FILE_FILTER,
         )
         if not selected:
             return None
