@@ -3,7 +3,7 @@
 import pytest
 from PyQt6 import QtCore, QtWidgets, sip
 
-from ui.resolution_toggle import CalibrationToggle, ResolutionSwitchGroup, ResolutionToggle
+from ui.resolution_toggle import CalibrationToggle, ImageStatePanel, ResolutionSwitchGroup, ResolutionToggle
 
 
 def test_resolution_toggle_is_compact_and_animates_between_states(qtbot):
@@ -15,7 +15,7 @@ def test_resolution_toggle_is_compact_and_animates_between_states(qtbot):
     canvas.show()
     qtbot.waitExposed(canvas)
 
-    assert switch.size() == QtCore.QSize(208, 36)
+    assert switch.size() == QtCore.QSize(216, 40)
     assert switch.pos() == QtCore.QPoint(12, 12)
     assert switch.progress == pytest.approx(0.0)
 
@@ -92,35 +92,42 @@ def test_deleting_canvas_during_toggle_animation_deletes_animation(qtbot):
     assert sip.isdeleted(animation)
 
 
-def test_calibration_switches_align_and_wrap_on_narrow_canvases(qtbot):
-    canvases = [QtWidgets.QWidget() for _ in range(4)]
-    for canvas in canvases:
-        qtbot.addWidget(canvas)
-        canvas.resize(640, 200)
-        canvas.show()
+def test_image_state_panel_stacks_equal_pills_and_reclaims_space_when_empty(qtbot):
+    canvas = QtWidgets.QWidget()
+    qtbot.addWidget(canvas)
+    canvas.resize(640, 400)
+    panel = ImageStatePanel(canvas, "testResolutionSwitch")
+    row = QtWidgets.QHBoxLayout(canvas)
+    row.addWidget(panel)
+    image = QtWidgets.QWidget(canvas)
+    row.addWidget(image, 1)
     group = ResolutionSwitchGroup(
-        ((canvas, f"page{index}ResolutionSwitch") for index, canvas in enumerate(canvases[:3])),
-        lambda high: None, canvases[0], on_calibration_clicked=lambda calibrated: None,
-        calibration_only_canvases=((canvases[3], "superResolutionCalibrationSwitch"),),
+        (panel,), lambda high: None, canvas, on_calibration_clicked=lambda calibrated: None,
     )
-    assert len(group.switches) == 3 and len(group.calibration_switches) == 4
-    assert all(switch.isHidden() for switch in group.calibration_switches)
+    canvas.show()
+    assert panel.isHidden()
     group.sync(available=True, high_resolution=False, enabled=True)
     group.sync_calibration(available=True, calibrated=True, enabled=True, current_available=True)
-    for switch in group.calibration_switches[:3]:
-        assert switch.pos() == QtCore.QPoint(228, 12)
-        assert switch.isChecked()
-        assert switch.height() == group.switches[0].height()
-    assert group.calibration_switches[3].pos() == QtCore.QPoint(12, 12)
-    for canvas in canvases:
-        canvas.resize(400, 380)
-    assert group.calibration_switches[0].pos() == QtCore.QPoint(12, 56)
-    group.sync(available=False, high_resolution=False, enabled=True)
-    assert all(switch.pos() == QtCore.QPoint(12, 12) for switch in group.calibration_switches)
+    qtbot.wait(20)
+    resolution, calibration = group.switches[0], group.calibration_switches[0]
+    assert resolution.size() == calibration.size() == QtCore.QSize(216, 40)
+    origin = QtCore.QPoint()
+    resolution_pos = resolution.mapTo(panel, origin)
+    calibration_pos = calibration.mapTo(panel, origin)
+    assert resolution_pos.x() == calibration_pos.x() == 18
+    assert calibration_pos.y() > resolution_pos.y() + resolution.height()
+    assert not panel.geometry().intersects(image.geometry())
+    canvas.resize(520, 400)
+    qtbot.wait(20)
+    assert calibration.mapTo(panel, origin) == calibration_pos
+    assert not panel.geometry().intersects(image.geometry())
     group.sync_calibration(available=True, calibrated=False, enabled=True, current_available=False)
-    assert all(not switch.isEnabled() and not switch.isChecked() for switch in group.calibration_switches)
+    assert not calibration.isEnabled() and not calibration.isChecked()
+    group.sync(available=False, high_resolution=False, enabled=True)
+    assert panel.resolution_section.isHidden()
+    assert not panel.isHidden()
     group.sync_calibration(available=False, calibrated=False, enabled=True, current_available=False)
-    assert all(switch.isHidden() for switch in group.calibration_switches)
+    assert panel.isHidden()
 
 
 @pytest.mark.parametrize("toggle_type", [ResolutionToggle, CalibrationToggle])

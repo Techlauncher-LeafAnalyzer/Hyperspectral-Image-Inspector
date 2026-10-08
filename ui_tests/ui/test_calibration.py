@@ -315,7 +315,7 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
 
     window.tabWidget.setCurrentWidget(window.Visualization)
     assert window._display_data() is result.data
-    assert window.visualizationStack.findChild(QtCore.QObject, "visualizationCalibrationSwitch") is not None
+    assert window.Visualization.findChild(QtCore.QObject, "visualizationCalibrationSwitch") is not None
     window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
     np.testing.assert_allclose(
         received[-1].values, result.data.read_pixel(1, 2), atol=1e-6
