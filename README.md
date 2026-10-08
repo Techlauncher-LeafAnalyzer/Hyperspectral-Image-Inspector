@@ -18,12 +18,12 @@ through a cancellable Calibration-tab worker without modifying the source.
 Nearby earlier `_calibFrame` pairs are selected automatically on source load,
 with manual Dark/Bright replacement always available.
 
-After calibration, use **Before Calibration / After Calibration** above any
+After calibration, use **Before / After** under **Calibration** beside any
 image to compare the retained raw and calibrated cubes without rerunning
 calibration. **Low Res / High Res** independently selects the resolution after
-Super-Resolution completes. Both equal-width pill selectors are stacked at the
-upper left of the image canvas. They stay synchronized across tabs and preserve
-pan/zoom. Spectra,
+Super-Resolution completes. Both equal-width pill selectors are stacked in a
+dedicated left rail, keeping the image unobstructed. They stay synchronized
+across tabs and preserve pan/zoom. Spectra,
 pixel values, visualization modes, and image export follow the selected cube;
 classification layers are retained separately for each combination. Processing
 temporarily disables the selectors. Loading a new image, changing references,

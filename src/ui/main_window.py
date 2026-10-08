@@ -40,7 +40,7 @@ from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
 from ui.image_capabilities import ImageCapabilityController
-from ui.resolution_toggle import ResolutionSwitchGroup
+from ui.resolution_toggle import ImageStatePanel, ResolutionSwitchGroup
 from ui.resource_usage import ResourceUsageWidget
 from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
@@ -194,7 +194,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._resource_usage, QtCore.Qt.Corner.TopRightCorner
         )
         # Keep the Designer radio buttons as the shared state source; the visible
-        # SR comparison uses the same segmented control as all image canvases.
+        # SR comparison uses the same segmented control as all image-view rails.
         self.lowResButton.hide()
         self.highResButton.hide()
         self.superResFlowArrow.hide()
@@ -203,12 +203,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.runSuperResButton, 0, 1, 1, 3, QtCore.Qt.AlignmentFlag.AlignLeft
         )
         self._resolution_switches = ResolutionSwitchGroup(
-            (
-                (self.visualizationStack, "visualizationResolutionSwitch"),
-                (self.calibrationViewer, "calibrationResolutionSwitch"),
-                (self.classificationViewer, "classificationResolutionSwitch"),
-                (self.superResViewer, "superResolutionSwitch"),
-            ),
+            self._configure_image_state_panels(),
             self._select_canvas_resolution,
             self,
             on_calibration_clicked=self._select_canvas_calibration,
@@ -223,6 +218,26 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
     # ------------------------------------------------------------------ #
+
+    def _configure_image_state_panels(self) -> tuple[ImageStatePanel, ...]:
+        panels = []
+        for canvas, layout, name in (
+            (self.visualizationStack, self.verticalLayout, "visualizationResolutionSwitch"),
+            (self.calibrationViewer, self.calibrationLayout, "calibrationResolutionSwitch"),
+            (self.classificationViewer, self.classificationViewerRow, "classificationResolutionSwitch"),
+            (self.superResViewer, self.verticalLayout_2, "superResolutionSwitch"),
+        ):
+            row = QtWidgets.QWidget(canvas.parentWidget())
+            row.setObjectName(f"{name}Row")
+            layout.replaceWidget(canvas, row)
+            row_layout = QtWidgets.QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(12)
+            panel = ImageStatePanel(row, name)
+            row_layout.addWidget(panel)
+            row_layout.addWidget(canvas, 1)
+            panels.append(panel)
+        return tuple(panels)
 
     def _configure_tabs(self) -> None:
         tab_settings = (

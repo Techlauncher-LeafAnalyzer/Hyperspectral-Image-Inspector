@@ -455,7 +455,7 @@ def test_visualization_view_maps_framing_between_resolutions(
     assert window.viewer.get_view_state()[0] == pytest.approx(4.0)
 
 
-def test_image_switches_stay_at_upper_left_of_original_canvases(
+def test_image_switches_stay_in_left_rail_without_covering_any_canvas(
     loaded_window, stub_sr, qtbot
 ):
     window = loaded_window
@@ -465,28 +465,29 @@ def test_image_switches_stay_at_upper_left_of_original_canvases(
     window.show()
     qtbot.waitExposed(window)
     cases = (
-        (window.Visualization, window.visualizationStack, window.verticalLayout, 0),
-        (window.Calibration, window.calibrationViewer, window.calibrationLayout, 1),
-        (window.Classification, window.classificationViewer, window.classificationViewerRow, 2),
-        (window.SuperResolution, window.superResViewer, window.verticalLayout_2, 3),
+        (window.Visualization, window.visualizationStack, 0),
+        (window.Calibration, window.calibrationViewer, 1),
+        (window.Classification, window.classificationViewer, 2),
+        (window.SuperResolution, window.superResViewer, 3),
     )
     for width in (924, 1100):
         window.resize(width, 820)
-        for page, canvas, layout, index in cases:
+        for page, canvas, index in cases:
             window.tabWidget.setCurrentWidget(page)
             qtbot.wait(30)
+            panel = window._resolution_switches.panels[index]
             switch = window._resolution_switches.switches[index]
-            assert layout.indexOf(canvas) == 0
-            assert switch.parentWidget() is canvas
+            assert panel.parentWidget() is canvas.parentWidget()
             assert switch.isVisible()
-            assert switch.pos() == QtCore.QPoint(12, 12)
-            assert canvas.childAt(switch.geometry().center()) is switch
+            assert panel.geometry().right() < canvas.geometry().left()
+            assert not panel.geometry().intersects(canvas.geometry())
+            assert switch.mapTo(panel, QtCore.QPoint()).x() == 18
     window.tabWidget.setCurrentWidget(window.Visualization)
     window.modeHyperCube.setChecked(True)
     qtbot.wait(30)
-    switch = window._resolution_switches.switches[0]
-    assert switch.pos() == QtCore.QPoint(12, 12)
-    assert window.visualizationStack.childAt(switch.geometry().center()) is switch
+    panel = window._resolution_switches.panels[0]
+    assert panel.geometry().right() < window.visualizationStack.geometry().left()
+    assert window._resolution_switches.switches[0].isVisible()
 
 
 def test_high_res_switch_shown_without_notice_when_switching_to_visualization(loaded_window, stub_sr, qtbot, dialogs):

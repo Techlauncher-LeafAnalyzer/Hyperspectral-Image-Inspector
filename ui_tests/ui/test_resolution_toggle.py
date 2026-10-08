@@ -3,7 +3,7 @@
 import pytest
 from PyQt6 import QtCore, QtWidgets, sip
 
-from ui.resolution_toggle import CalibrationToggle, ResolutionSwitchGroup, ResolutionToggle
+from ui.resolution_toggle import CalibrationToggle, ImageStatePanel, ResolutionSwitchGroup, ResolutionToggle
 
 
 def test_resolution_toggle_is_compact_and_animates_between_states(qtbot):
@@ -15,7 +15,7 @@ def test_resolution_toggle_is_compact_and_animates_between_states(qtbot):
     canvas.show()
     qtbot.waitExposed(canvas)
 
-    assert switch.size() == QtCore.QSize(280, 40)
+    assert switch.size() == QtCore.QSize(216, 40)
     assert switch.pos() == QtCore.QPoint(12, 12)
     assert switch.progress == pytest.approx(0.0)
 
@@ -92,32 +92,42 @@ def test_deleting_canvas_during_toggle_animation_deletes_animation(qtbot):
     assert sip.isdeleted(animation)
 
 
-def test_image_switches_stack_equal_pills_without_changing_canvas_layout(qtbot):
+def test_image_state_panel_stacks_equal_pills_and_reclaims_space_when_empty(qtbot):
     canvas = QtWidgets.QWidget()
     qtbot.addWidget(canvas)
     canvas.resize(640, 400)
+    panel = ImageStatePanel(canvas, "testResolutionSwitch")
+    row = QtWidgets.QHBoxLayout(canvas)
+    row.addWidget(panel)
+    image = QtWidgets.QWidget(canvas)
+    row.addWidget(image, 1)
     group = ResolutionSwitchGroup(
-        ((canvas, "testResolutionSwitch"),), lambda high: None, canvas,
-        on_calibration_clicked=lambda calibrated: None,
+        (panel,), lambda high: None, canvas, on_calibration_clicked=lambda calibrated: None,
     )
     canvas.show()
+    assert panel.isHidden()
     group.sync(available=True, high_resolution=False, enabled=True)
     group.sync_calibration(available=True, calibrated=True, enabled=True, current_available=True)
+    qtbot.wait(20)
     resolution, calibration = group.switches[0], group.calibration_switches[0]
-    assert resolution.size() == calibration.size() == QtCore.QSize(280, 40)
-    assert resolution.pos() == QtCore.QPoint(12, 12)
-    assert calibration.pos() == QtCore.QPoint(12, 60)
-    assert not resolution.geometry().intersects(calibration.geometry())
-    assert canvas.layout() is None
+    assert resolution.size() == calibration.size() == QtCore.QSize(216, 40)
+    origin = QtCore.QPoint()
+    resolution_pos = resolution.mapTo(panel, origin)
+    calibration_pos = calibration.mapTo(panel, origin)
+    assert resolution_pos.x() == calibration_pos.x() == 18
+    assert calibration_pos.y() > resolution_pos.y() + resolution.height()
+    assert not panel.geometry().intersects(image.geometry())
     canvas.resize(520, 400)
-    assert calibration.pos() == QtCore.QPoint(12, 60)
+    qtbot.wait(20)
+    assert calibration.mapTo(panel, origin) == calibration_pos
+    assert not panel.geometry().intersects(image.geometry())
     group.sync_calibration(available=True, calibrated=False, enabled=True, current_available=False)
     assert not calibration.isEnabled() and not calibration.isChecked()
     group.sync(available=False, high_resolution=False, enabled=True)
-    assert resolution.isHidden()
-    assert calibration.pos() == QtCore.QPoint(12, 12)
+    assert panel.resolution_section.isHidden()
+    assert not panel.isHidden()
     group.sync_calibration(available=False, calibrated=False, enabled=True, current_available=False)
-    assert calibration.isHidden()
+    assert panel.isHidden()
 
 
 @pytest.mark.parametrize("toggle_type", [ResolutionToggle, CalibrationToggle])
