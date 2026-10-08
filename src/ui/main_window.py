@@ -115,6 +115,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._close_after_sr = False
         self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
+        self._visualization_cache: dict[
+            tuple[bool, bool], tuple[HSIData, dict[VisualizationMode, VisualizationResult]]
+        ] = {}
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
         self._hypercube_controller = HypercubeController(
@@ -144,6 +147,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.actionLoadImage,
             lambda: self._hypercube_controller.stop_and_wait(),
             self,
+            is_calibrated=lambda: self._calibration_controller.display_result is not None,
         )
         self._calibration_controller = CalibrationController(
             self._hsi_data,
@@ -189,16 +193,27 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.tabWidget.setCornerWidget(
             self._resource_usage, QtCore.Qt.Corner.TopRightCorner
         )
+        # Keep the Designer radio buttons as the shared state source; the visible
+        # SR comparison uses the same segmented control as all canvas overlays.
+        self.lowResButton.hide()
+        self.highResButton.hide()
+        self.superResFlowArrow.hide()
+        self.superResComparisonLabel.setText("Processing")
+        self.superResGrid.addWidget(
+            self.runSuperResButton, 0, 1, 1, 3, QtCore.Qt.AlignmentFlag.AlignLeft
+        )
         self._resolution_switches = ResolutionSwitchGroup(
             (
                 (self.visualizationStack, "visualizationResolutionSwitch"),
                 (self.calibrationViewer, "calibrationResolutionSwitch"),
                 (self.classificationViewer, "classificationResolutionSwitch"),
+                (self.superResViewer, "superResolutionSwitch"),
             ),
             self._select_canvas_resolution,
             self,
-            badge_only_canvases=((self.superResViewer, "superResolutionCalibrationBadge"),),
+            on_calibration_clicked=self._select_canvas_calibration,
         )
+        self.superResolutionSwitch = self._resolution_switches.switches[3]
         self.visualizationStack.currentChanged.connect(
             lambda _index: self._resolution_switches.schedule_raise()
         )
@@ -370,13 +385,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _update_super_resolution_view_state(self, show_processed: bool) -> None:
         if self._super_res_worker is not None:
             return
-        high = self._is_super_resolution_active()
         self._calibration_controller.resolution_changed()
-        self._resolution_switches.sync(
-            available=self._super_res_result is not None,
-            high_resolution=high,
-            enabled=self._super_res_worker is None,
-        )
+        self._sync_image_switches()
         self._refresh_super_resolution_display()
         self.superResStatusStack.setCurrentWidget(self.superResIdlePage)
         if not self._hsi_data.is_loaded():
@@ -388,22 +398,21 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             if show_processed:
                 label = (
                     "Calibrated MSDformer 2×"
-                    if self._calibration_controller.result_for_resolution(True)
+                    if self._calibration_controller.display_result
                     else "MSDformer 2×"
                 )
             else:
                 label = (
                     "Calibrated"
-                    if self._calibration_controller.result_for_resolution(False)
+                    if self._calibration_controller.display_result
                     else "Original"
                 )
             status = f"{label}: {data.columns} × {data.rows} pixels, {data.bands} bands"
             if show_processed and self._super_res_result.tiled:
                 status += " · tiled inference"
         self.superResStatusText.setText(status)
-        # A result already exists: every tab must reflect the low/high choice,
-        # not just the Super-Resolution tab's own comparison viewer.
-        if self._super_res_result is not None:
+        # Both image-state choices update every tab, even without an SR result.
+        if self._hsi_data.is_loaded() and not self._pipeline_busy():
             self._refresh_visualization_pipeline()
             self._classification_controller.refresh_display()
 
@@ -414,22 +423,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         chooses between it and the original for the whole application, not
         just the Super-Resolution tab's own comparison viewer.
         """
+        calibration = self._calibration_controller.display_result
+        if calibration is not None:
+            return calibration.data
         if self._is_super_resolution_active():
-            calibration = self._calibration_controller.result_for_resolution(True)
-            if calibration is not None:
-                return calibration.data
             return self._super_res_result.data
-        return self._low_resolution_data()
+        return self._hsi_data
 
     def _super_resolution_data(self) -> HSIData | None:
         """Raw SR cube (SR only ever runs on uncalibrated data), if present."""
         return None if self._super_res_result is None else self._super_res_result.data
-
-    def _low_resolution_data(self) -> HSIData:
-        calibration = self._calibration_controller.result_for_resolution(False)
-        if calibration is not None:
-            return calibration.data
-        return self._hsi_data
 
     def _is_super_resolution_active(self) -> bool:
         """Return whether ``_display_data`` currently resolves to the SR result."""
@@ -437,10 +440,38 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         return self.highResButton.isChecked() and self._super_res_result is not None
 
     def _select_canvas_resolution(self, high_resolution: bool) -> None:
+        if self._pipeline_busy():
+            self._sync_image_switches()
+            return
         if high_resolution:
             self.highResButton.setChecked(True)
         else:
             self.lowResButton.setChecked(True)
+
+    def _select_canvas_calibration(self, calibrated: bool) -> None:
+        if self._pipeline_busy():
+            self._sync_image_switches()
+            return
+        previous = self._display_data()
+        self._calibration_controller.select_calibrated(calibrated)
+        if self._display_data() is not previous:
+            self._update_super_resolution_view_state(self.highResButton.isChecked())
+            label = "After Calibration" if calibrated else "Before Calibration"
+            self.statusbar.showMessage(f"Viewing {label}", 3000)
+        self._sync_image_switches()
+
+    def _sync_image_switches(self) -> None:
+        controller = self._calibration_controller
+        enabled = not self._pipeline_busy()
+        self._resolution_switches.sync(
+            available=self._super_res_result is not None,
+            high_resolution=self._is_super_resolution_active(), enabled=enabled,
+        )
+        self._resolution_switches.sync_calibration(
+            available=any(controller.result_for_resolution(high) is not None for high in (False, True)),
+            calibrated=controller.display_result is not None, enabled=enabled,
+            current_available=controller.result is not None,
+        )
 
     def _refresh_super_resolution_display(self) -> None:
         previous_size = self.superResViewer.photo_size()
@@ -531,6 +562,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         worker = SuperResolutionWorker(self._super_resolution_service, source_data,
                                        self._super_resolution_request, parent=self)
         self._super_res_worker = worker
+        self._sync_image_switches()
         worker.progress.connect(self._on_super_resolution_progress)
         worker.result_ready.connect(self._on_super_resolution_result)
         worker.failed.connect(self._on_super_resolution_failed)
@@ -585,6 +617,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._hsi_data.roi_mask, display.display_rgb.shape[:2]
         )
         self._super_res_result = result
+        self._visualization_cache = {
+            key: cached for key, cached in self._visualization_cache.items() if not key[0]
+        }
         # Either operation changes the cube used for classification.
         self._classification_controller.clear_result()
         self._calibration_controller.clear_super_resolution_result()
@@ -650,6 +685,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.runSuperResButton.setEnabled(False)
         else:
             self._set_super_resolution_ready()
+        self._sync_image_switches()
 
     @QtCore.pyqtSlot(bool)
     def _on_calibration_running_changed(self, running: bool) -> None:
@@ -659,25 +695,34 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         else:
             self._set_super_resolution_ready()
             self._set_classification_controls_available(True)
-        self._resolution_switches.sync(
-            available=self._super_res_result is not None,
-            high_resolution=self._is_super_resolution_active(),
-            enabled=not running,
-        )
+        self.lowResButton.setEnabled(not running)
+        self.highResButton.setEnabled(not running)
+        # runningChanged(True) precedes creation of the first calibration worker.
+        self._sync_image_switches()
+        if running:
+            for switch in self._resolution_switches.switches + self._resolution_switches.calibration_switches:
+                switch.setEnabled(False)
 
     @QtCore.pyqtSlot(bool)
     def _on_calibration_result_ready(self, high: bool) -> None:
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
         self._classification_controller.clear_result()
-        self._refresh_visualization_pipeline()
+        self._clear_calibration_previews()
+        self._update_super_resolution_view_state(self.highResButton.isChecked())
 
     @QtCore.pyqtSlot(bool)
     def _on_calibration_references_changed(self, had_result: bool) -> None:
         if had_result:
             self._classification_controller.clear_result()
         if self._hsi_data.is_loaded():
-            self._refresh_visualization_pipeline()
+            self._clear_calibration_previews()
+            self._update_super_resolution_view_state(self.highResButton.isChecked())
+
+    def _clear_calibration_previews(self) -> None:
+        self._visualization_cache = {
+            key: cached for key, cached in self._visualization_cache.items() if not key[1]
+        }
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._hypercube_controller.shutdown()
@@ -693,6 +738,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._cancel_super_resolution()
             event.ignore()
             return
+        self._visualization_cache.clear()
         self._super_res_result = None
         for transition in self._tab_transitions:
             transition.stop()
@@ -799,7 +845,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         if classification_rgb is not None:
             display_rgb = classification_rgb
-        calibration_result = self._calibration_controller.result
+        calibration_result = self._calibration_controller.display_result
         if self._active_viewer is self.calibrationViewer and calibration_result:
             display_rgb = calibration_result.data.rgb_array
         if self.tabWidget.currentWidget() is self.SuperResolution:
@@ -848,7 +894,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _recompute_visualizations(self) -> None:
         self._hypercube_controller.stop_and_wait()
-        self._visualization_results = {}
         data = self._display_data()
         reasons = self._image_capabilities.refresh_visualizations(
             data, self._visualization_mode_buttons
@@ -858,15 +903,22 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         for viewer in self._all_viewers():
             viewer.available_optional_indices = available
-        for mode in _CACHED_VISUALIZATION_MODES:
-            if reasons[mode] is not None:
-                continue
-            try:
-                self._visualization_results[mode] = self._visualization_service.render(
-                    data, VisualizationRequest(mode=mode)
-                )
-            except (VisualizationError, WavelengthError) as exc:
-                LOGGER.info("Skipping %s visualization: %s", mode.value, exc)
+        key = (self._is_super_resolution_active(), self._calibration_controller.display_result is not None)
+        cached = self._visualization_cache.get(key)
+        if cached is not None and cached[0] is data:
+            self._visualization_results = cached[1]
+        else:
+            self._visualization_results = {}
+            for mode in _CACHED_VISUALIZATION_MODES:
+                if reasons[mode] is not None:
+                    continue
+                try:
+                    self._visualization_results[mode] = self._visualization_service.render(
+                        data, VisualizationRequest(mode=mode)
+                    )
+                except (VisualizationError, WavelengthError) as exc:
+                    LOGGER.info("Skipping %s visualization: %s", mode.value, exc)
+            self._visualization_cache[key] = (data, self._visualization_results)
 
         # Keep the active source on the same RGB stretch as Visualization.
         # After a crop, the previous RGB array has stale limits.
@@ -880,11 +932,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _refresh_viewers_display(self) -> None:
         data = self._display_data()
-        self._resolution_switches.set_calibrated(
-            self._calibration_controller.result_for_resolution(
-                self._is_super_resolution_active()
-            ) is not None
-        )
+        self._sync_image_switches()
         result = self._visualization_results.get(self._active_visualization_mode)
         display_rgb = result.display_rgb if result is not None else data.rgb_array
         rgb_display = data.rgb_array
@@ -900,7 +948,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 if viewer is self.classificationViewer
                 else None
             )
-            calibration_result = self._calibration_controller.result
+            calibration_result = self._calibration_controller.display_result
             use_calibration = viewer is self.calibrationViewer and calibration_result
             use_classification = classification_rgb is not None
             if use_calibration:
@@ -991,7 +1039,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Spectrum reads are paused during SR")
             return
-        calibration_result = self._calibration_controller.result
+        calibration_result = self._calibration_controller.display_result
         data = (
             calibration_result.data
             if self.sender() is self.calibrationViewer and calibration_result
@@ -1166,7 +1214,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         """
         if viewer is self.superResViewer:
             return self._sr_view_scale
-        if viewer is self.calibrationViewer and self._calibration_controller.result:
+        if viewer is self.calibrationViewer and self._calibration_controller.display_result:
             return 2 if self._is_super_resolution_active() else 1
         return self._viz_view_scale
 
@@ -1216,10 +1264,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.statusbar.showMessage("Crop redone")
 
     def _push_image_to_viewers(self) -> None:
+        self._visualization_cache.clear()
         self._reset_super_resolution()
         self._refresh_visualization_pipeline()
 
     def _refresh_visualization_pipeline(self) -> None:
         self._recompute_visualizations()
         self._refresh_viewers_display()
-        self._hypercube_controller.refresh(self._display_data())
+        self._hypercube_controller.refresh(self._display_data(), reuse=True)

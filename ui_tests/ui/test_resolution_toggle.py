@@ -3,7 +3,7 @@
 import pytest
 from PyQt6 import QtCore, QtWidgets, sip
 
-from ui.resolution_toggle import ResolutionSwitchGroup, ResolutionToggle
+from ui.resolution_toggle import CalibrationToggle, ResolutionSwitchGroup, ResolutionToggle
 
 
 def test_resolution_toggle_is_compact_and_animates_between_states(qtbot):
@@ -15,7 +15,7 @@ def test_resolution_toggle_is_compact_and_animates_between_states(qtbot):
     canvas.show()
     qtbot.waitExposed(canvas)
 
-    assert switch.size() == QtCore.QSize(116, 36)
+    assert switch.size() == QtCore.QSize(208, 36)
     assert switch.pos() == QtCore.QPoint(12, 12)
     assert switch.progress == pytest.approx(0.0)
 
@@ -92,32 +92,60 @@ def test_deleting_canvas_during_toggle_animation_deletes_animation(qtbot):
     assert sip.isdeleted(animation)
 
 
-def test_calibration_tags_stay_next_to_switch_or_at_fixed_canvas_inset(qtbot):
+def test_calibration_switches_align_and_wrap_on_narrow_canvases(qtbot):
     canvases = [QtWidgets.QWidget() for _ in range(4)]
     for canvas in canvases:
         qtbot.addWidget(canvas)
-        canvas.resize(320, 200)
+        canvas.resize(640, 200)
         canvas.show()
     group = ResolutionSwitchGroup(
         ((canvas, f"page{index}ResolutionSwitch") for index, canvas in enumerate(canvases[:3])),
-        lambda high: None, canvases[0],
-        badge_only_canvases=((canvases[3], "superResolutionCalibrationBadge"),),
+        lambda high: None, canvases[0], on_calibration_clicked=lambda calibrated: None,
+        calibration_only_canvases=((canvases[3], "superResolutionCalibrationSwitch"),),
     )
-    assert len(group.switches) == 3 and len(group.calibration_badges) == 4
-    assert all(badge.isHidden() for badge in group.calibration_badges)
+    assert len(group.switches) == 3 and len(group.calibration_switches) == 4
+    assert all(switch.isHidden() for switch in group.calibration_switches)
     group.sync(available=True, high_resolution=False, enabled=True)
-    group.set_calibrated(True)
-    assert all(not badge.isHidden() for badge in group.calibration_badges)
-    for badge in group.calibration_badges[:3]:
-        assert badge.pos() == QtCore.QPoint(136, 16)
-        assert badge.text() == "Calibrated"
-        assert badge.testAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-    assert group.calibration_badges[3].pos() == QtCore.QPoint(12, 16)
+    group.sync_calibration(available=True, calibrated=True, enabled=True, current_available=True)
+    for switch in group.calibration_switches[:3]:
+        assert switch.pos() == QtCore.QPoint(228, 12)
+        assert switch.isChecked()
+        assert switch.height() == group.switches[0].height()
+    assert group.calibration_switches[3].pos() == QtCore.QPoint(12, 12)
     for canvas in canvases:
-        canvas.resize(540, 380)
-    group.raise_switches()
-    assert group.calibration_badges[0].pos() == QtCore.QPoint(136, 16)
+        canvas.resize(400, 380)
+    assert group.calibration_switches[0].pos() == QtCore.QPoint(12, 56)
     group.sync(available=False, high_resolution=False, enabled=True)
-    assert all(badge.pos() == QtCore.QPoint(12, 16) for badge in group.calibration_badges)
-    group.set_calibrated(False)
-    assert all(badge.isHidden() for badge in group.calibration_badges)
+    assert all(switch.pos() == QtCore.QPoint(12, 12) for switch in group.calibration_switches)
+    group.sync_calibration(available=True, calibrated=False, enabled=True, current_available=False)
+    assert all(not switch.isEnabled() and not switch.isChecked() for switch in group.calibration_switches)
+    group.sync_calibration(available=False, calibrated=False, enabled=True, current_available=False)
+    assert all(switch.isHidden() for switch in group.calibration_switches)
+
+
+@pytest.mark.parametrize("toggle_type", [ResolutionToggle, CalibrationToggle])
+def test_segments_select_directly_and_support_keyboard(qtbot, toggle_type):
+    canvas = QtWidgets.QWidget()
+    qtbot.addWidget(canvas)
+    switch = toggle_type(canvas, "testSwitch")
+    switch.show()
+    canvas.show()
+    switch.setChecked(True)
+    qtbot.mouseClick(switch, QtCore.Qt.MouseButton.LeftButton,
+                     pos=QtCore.QPoint(switch.width() // 4, switch.height() // 2))
+    assert not switch.isChecked()
+    # Selecting the already selected segment does not toggle to the other side.
+    qtbot.mouseClick(switch, QtCore.Qt.MouseButton.LeftButton,
+                     pos=QtCore.QPoint(switch.width() // 4, switch.height() // 2))
+    assert not switch.isChecked()
+    qtbot.keyClick(switch, QtCore.Qt.Key.Key_Right)
+    assert switch.isChecked()
+    assert switch._high_label in switch.accessibleDescription()
+    qtbot.keyClick(switch, QtCore.Qt.Key.Key_Left)
+    assert not switch.isChecked()
+    qtbot.keyClick(switch, QtCore.Qt.Key.Key_Space)
+    assert switch.isChecked()
+    switch.setEnabled(False)
+    qtbot.mouseClick(switch, QtCore.Qt.MouseButton.LeftButton,
+                     pos=QtCore.QPoint(switch.width() // 4, switch.height() // 2))
+    assert switch.isChecked()

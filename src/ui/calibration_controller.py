@@ -86,6 +86,7 @@ class CalibrationController(QtCore.QObject):
 
         self._worker: CalibrationWorker | None = None
         self._results: dict[bool, CalibrationResult | None] = {False: None, True: None}
+        self._show_calibrated = True
         self._working_resolution = False
         self._completed_resolution: bool | None = None
         self._pending_jobs: list = []
@@ -116,6 +117,16 @@ class CalibrationController(QtCore.QObject):
 
     def result_for_resolution(self, high: bool) -> CalibrationResult | None:
         return self._results[high]
+
+    @property
+    def display_result(self) -> CalibrationResult | None:
+        """Selected preview, independent of the retained processing results."""
+        return self.result if self._show_calibrated else None
+
+    def select_calibrated(self, calibrated: bool) -> None:
+        """Select a cached result without processing or releasing either cube."""
+        if not self.is_running() and not self._external_running:
+            self._show_calibrated = calibrated
 
     @property
     def last_error(self) -> str | None:
@@ -178,6 +189,7 @@ class CalibrationController(QtCore.QObject):
         for high in (False, True):
             self._clear_resolution(high)
         self._error = None
+        self._show_calibrated = True
 
     def clear_super_resolution_result(self) -> None:
         self._clear_resolution(True)
@@ -202,7 +214,7 @@ class CalibrationController(QtCore.QObject):
     def pixel_values_at(
         self, row: int, column: int
     ) -> Mapping[str, PixelValueEntry]:
-        result = self.result
+        result = self.display_result
         if result is None or result.data.rgb_array is None:
             return self._fallback_pixel_values(row, column)
         rgb = result.data.rgb_array
@@ -374,6 +386,7 @@ class CalibrationController(QtCore.QObject):
         result.data.mask_array = np.zeros(display.display_rgb.shape[:2], dtype=np.uint8)
         self._clear_resolution(self._working_resolution)
         self._results[self._working_resolution] = result
+        self._show_calibrated = True
         self._tracks_source[self._working_resolution] = True
         self._completed_resolution = self._working_resolution
         if self._is_high_resolution() == self._working_resolution:
@@ -447,7 +460,7 @@ class CalibrationController(QtCore.QObject):
         self._calibrate_button.setToolTip(tooltip)
 
     def _show_result(self) -> None:
-        result = self.result
+        result = self.display_result
         if result is None or result.data.rgb_array is None:
             return
         state = self._viewer.get_view_state()

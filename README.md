@@ -18,6 +18,16 @@ through a cancellable Calibration-tab worker without modifying the source.
 Nearby earlier `_calibFrame` pairs are selected automatically on source load,
 with manual Dark/Bright replacement always available.
 
+After calibration, use **Before Calibration / After Calibration** above any
+image to compare the retained raw and calibrated cubes without rerunning
+calibration. **Low Res / High Res** independently selects the resolution after
+Super-Resolution completes. Both selectors stay synchronized across tabs,
+preserve pan/zoom, and wrap onto separate rows in narrower windows. Spectra,
+pixel values, visualization modes, and image export follow the selected cube;
+classification layers are retained separately for each combination. Processing
+temporarily disables the selectors. Loading a new image, changing references,
+or cropping invalidates the affected comparisons.
+
 The top-right application header shows system-wide CPU usage as a percentage
 and this program's resident RAM in MB, updated once per second on every page.
 Hover over RAM to compare program usage with system-wide used/total memory

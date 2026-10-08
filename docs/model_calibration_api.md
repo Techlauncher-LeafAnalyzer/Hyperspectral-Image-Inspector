@@ -33,12 +33,13 @@ For a 2× Super-Resolution result, pass the current original image as
 original image's detector columns, then linearly interpolated at high-resolution
 pixel centres and broadcast across the 2× result. This is an approximation:
 the calibration frames were captured at the original resolution. The service
-supports this API, but the GUI always calibrates the raw low-resolution source.
-Afterward, that calibrated cube becomes the displayed low-resolution image and
-the input to Super-Resolution. If SR was run first, starting calibration asks
-for confirmation and discards the SR image and its high-resolution derivatives.
-There is no calibrated/raw display switch. Changing references clears the
-calibration and any SR result derived from it.
+uses this API when an SR result exists: the GUI calibrates the raw low-resolution
+source and the raw SR cube in one operation, retaining both originals. The
+shared Before Calibration / After Calibration selector chooses the displayed
+cube independently of Low Res / High Res. Changing references clears both
+calibration results while retaining the raw SR cube. SR always uses the raw
+low-resolution source; running SR after calibration asks for confirmation to
+discard calibration first.
 
 Facility calibration names start with `YYYY-MM-DD--HH-MM-SS` and end in
 `_calibFrame`. When both selected files follow that convention, the GUI orders
@@ -96,12 +97,13 @@ the window closes. Cancellation and failures remove incomplete output.
   Calibrate becomes available once a source plus both reference cubes are set.
 - The button becomes Cancel while the worker is active; progress is reported
   in the status bar and other cube readers are paused.
-- Success renders calibrated RGB in `calibrationViewer`; spectrum plotting and
-  File → Save Image use that calibrated result. All low-resolution views now use
-  the calibrated cube; SR uses it as input when subsequently run.
-- Starting calibration when SR exists asks whether to discard the high-resolution
-  image and its dependent results. No keeps the existing image unchanged; Yes
-  discards them and runs calibration on the raw source.
+- Success selects After Calibration across all views. Before Calibration returns
+  to the retained raw cube at the current resolution; neither selector reruns
+  processing. Cached visualizations and completed hypercube previews are reused.
+  Spectrum plotting, pixel values, index modes and File → Save Image follow the
+  displayed cube. Classification layers are kept separately for each combination.
+- Starting calibration when SR exists calibrates both resolutions while retaining
+  the raw SR result. Selectors are disabled while a processing worker is active.
 - Cropping from any 2D tab automatically rebuilds an existing calibrated result
   against the new cumulative source bounds. Each completed calibration or SR
   operation clears crop undo/redo history and all prior classification results.

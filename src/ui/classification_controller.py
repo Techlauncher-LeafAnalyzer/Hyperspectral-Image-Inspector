@@ -205,10 +205,13 @@ class ClassificationController(QObject):
         load_image_action: QtGui.QAction,
         stop_hypercube: Callable[[], None],
         parent_widget: QtWidgets.QWidget,
+        *,
+        is_calibrated: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__()
         self._display_data_provider = display_data_provider
         self._is_super_resolution_active = is_super_resolution_active
+        self._is_calibrated = is_calibrated or (lambda: False)
         self._service = service
         self._training_pair_resolver = training_pair_resolver
         self._viewer = viewer
@@ -235,6 +238,8 @@ class ClassificationController(QObject):
             True: _ClassificationSlot(),
         }
         self._pending_slot_key = False
+        self._calibrated_slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
+        self._pending_calibrated = False
         self._background_mode = VisualizationMode.RGB.value
         self._opacity_refresh_timer = QtCore.QTimer(self)
         self._opacity_refresh_timer.setSingleShot(True)
@@ -261,7 +266,8 @@ class ClassificationController(QObject):
     def _current_slot(self) -> _ClassificationSlot:
         """Return the slot matching whichever resolution is now displayed."""
 
-        return self._slots[self._is_super_resolution_active()]
+        slots = self._calibrated_slots if self._is_calibrated() else self._slots
+        return slots[self._is_super_resolution_active()]
 
     @property
     def rgb(self) -> Optional[NDArray[np.uint8]]:
@@ -299,7 +305,7 @@ class ClassificationController(QObject):
         return class_id if class_id >= 0 else None
 
     def is_running(self) -> bool:
-        return self._thread is not None and self._thread.isRunning()
+        return self._thread is not None
 
     def set_image_loaded(self, loaded: bool) -> None:
         self._unsupervised_button.setEnabled(loaded)
@@ -309,6 +315,7 @@ class ClassificationController(QObject):
         """Discard both resolutions' labels when the cube geometry changes."""
 
         self._slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
+        self._calibrated_slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
         self._layer_panel.clear()
 
     def set_visualization_results(
@@ -321,7 +328,7 @@ class ClassificationController(QObject):
         """
 
         self._visualization_results = results
-        for slot in self._slots.values():
+        for slot in (*self._slots.values(), *self._calibrated_slots.values()):
             slot.means = None
         slot = self._current_slot
         if slot.layers is not None:
@@ -337,6 +344,7 @@ class ClassificationController(QObject):
         """
 
         self._slots[True] = _ClassificationSlot()
+        self._calibrated_slots[True] = _ClassificationSlot()
 
     def refresh_display(self) -> None:
         """Show the layer panel for whichever classification result is active.
@@ -574,7 +582,8 @@ class ClassificationController(QObject):
             return
 
         self._pending_slot_key = self._is_super_resolution_active()
-        self._slots[self._pending_slot_key].active_data = data
+        self._pending_calibrated = self._is_calibrated()
+        self._current_slot.active_data = data
         worker = _ClassificationWorker(self._service, data, request)
         self._launch_worker(
             worker, self._unsupervised_button, "Starting K-means classification…"
@@ -610,7 +619,8 @@ class ClassificationController(QObject):
         request = SupervisedClassificationRequest(classifier)
 
         self._pending_slot_key = self._is_super_resolution_active()
-        self._slots[self._pending_slot_key].active_data = data
+        self._pending_calibrated = self._is_calibrated()
+        self._current_slot.active_data = data
         worker = _SupervisedClassificationWorker(
             self._service,
             data,
@@ -704,7 +714,8 @@ class ClassificationController(QObject):
         # resolution happens to be on screen now -- the toggle may have
         # flipped while the worker was still running.
         slot_key = self._pending_slot_key
-        slot = self._slots[slot_key]
+        slots = self._calibrated_slots if self._pending_calibrated else self._slots
+        slot = slots[slot_key]
         if slot.active_data is None:
             slot.active_data = self._display_data_provider()
         slot.result = result

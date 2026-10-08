@@ -140,3 +140,50 @@ def test_loading_an_image_starts_a_hypercube_worker(loaded_window):
     assert controller._worker is not None
     assert controller._generation >= 1
     controller.stop_and_wait()
+
+
+def test_reusing_hypercube_previews_avoids_reads_and_invalidates_crop(
+    qtbot, synthetic_cube_path, monkeypatch
+):
+    import numpy as np
+    controller, mode_button, stack, widget, placeholder = _make_controller(qtbot)
+    data = HSIReader().open(synthetic_cube_path)
+    other = HSIReader().open(synthetic_cube_path)
+    mode_button.setChecked(True)
+    controller.refresh(data)
+    qtbot.waitUntil(lambda: controller._view_data is not None)
+    first = controller._view_data
+    controller.refresh(other)
+    qtbot.waitUntil(lambda: controller._view_data is not None)
+    second = controller._view_data
+    assert first is not second
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("Completed comparison previews must be reused")
+
+    prepare = controller._service.prepare_hypercube_view
+    monkeypatch.setattr(controller._service, "prepare_hypercube_view", unexpected_read)
+    for _ in range(3):
+        controller.refresh(data, reuse=True)
+        assert controller._view_data is first and widget._view_data is first
+        assert controller._worker is None
+        controller.refresh(other, reuse=True)
+        assert controller._view_data is second and widget._view_data is second
+        assert controller._worker is None
+    monkeypatch.setattr(controller._service, "prepare_hypercube_view", prepare)
+    data.roi_mask = np.tri(data.rows, data.columns, dtype=bool)
+    controller.refresh(data, reuse=True)
+    assert controller._view_data is None
+    qtbot.waitUntil(lambda: controller._view_data is not None)
+    masked = controller._view_data
+    assert masked is not first
+    data.rgb_array = np.zeros((data.rows, data.columns, 3), dtype=np.uint8)
+    data.mask_array = np.zeros((data.rows, data.columns), dtype=np.uint8)
+    assert data.crop(0, 0, 3, 3) == (3, 3)
+    controller.refresh(data, reuse=True)
+    assert controller._view_data is None
+    qtbot.waitUntil(lambda: controller._view_data is not None)
+    assert controller._view_data is not masked
+    assert len(controller._view_cache) <= 4
+    controller.shutdown()
+    assert not controller._view_cache
