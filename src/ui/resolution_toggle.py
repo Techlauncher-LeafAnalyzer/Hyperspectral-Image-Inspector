@@ -1,4 +1,4 @@
-"""Pill selectors and a dedicated image-state rail beside each canvas."""
+"""Compact pill selectors floating at the upper left of each image canvas."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 class ResolutionToggle(QtWidgets.QAbstractButton):
     """Two visible choices with a sliding selection and direct mouse/keyboard input."""
 
-    WIDTH = 216
+    WIDTH = 280
     HEIGHT = 40
     INSET = 12
 
@@ -161,7 +161,7 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
             4 + segment_width * self._progress, 4, segment_width, self.HEIGHT - 8
         )
         # A small tinted shadow gives the selected capsule depth without
-        # covering the image or introducing a heavyweight graphics effect.
+        # introducing a heavyweight graphics effect.
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
         painter.setBrush(QtGui.QColor(28, 65, 47, 15 if enabled else 0))
         painter.drawRoundedRect(selected.translated(0, 1.5), 16, 16)
@@ -208,80 +208,40 @@ class CalibrationToggle(ResolutionToggle):
     def __init__(self, canvas: QtWidgets.QWidget, name: str) -> None:
         super().__init__(
             canvas, name, low_label="Before Calibration", high_label="After Calibration",
-            display_labels=("Before", "After"),
-        )
-
-
-class ImageStatePanel(QtWidgets.QFrame):
-    """A quiet, fixed-width rail that reserves space beside the image."""
-
-    def __init__(self, parent: QtWidgets.QWidget, name: str) -> None:
-        super().__init__(parent)
-        self.setObjectName("imageStatePanel")
-        self.setAccessibleName("Image version controls")
-        self.setFixedWidth(ResolutionToggle.WIDTH + 36)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Expanding)
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(18, 20, 18, 20)
-        layout.setSpacing(24)
-        title = QtWidgets.QLabel("Image view", self)
-        title.setObjectName("imageStateTitle")
-        layout.addWidget(title)
-        self.resolution_switch = ResolutionToggle(self, name)
-        self.calibration_switch = CalibrationToggle(
-            self, name.replace("ResolutionSwitch", "CalibrationSwitch")
-        )
-        self.resolution_section = self._section("Resolution", self.resolution_switch)
-        self.calibration_section = self._section("Calibration", self.calibration_switch)
-        layout.addWidget(self.resolution_section)
-        layout.addWidget(self.calibration_section)
-        layout.addStretch(1)
-        self.resolution_section.hide()
-        self.calibration_section.hide()
-        self.hide()
-
-    def _section(self, title: str, switch: ResolutionToggle) -> QtWidgets.QWidget:
-        section = QtWidgets.QWidget(self)
-        layout = QtWidgets.QVBoxLayout(section)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        label = QtWidgets.QLabel(title, section)
-        label.setObjectName("imageStateLabel")
-        label.setBuddy(switch)
-        layout.addWidget(label)
-        layout.addWidget(switch)
-        return section
-
-    def sync_visibility(self) -> None:
-        self.resolution_section.setVisible(not self.resolution_switch.isHidden())
-        self.calibration_section.setVisible(not self.calibration_switch.isHidden())
-        self.setVisible(
-            not self.resolution_switch.isHidden() or not self.calibration_switch.isHidden()
         )
 
 
 class ResolutionSwitchGroup(QtCore.QObject):
-    """Synchronize independent image-state choices in each page's left rail."""
+    """Synchronize two vertically stacked image-state pills across pages."""
 
     def __init__(
         self,
-        panels: Iterable[ImageStatePanel],
+        canvases: Iterable[tuple[QtWidgets.QWidget, str]],
         on_clicked: Callable[[bool], None],
         parent: QtCore.QObject,
         *,
         on_calibration_clicked: Callable[[bool], None],
     ) -> None:
         super().__init__(parent)
-        self.panels = tuple(panels)
-        self.switches = tuple(panel.resolution_switch for panel in self.panels)
-        self.calibration_switches = tuple(panel.calibration_switch for panel in self.panels)
+        canvases = tuple(canvases)
+        self.switches = tuple(ResolutionToggle(canvas, name) for canvas, name in canvases)
+        self.calibration_switches = tuple(
+            CalibrationToggle(canvas, name.replace("ResolutionSwitch", "CalibrationSwitch"))
+            for canvas, name in canvases
+        )
         for switch in self.switches:
             switch.clicked.connect(on_clicked)
         for switch in self.calibration_switches:
             switch.clicked.connect(on_calibration_clicked)
+            switch.parentWidget().installEventFilter(self)
         self._raise_timer = QtCore.QTimer(self)
         self._raise_timer.setSingleShot(True)
         self._raise_timer.timeout.connect(self.raise_switches)
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if event.type() == QtCore.QEvent.Type.Resize:
+            self.raise_switches()
+        return super().eventFilter(watched, event)
 
     def stop(self) -> None:
         self._raise_timer.stop()
@@ -309,9 +269,15 @@ class ResolutionSwitchGroup(QtCore.QObject):
 
     @QtCore.pyqtSlot()
     def raise_switches(self) -> None:
-        # Qt layouts own placement; version controls never sit over image pixels.
-        for panel in self.panels:
-            panel.sync_visibility()
+        for resolution, calibration in zip(self.switches, self.calibration_switches):
+            x, y = ResolutionToggle.INSET, ResolutionToggle.INSET
+            if not resolution.isHidden():
+                resolution.move(x, y)
+                resolution.raise_()
+                y += resolution.height() + 8
+            if not calibration.isHidden():
+                calibration.move(x, y)
+                calibration.raise_()
 
     def schedule_raise(self) -> None:
         self._raise_timer.start(0)

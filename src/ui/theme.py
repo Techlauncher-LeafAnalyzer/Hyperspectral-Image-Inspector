@@ -441,26 +441,6 @@ QGraphicsView#classificationViewer {
     border-radius: 8px;
 }
 
-QFrame#imageStatePanel {
-    background: #f8fbf9;
-    border: 1px solid #dce5df;
-    border-radius: 10px;
-}
-
-QLabel#imageStateTitle {
-    color: #2d4437;
-    font-size: 14px;
-    font-weight: 600;
-    background: transparent;
-}
-
-QLabel#imageStateLabel {
-    color: #788a7e;
-    font-size: 12px;
-    font-weight: 500;
-    background: transparent;
-}
-
 QLabel#pixelValueOverlay {
     background-color: rgba(20, 20, 20, 200);
     color: #f5f5f5;
