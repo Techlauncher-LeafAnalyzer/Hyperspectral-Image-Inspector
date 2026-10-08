@@ -71,6 +71,7 @@ class ImageFormat(Enum):
 
     ENVI = auto()
     PSI = auto()
+    JSON = auto()
 
 
 class Functionality(Enum):
@@ -242,7 +243,7 @@ class HSIData:
 
     @property
     def header_format(self) -> str:
-        """Return ``ENVI`` or ``PSI`` for serialization/status UI."""
+        """Return ``ENVI``, ``PSI``, or ``JSON`` for serialization/status UI."""
 
         return self.image_format.name if self.image_format is not None else ""
 

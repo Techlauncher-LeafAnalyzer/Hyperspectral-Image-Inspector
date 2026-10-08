@@ -61,18 +61,23 @@ class SuperResolutionService:
 
     BANDS = 480
     SCALE = 2
+    # Known compatible APPF capture range, not a claim about other sensors'
+    # training distributions. The checkpoint does not carry a wavelength grid.
+    WAVELENGTH_RANGE_NM = (352.49, 898.81)
+    WAVELENGTH_RANGE_TOLERANCE_NM = 2.0
 
     def __init__(self) -> None:
         self._model = None
         self._model_key = None
 
-    def validate(self, data: HSIData, request: SuperResolutionRequest) -> None:
+    def compatibility_error(self, data: HSIData) -> str | None:
+        """Return the camera incompatibility reason using metadata only."""
         if not data.is_loaded():
-            raise SuperResolutionError("Load a hyperspectral image before running SR.")
+            return "Load a hyperspectral image before running SR."
         if len(data.shape) != 3 or min(data.shape) < 1:
-            raise SuperResolutionError("SR requires a nonempty (rows, columns, bands) cube.")
+            return "SR requires a nonempty (rows, columns, bands) cube."
         if data.bands != self.BANDS:
-            raise SuperResolutionError(
+            return (
                 f"This MSDformer checkpoint requires exactly {self.BANDS} spectral bands; "
                 f"the loaded image has {data.bands}. Use a compatible capture/model. "
                 "Bands are not padded, dropped, or interpolated."
@@ -80,7 +85,22 @@ class SuperResolutionService:
         wavelengths = data.wavelengths_nm
         if (wavelengths.size != self.BANDS or not np.isfinite(wavelengths).all()
                 or np.any(np.diff(wavelengths) <= 0)):
-            raise SuperResolutionError("SR requires 480 finite, increasing wavelengths.")
+            return "SR requires 480 finite, increasing wavelengths."
+        if not np.allclose(wavelengths[[0, -1]], self.WAVELENGTH_RANGE_NM,
+                           rtol=0, atol=self.WAVELENGTH_RANGE_TOLERANCE_NM):
+            low, high = self.WAVELENGTH_RANGE_NM
+            return (
+                f"This MSDformer requires {low:g}–{high:g} nm coverage "
+                f"(endpoints within {self.WAVELENGTH_RANGE_TOLERANCE_NM:g} nm); "
+                f"the image spans {wavelengths[0]:g}–{wavelengths[-1]:g} nm. "
+                "Use a compatible capture/model."
+            )
+        return None
+
+    def validate(self, data: HSIData, request: SuperResolutionRequest) -> None:
+        reason = self.compatibility_error(data)
+        if reason is not None:
+            raise SuperResolutionError(reason)
         if (not isinstance(request.tile_size, int) or request.tile_size < 1
                 or not isinstance(request.context, int) or request.context < 0):
             raise SuperResolutionError("Tile size must be positive and context nonnegative.")

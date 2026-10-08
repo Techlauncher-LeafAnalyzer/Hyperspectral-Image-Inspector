@@ -24,7 +24,7 @@ from spectral.io import envi
 
 from .errors import CalibrationError, CancelledError
 from .hsi_data import HSIData
-from .hsi_reader import DATA_EXTENSIONS, HSIReader
+from .hsi_reader import DATA_EXTENSIONS, METADATA_EXTENSIONS, HSIReader
 
 
 ProgressCallback = Callable[[int, str], None]
@@ -64,7 +64,7 @@ class CalibrationFramePair:
 class CalibrationFrameResolver:
     """Find the closest valid calibration pair preceding a source capture.
 
-    Only same-folder ``.hdr`` files ending in ``_calibFrame`` are considered.
+    Same-folder ``.hdr``/``.json`` metadata ending in ``_calibFrame`` is considered.
     A candidate must have a supported same-stem data file, precede the source,
     and form a pair captured no more than one minute apart. Of all valid pairs,
     the one with the latest bright-frame time is selected.
@@ -81,9 +81,16 @@ class CalibrationFrameResolver:
         ]
         available_names = {path.name.casefold() for path in directory_entries}
         candidates: list[tuple[datetime, Path]] = []
-        for path in directory_entries:
-            if path.suffix.casefold() != ".hdr":
+        seen_stems: set[str] = set()
+        metadata_entries = sorted(
+            (path for path in directory_entries if path.suffix.casefold() in METADATA_EXTENSIONS),
+            key=lambda path: path.suffix.casefold() != ".hdr",
+        )
+        for path in metadata_entries:
+            stem = path.stem.casefold()
+            if stem in seen_stems:
                 continue
+            seen_stems.add(stem)
             captured_at = self._capture_time(path, calibration_frame=True)
             if captured_at is None or captured_at >= source_time:
                 continue

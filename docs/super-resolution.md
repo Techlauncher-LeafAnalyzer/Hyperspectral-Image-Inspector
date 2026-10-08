@@ -15,6 +15,16 @@ of eight bands with two overlapping bands. PixelShuffle produces 2× spatial
 upscaling. The checkpoint fixes the band count and scale; it cannot be used
 with arbitrary spectral channel counts by changing constructor arguments.
 
+Camera compatibility is checked before enabling the Run button and again in
+the inference service. The current gate requires 480 finite, increasing bands
+with endpoints matching the known APPF capture's 352.49–898.81 nm range within
+2 nm (to allow minor metadata rounding). Both endpoints must match: merely
+enclosing the range or having 480 bands is insufficient. Incompatible images
+show a disabled **Image incompatible with SR** button with the reason in its
+tooltip. This gate does not certify a sensor's training-distribution match;
+the checkpoint contains no wavelength grid. The 224-band X10 and X17 captures
+remain usable for visualization/classification, but cannot run this SR model.
+
 The previous [`tab_super_resolution_controller.py`](https://github.com/squashking/TechLauncher-HSISR/blob/98388e034e02e4e049a0816c7c9dcce74aa10683/Software.new_version/controllers/tab_super_resolution_controller.py)
 loads all HSI bands as float32, performs `scipy.ndimage.zoom(band, 2, order=3)`
 independently per band, converts both arrays from HWC to NCHW, and calls the

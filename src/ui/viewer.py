@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 from PyQt6.QtGui import QBrush, QFontDatabase, QImage, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 
+from core import OPTIONAL_VISUALIZATION_MODES
 from ui.theme import (
     CROP_OVERLAY_COLOR,
     CROP_SELECTION_COLOR,
@@ -39,7 +40,13 @@ PixelValueProvider = Callable[
 
 
 # All visualization modes except HyperCube, in display order.
-VISUALIZATION_NAMES = ("RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI")
+VISUALIZATION_NAMES = (
+    "RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI", "NDWI", "NDMI"
+)
+
+
+# Modes that only make sense for some cameras; hidden unless the image has them.
+OPTIONAL_VISUALIZATION_NAMES = frozenset(mode.value for mode in OPTIONAL_VISUALIZATION_MODES)
 
 
 def format_pixel_values_html(
@@ -60,6 +67,8 @@ def format_pixel_values_html(
             f'<td style="padding-left:6px;">Class: {int(class_id)}</td></tr>'
         )
     for name in VISUALIZATION_NAMES:
+        if name in OPTIONAL_VISUALIZATION_NAMES and name not in values:
+            continue
         entry = values.get(name)
         if not isinstance(entry, PixelValueEntry):
             swatch_color = None
@@ -128,6 +137,8 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
         # --- pixel value overlay ---
         self.pixel_value_provider: PixelValueProvider = self._no_pixel_values
+        # Optional index names the current image can compute (see above).
+        self.available_optional_indices: frozenset[str] = frozenset()
         self._pixel_overlay_enabled: bool = False
         self._pixel_overlay = QLabel(self.viewport())
         self._pixel_overlay.setObjectName("pixelValueOverlay")
@@ -481,7 +492,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
         index_menu.setAccessibleName("Vegetation index mean")
         index_menu.setMinimumWidth(190)
         for name in VISUALIZATION_NAMES:
-            if name == "RGB":
+            if name == "RGB" or (
+                name in OPTIONAL_VISUALIZATION_NAMES
+                and name not in self.available_optional_indices
+            ):
                 continue
             index_menu.addAction(
                 name, lambda checked=False, name=name: self.meanIndexRequested.emit(name)

@@ -19,6 +19,8 @@ from core import (
     HSIData,
     HSIError,
     HSIReader,
+    HSI_FILE_FILTER,
+    OPTIONAL_VISUALIZATION_MODES,
     SuperResolutionRequest,
     SuperResolutionResult,
     SuperResolutionService,
@@ -37,6 +39,7 @@ from ui.calibration_controller import CalibrationController
 from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
+from ui.image_capabilities import ImageCapabilityController
 from ui.resolution_toggle import ResolutionSwitchGroup
 from ui.resource_usage import ResourceUsageWidget
 from ui.hypercube_controller import HypercubeController
@@ -60,6 +63,8 @@ _CACHED_VISUALIZATION_MODES = (
     VisualizationMode.MTVI,
     VisualizationMode.OSAVI,
     VisualizationMode.PRI,
+    VisualizationMode.NDWI,
+    VisualizationMode.NDMI,
 )
 
 
@@ -99,6 +104,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._visualization_export_service = VisualizationExportService()
         self._super_resolution_service = SuperResolutionService()
         self._super_resolution_request = SuperResolutionRequest()
+        self._image_capabilities = ImageCapabilityController(
+            self._visualization_service, self._super_resolution_service, self.runSuperResButton
+        )
         self._super_res_worker: SuperResolutionWorker | None = None
         self._super_res_result: SuperResolutionResult | None = None
         self._super_res_error: str | None = None
@@ -318,6 +326,17 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._classification_pixel_values_at
         )
 
+        # SWIR water indices live outside the generated form: they are the
+        # applicable modes for cameras whose range excludes the visible bands.
+        self.modeNDWI = QtWidgets.QRadioButton("NDWI", self.modeSelect)
+        self.modeNDWI.setObjectName("modeNDWI")
+        self.modeNDMI = QtWidgets.QRadioButton("NDMI", self.modeSelect)
+        self.modeNDMI.setObjectName("modeNDMI")
+        for column, button in enumerate((self.modeNDWI, self.modeNDMI)):
+            self.modeButtons.addButton(button)
+            self.gridLayout.addWidget(button, 2, column, 1, 1)
+        self.modeSelect.setMaximumHeight(170)
+
         mode_buttons = (
             (self.modeRGB, VisualizationMode.RGB),
             (self.modeNDVI, VisualizationMode.NDVI),
@@ -326,11 +345,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             (self.modeMTVI, VisualizationMode.MTVI),
             (self.modeOSAVI, VisualizationMode.OSAVI),
             (self.modePRI, VisualizationMode.PRI),
+            (self.modeNDWI, VisualizationMode.NDWI),
+            (self.modeNDMI, VisualizationMode.NDMI),
         )
         for button, mode in mode_buttons:
             button.toggled.connect(
                 lambda checked, mode=mode: self._on_visualization_mode_toggled(mode, checked)
             )
+        self._visualization_mode_buttons = mode_buttons
+        self._image_capabilities.refresh_visualizations(self._hsi_data, mode_buttons)
         self.modeRGB.setChecked(True)
 
         QtGui.QShortcut(
@@ -601,9 +624,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.actionLoadImage.setEnabled(True)
         self.lowResButton.setEnabled(True)
         self.highResButton.setEnabled(True)
-        self.runSuperResButton.setEnabled(self._hsi_data.is_loaded())
-        self.runSuperResButton.setText("Run Super-Resolution")
-        self.runSuperResButton.setToolTip("Run the 480-band MSDformer model at 2× spatial resolution")
+        self._image_capabilities.refresh_super_resolution(self._hsi_data)
 
     def _reset_super_resolution(self) -> None:
         self._super_res_result = None
@@ -690,7 +711,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self,
             "Open Hyperspectral Image",
             "",
-            "Hyperspectral Images (*.hdr *.bil *.bip *.bsq *.dat *.img *.raw)",
+            HSI_FILE_FILTER,
         )
         if not image_path_str:
             return
@@ -829,7 +850,17 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hypercube_controller.stop_and_wait()
         self._visualization_results = {}
         data = self._display_data()
+        reasons = self._image_capabilities.refresh_visualizations(
+            data, self._visualization_mode_buttons
+        )
+        available = frozenset(
+            mode.value for mode in OPTIONAL_VISUALIZATION_MODES if reasons[mode] is None
+        )
+        for viewer in self._all_viewers():
+            viewer.available_optional_indices = available
         for mode in _CACHED_VISUALIZATION_MODES:
+            if reasons[mode] is not None:
+                continue
             try:
                 self._visualization_results[mode] = self._visualization_service.render(
                     data, VisualizationRequest(mode=mode)
@@ -842,6 +873,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         rgb_result = self._visualization_results.get(VisualizationMode.RGB)
         if rgb_result is not None:
             data.rgb_array = rgb_result.display_rgb
+            self.modeRGB.setToolTip(rgb_result.title)
         self._classification_controller.set_visualization_results(
             self._visualization_results
         )

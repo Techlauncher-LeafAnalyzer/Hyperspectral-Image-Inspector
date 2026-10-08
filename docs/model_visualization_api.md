@@ -9,7 +9,8 @@ the stable public API.
 
 ## Public types
 
-- `HSIReader`: validates and opens native ENVI or PSI `.hdr`/data pairs with SPy.
+- `HSIReader`: validates and opens ENVI/PSI `.hdr` or Specim/ENVI `.json`
+  metadata paired with spectral binary data through SPy.
 - `HSIData`: shared lazy `SpyFile` state plus immutable paths, metadata, shape,
   and wavelength information.
 - `VisualizationService`: computes controller-requested visualization data.
@@ -56,6 +57,24 @@ view.show_value_range(result.value_range)
 Controller code should import the stable package surface shown above. Do not
 import from `visualization_model.py` directly; `core` re-exports
 the supported interface so implementation modules can change independently.
+
+### Camera metadata and file pairing
+
+Select `.hdr`, `.json`, or the binary cube (`.bil`, `.bip`, `.bsq`, `.dat`,
+`.img`, `.raw`). The reader finds the other half by filename stem,
+case-insensitively. JSON supports a Specim `bil_hdr` object or a flat ENVI
+metadata object, including wavelength arrays or brace-delimited wavelength
+strings. It is converted to a cached temporary ENVI header without modifying
+the source. When opening a binary cube, `.hdr` takes priority over `.json` if
+both exist. Explicitly selecting JSON uses that metadata only when its cube
+dimensions, storage type, layout, and wavelengths agree with any accompanying
+`.hdr`. Conflicting acquisition sidecars are rejected with instructions to
+select the matching header. JSON imports also require the exact declared
+binary size; a larger file is not silently accepted as a different data type.
+
+JSON acquisition frame IDs and timestamps are **not** spectral pixel data.
+A metadata-only folder still needs its corresponding binary cube before it
+can be visualized or processed; the reader reports a missing-data error.
 
 ### Saving the current displayed view
 
@@ -170,7 +189,11 @@ payload and must not be reused for scientific calculations.
 
 ## Visualization modes
 
-- RGB uses SPy's `get_rgb` with nearest 660, 550, and 470 nm bands.
+- RGB uses SPy's `get_rgb` with nearest 660, 550, and 470 nm bands. If any
+  visible channel is unavailable within 20 nm, it instead maps the first,
+  middle (`bands // 2`), and last bands to R, G, and B. The result title and
+  RGB control tooltip identify this as false-colour RGB; the underlying
+  spectra are not changed. Save Image exports this preview normally.
 - BAND returns a percentile-stretched grayscale band.
 - NDVI uses 800 and 670 nm.
 - EVI uses 800, 670, and 470 nm.
@@ -178,9 +201,27 @@ payload and must not be reused for scientific calculations.
 - MTVI uses 800, 670, and 550 nm.
 - OSAVI uses 800 and 670 nm with `L=0.16`.
 - PRI uses 531 and 570 nm.
+- NDWI is `(R1070 - R1240) / (R1070 + R1240)` and NDMI is
+  `(R1070 - R1650) / (R1070 + R1650)`. These are adaptations of the usual
+  Gao NDWI and Hardisky NDMI: the NIR reference sits at 1070 nm rather than
+  860/820 nm so that SWIR cameras starting at about 935 nm (e.g. Specim FX17)
+  can compute them. They are unavailable for cameras ending near 1000 nm.
+  Modes whose bands are missing are reported by `unavailable_reason` and the UI
+  greys out their buttons.
+- Cubes without visible coverage render RGB as false colour from 1340, 1040,
+  and 1720 nm (red, green, blue) when all three exist, otherwise from the
+  first, middle, and last bands.
 
 The result records the actual nearest wavelength selected from the cube.
-Required bands must be within 15 nm (20 nm for RGB) of their target.
+Required index bands must be within 15 nm of their target; indices never use
+the RGB fallback bands. `VisualizationService.unavailable_reason(data, mode)`
+checks availability from metadata only, using the same lookup as rendering.
+The GUI disables unavailable index controls and explains the missing wavelength
+in their tooltips, recalculating availability after image/crop/resolution changes.
+X10's visible/NIR coverage enables all existing indices; X17's SWIR-only coverage
+uses false-colour RGB and disables them. Hypercube remains available for either
+camera. Wavelength metadata in nanometers or micrometers is normalized to nm;
+non-finite, nonpositive, unordered, or unsupported-unit metadata is rejected.
 
 Vegetation-index formulas are scientifically meaningful on calibrated
 reflectance. The model can compute them on raw data for inspection and
