@@ -7,6 +7,10 @@ from PyQt6.QtWidgets import QAbstractButton, QPushButton
 from core import HSIData, SuperResolutionService, VisualizationMode, VisualizationService
 
 
+# Shown only for images whose wavelengths can compute them (e.g. Specim FX17).
+OPTIONAL_MODES = frozenset({VisualizationMode.NDWI, VisualizationMode.NDMI})
+
+
 class ImageCapabilityController:
     """Keep camera-dependent UI state outside the main window."""
 
@@ -22,8 +26,10 @@ class ImageCapabilityController:
         for button, mode in mode_buttons:
             reason = self._visualization.unavailable_reason(data, mode)
             button.setEnabled(reason is None)
+            if mode in OPTIONAL_MODES:
+                button.setVisible(reason is None)
             button.setToolTip(reason or (
-                "RGB preview (first/middle/last bands if visible RGB is unavailable)"
+                "RGB preview (false-colour bands if visible RGB is unavailable)"
                 if mode is VisualizationMode.RGB else f"View {mode.value}"
             ))
 

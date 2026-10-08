@@ -81,7 +81,7 @@ def test_false_colour_preview_is_used_on_all_pages_and_can_be_saved(
     data, _ = camera_cube_factory(np.linspace(935.613, 1720.233, 224))
     window.load_image_from_path(data.source_path)
     result = window._visualization_results[VisualizationMode.RGB]
-    assert dict(result.band_indices) == {"red": 0, "green": 112, "blue": 223}
+    assert dict(result.band_indices) == {"red": 115, "green": 30, "blue": 223}
     for viewer in window._all_viewers():
         assert viewer.has_photo()
         np.testing.assert_array_equal(viewer.rgb, result.display_rgb)
@@ -136,3 +136,17 @@ def test_mismatched_json_keeps_previous_cube_and_points_to_matching_hdr(
     assert loaded_window._hsi_data.source_path == previous
     assert "conflicts" in dialogs.critical[-1][2]
     assert "X10_conflict.hdr" in dialogs.critical[-1][2]
+
+
+def test_water_index_buttons_only_appear_for_swir_images(window, camera_cube_factory):
+    assert window.modeNDWI.isHidden() and window.modeNDMI.isHidden()
+    swir, _ = camera_cube_factory(np.linspace(935.613, 1720.233, 224), name="swir")
+    window.load_image_from_path(swir.source_path)
+    assert not window.modeNDWI.isHidden() and window.modeNDWI.isEnabled()
+    assert not window.modeNDMI.isHidden() and window.modeNDMI.isEnabled()
+    assert window.viewer.available_optional_indices == {"NDWI", "NDMI"}
+    visible, _ = camera_cube_factory(np.linspace(398.25, 1001.17, 224), name="visible")
+    window.load_image_from_path(visible.source_path)
+    assert window.modeNDWI.isHidden() and window.modeNDMI.isHidden()
+    assert not window.modeNDVI.isHidden() and window.modeNDVI.isEnabled()
+    assert window.viewer.available_optional_indices == frozenset()

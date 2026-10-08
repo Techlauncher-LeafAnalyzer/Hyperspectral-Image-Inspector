@@ -201,6 +201,16 @@ payload and must not be reused for scientific calculations.
 - MTVI uses 800, 670, and 550 nm.
 - OSAVI uses 800 and 670 nm with `L=0.16`.
 - PRI uses 531 and 570 nm.
+- NDWI is `(R1070 - R1240) / (R1070 + R1240)` and NDMI is
+  `(R1070 - R1650) / (R1070 + R1650)`. These are adaptations of the usual
+  Gao NDWI and Hardisky NDMI: the NIR reference sits at 1070 nm rather than
+  860/820 nm so that SWIR cameras starting at about 935 nm (e.g. Specim FX17)
+  can compute them. They are unavailable for cameras ending near 1000 nm.
+  Modes whose bands are missing are reported by `unavailable_reason` and the UI
+  greys out their buttons.
+- Cubes without visible coverage render RGB as false colour from 1340, 1040,
+  and 1720 nm (red, green, blue) when all three exist, otherwise from the
+  first, middle, and last bands.
 
 The result records the actual nearest wavelength selected from the cube.
 Required index bands must be within 15 nm of their target; indices never use

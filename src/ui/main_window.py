@@ -38,7 +38,7 @@ from ui.calibration_controller import CalibrationController
 from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
-from ui.image_capabilities import ImageCapabilityController
+from ui.image_capabilities import OPTIONAL_MODES, ImageCapabilityController
 from ui.resolution_toggle import ResolutionSwitchGroup
 from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
@@ -61,6 +61,8 @@ _CACHED_VISUALIZATION_MODES = (
     VisualizationMode.MTVI,
     VisualizationMode.OSAVI,
     VisualizationMode.PRI,
+    VisualizationMode.NDWI,
+    VisualizationMode.NDMI,
 )
 
 
@@ -317,6 +319,17 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._classification_pixel_values_at
         )
 
+        # SWIR water indices live outside the generated form: they are the
+        # applicable modes for cameras whose range excludes the visible bands.
+        self.modeNDWI = QtWidgets.QRadioButton("NDWI", self.modeSelect)
+        self.modeNDWI.setObjectName("modeNDWI")
+        self.modeNDMI = QtWidgets.QRadioButton("NDMI", self.modeSelect)
+        self.modeNDMI.setObjectName("modeNDMI")
+        for column, button in enumerate((self.modeNDWI, self.modeNDMI)):
+            self.modeButtons.addButton(button)
+            self.gridLayout.addWidget(button, 2, column, 1, 1)
+        self.modeSelect.setMaximumHeight(170)
+
         mode_buttons = (
             (self.modeRGB, VisualizationMode.RGB),
             (self.modeNDVI, VisualizationMode.NDVI),
@@ -325,6 +338,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             (self.modeMTVI, VisualizationMode.MTVI),
             (self.modeOSAVI, VisualizationMode.OSAVI),
             (self.modePRI, VisualizationMode.PRI),
+            (self.modeNDWI, VisualizationMode.NDWI),
+            (self.modeNDMI, VisualizationMode.NDMI),
         )
         for button, mode in mode_buttons:
             button.toggled.connect(
@@ -828,6 +843,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._visualization_results = {}
         data = self._display_data()
         self._image_capabilities.refresh_visualizations(data, self._visualization_mode_buttons)
+        available = frozenset(
+            mode.value for mode in OPTIONAL_MODES
+            if self._visualization_service.unavailable_reason(data, mode) is None
+        )
+        for viewer in self._all_viewers():
+            viewer.available_optional_indices = available
         for mode in _CACHED_VISUALIZATION_MODES:
             if self._visualization_service.unavailable_reason(data, mode) is not None:
                 continue

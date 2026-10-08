@@ -275,6 +275,12 @@ QRadioButton:checked:focus {
     border-color: #168b7b;
 }
 
+QRadioButton:disabled {
+    color: #9ba9a6;
+    background: transparent;
+    border-color: transparent;
+}
+
 QRadioButton:pressed {
     background: #d5ebe6;
 }

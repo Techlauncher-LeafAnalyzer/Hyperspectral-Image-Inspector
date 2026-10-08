@@ -18,6 +18,8 @@ _FULL_NAMES: dict[str, str] = {
     "MTVI": "Modified Triangular Vegetation Index",
     "OSAVI": "Optimized Soil-Adjusted Vegetation Index",
     "PRI": "Photochemical Reflectance Index",
+    "NDWI": "Normalized Difference Water Index",
+    "NDMI": "Normalized Difference Moisture Index",
 }
 
 _GAUGE_MARKER_DIAMETER = 16

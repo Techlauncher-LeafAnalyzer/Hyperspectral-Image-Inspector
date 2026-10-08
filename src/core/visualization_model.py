@@ -36,6 +36,8 @@ class VisualizationMode(StrEnum):
     MTVI = "MTVI"
     OSAVI = "OSAVI"
     PRI = "PRI"
+    NDWI = "NDWI"
+    NDMI = "NDMI"
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +160,12 @@ class VisualizationService:
 
     RGB_TARGETS = MappingProxyType({"red": 660.0, "green": 550.0, "blue": 470.0})
     RGB_TOLERANCE_NM = 20.0
+    # Display channels for cameras without visible coverage (e.g. Specim FX17,
+    # 935-1720 nm), chosen to match the vendor preview. Cubes that lack any of
+    # these wavelengths fall back to first/middle/last.
+    SWIR_FALSE_COLOUR_TARGETS = MappingProxyType(
+        {"red": 1340.0, "green": 1040.0, "blue": 1720.0}
+    )
     INDEX_TOLERANCE_NM = 15.0
     DEFAULT_COLORMAPS = MappingProxyType(
         {
@@ -167,6 +175,8 @@ class VisualizationService:
             VisualizationMode.MTVI: "viridis",
             VisualizationMode.OSAVI: "RdYlGn",
             VisualizationMode.PRI: "Spectral",
+            VisualizationMode.NDWI: "BrBG",
+            VisualizationMode.NDMI: "BrBG",
         }
     )
 
@@ -371,10 +381,16 @@ class VisualizationService:
             }
         except WavelengthError:
             # Missing visible coverage is not a load failure. Retain all original
-            # spectral data and use first/middle/last for the display channels.
+            # spectral data and use a fixed false-colour mapping for the display.
             if data.bands < 1 or data.wavelengths_nm.size != data.bands:
                 raise
-            indices = {"red": 0, "green": data.bands // 2, "blue": data.bands - 1}
+            try:
+                indices = {
+                    name: data.nearest_band(target, tolerance_nm=self.RGB_TOLERANCE_NM)
+                    for name, target in self.SWIR_FALSE_COLOUR_TARGETS.items()
+                }
+            except WavelengthError:
+                indices = {"red": 0, "green": data.bands // 2, "blue": data.bands - 1}
             false_colour = True
         if data.roi_mask is None:
             rgb = get_rgb(
@@ -495,6 +511,11 @@ class VisualizationService:
             VisualizationMode.MTVI: {"nir": 800, "red": 670, "green": 550},
             VisualizationMode.OSAVI: {"nir": 800, "red": 670},
             VisualizationMode.PRI: {"r531": 531, "r570": 570},
+            # Water indices adapted to start at the SWIR camera's 935 nm limit:
+            # the NIR reference sits on the ~1070 nm plateau instead of the
+            # usual 860/820 nm.
+            VisualizationMode.NDWI: {"nir": 1070, "swir": 1240},
+            VisualizationMode.NDMI: {"nir": 1070, "swir": 1650},
         }
         return targets[mode]
 
@@ -526,6 +547,10 @@ class VisualizationService:
         if mode is VisualizationMode.PRI:
             return self._safe_divide(
                 bands["r531"] - bands["r570"], bands["r531"] + bands["r570"]
+            )
+        if mode in (VisualizationMode.NDWI, VisualizationMode.NDMI):
+            return self._safe_divide(
+                bands["nir"] - bands["swir"], bands["nir"] + bands["swir"]
             )
         raise VisualizationError(f"No index implementation for {mode.value}.")
 
