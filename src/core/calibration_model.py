@@ -84,7 +84,7 @@ class CalibrationFrameResolver:
         seen_stems: set[str] = set()
         metadata_entries = sorted(
             (path for path in directory_entries if path.suffix.casefold() in METADATA_EXTENSIONS),
-            key=lambda path: METADATA_EXTENSIONS.index(path.suffix.casefold()),
+            key=lambda path: path.suffix.casefold() != ".hdr",
         )
         for path in metadata_entries:
             stem = path.stem.casefold()

@@ -130,9 +130,15 @@ class TrainingPairResolver:
         }
         incomplete: list[str] = []
         for candidate_stem, convention in candidates:
-            header = next((directory_files[f"{candidate_stem}{ext}".casefold()]
-                           for ext in METADATA_EXTENSIONS
-                           if f"{candidate_stem}{ext}".casefold() in directory_files), None)
+            header = next(
+                (
+                    directory_files.get(f"{candidate_stem}{extension}".casefold())
+                    for extension in METADATA_EXTENSIONS
+                    if directory_files.get(f"{candidate_stem}{extension}".casefold())
+                    is not None
+                ),
+                None,
+            )
             data = next(
                 (
                     directory_files.get(

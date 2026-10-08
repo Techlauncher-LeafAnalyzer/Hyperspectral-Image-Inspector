@@ -4,11 +4,13 @@ from collections.abc import Iterable
 
 from PyQt6.QtWidgets import QAbstractButton, QPushButton
 
-from core import HSIData, SuperResolutionService, VisualizationMode, VisualizationService
-
-
-# Shown only for images whose wavelengths can compute them (e.g. Specim FX17).
-OPTIONAL_MODES = frozenset({VisualizationMode.NDWI, VisualizationMode.NDMI})
+from core import (
+    HSIData,
+    OPTIONAL_VISUALIZATION_MODES,
+    SuperResolutionService,
+    VisualizationMode,
+    VisualizationService,
+)
 
 
 class ImageCapabilityController:
@@ -22,16 +24,25 @@ class ImageCapabilityController:
 
     def refresh_visualizations(
         self, data: HSIData, mode_buttons: Iterable[tuple[QAbstractButton, VisualizationMode]]
-    ) -> None:
+    ) -> dict[VisualizationMode, str | None]:
+        """Update mode button state and return each mode's availability.
+
+        Callers that also need per-mode availability (e.g. to gate rendering)
+        should reuse the returned mapping instead of calling
+        ``unavailable_reason`` again for the same data/mode pairs.
+        """
+        reasons: dict[VisualizationMode, str | None] = {}
         for button, mode in mode_buttons:
             reason = self._visualization.unavailable_reason(data, mode)
+            reasons[mode] = reason
             button.setEnabled(reason is None)
-            if mode in OPTIONAL_MODES:
+            if mode in OPTIONAL_VISUALIZATION_MODES:
                 button.setVisible(reason is None)
             button.setToolTip(reason or (
                 "RGB preview (false-colour bands if visible RGB is unavailable)"
                 if mode is VisualizationMode.RGB else f"View {mode.value}"
             ))
+        return reasons
 
     def refresh_super_resolution(self, data: HSIData) -> None:
         reason = self._sr_service.compatibility_error(data)

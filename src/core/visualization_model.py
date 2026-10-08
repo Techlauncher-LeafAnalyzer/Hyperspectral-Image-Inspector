@@ -40,6 +40,11 @@ class VisualizationMode(StrEnum):
     NDMI = "NDMI"
 
 
+# Modes that only make sense for some cameras (e.g. Specim FX17's SWIR-only
+# range); UI code hides their controls instead of merely disabling them.
+OPTIONAL_VISUALIZATION_MODES = frozenset({VisualizationMode.NDWI, VisualizationMode.NDMI})
+
+
 @dataclass(frozen=True, slots=True)
 class DisplayStretch:
     """Percentile limits used only to map raw values into display colors.

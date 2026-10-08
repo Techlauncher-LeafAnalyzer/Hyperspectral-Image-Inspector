@@ -45,7 +45,7 @@ class HSIReader:
         source_path = Path(path).expanduser().resolve()
         if not source_path.is_file():
             raise HSIFileError(f"Selected file does not exist: {source_path}")
-        header_path, data_path = self._resolve_pair(source_path)
+        header_path, data_path = self.resolve_pair(source_path)
         header_format = self._detect_header_format(header_path)
         if header_format == "JSON":
             working_header = adapt_json_header(header_path)
@@ -89,35 +89,36 @@ class HSIReader:
                        == f"{data_path.stem}.hdr".casefold()), None)
         if header is None:
             return
-        reference = self.open(header)
         try:
-            mismatches = []
-            if tuple(image.shape) != reference.shape:
-                mismatches.append("dimensions")
-            if np.dtype(image.dtype) != np.dtype(reference.image.dtype):
-                mismatches.append("data type")
-            if int(image.offset) != int(reference.image.offset):
-                mismatches.append("header offset")
-            for field in ("interleave", "byte order"):
-                if str(image.metadata.get(field, "0")).strip().casefold() != str(
-                    reference.metadata.get(field, "0")
-                ).strip().casefold():
-                    mismatches.append(field)
-            if (wavelengths.shape != reference.wavelengths_nm.shape or not np.allclose(
-                wavelengths, reference.wavelengths_nm, rtol=0, atol=1e-6
-            )):
-                mismatches.append("wavelengths")
-            if mismatches:
-                raise HSIHeaderError(
-                    f"JSON metadata conflicts with {header.name}: {', '.join(mismatches)}. "
-                    f"Select {header.name} to load this cube, or provide verified "
-                    "metadata for the selected data file."
-                )
-        finally:
-            reference.close()
-
-    def _resolve_pair(self, source_path: Path) -> tuple[Path, Path]:
-        return self.resolve_pair(source_path)
+            reference_metadata = envi.read_envi_header(str(header))
+        except Exception as exc:
+            raise HSIHeaderError(f"Could not read companion header {header.name}: {exc}") from exc
+        reference_wavelengths = self._read_wavelengths(reference_metadata, int(image.nbands))
+        mismatches = []
+        reference_shape = tuple(
+            int(reference_metadata.get(field, -1)) for field in ("lines", "samples", "bands")
+        )
+        if tuple(image.shape) != reference_shape:
+            mismatches.append("dimensions")
+        if int(image.metadata.get("data type", -1)) != int(reference_metadata.get("data type", -2)):
+            mismatches.append("data type")
+        if int(image.offset) != int(reference_metadata.get("header offset", 0)):
+            mismatches.append("header offset")
+        for field in ("interleave", "byte order"):
+            if str(image.metadata.get(field, "0")).strip().casefold() != str(
+                reference_metadata.get(field, "0")
+            ).strip().casefold():
+                mismatches.append(field)
+        if (wavelengths.shape != reference_wavelengths.shape or not np.allclose(
+            wavelengths, reference_wavelengths, rtol=0, atol=1e-6
+        )):
+            mismatches.append("wavelengths")
+        if mismatches:
+            raise HSIHeaderError(
+                f"JSON metadata conflicts with {header.name}: {', '.join(mismatches)}. "
+                f"Select {header.name} to load this cube, or provide verified "
+                "metadata for the selected data file."
+            )
 
     @staticmethod
     def resolve_pair(path: str | Path) -> tuple[Path, Path]:

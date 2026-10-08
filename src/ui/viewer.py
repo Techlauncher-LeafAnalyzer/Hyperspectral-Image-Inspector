@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 from PyQt6.QtGui import QBrush, QFontDatabase, QImage, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 
+from core import OPTIONAL_VISUALIZATION_MODES
 from ui.theme import (
     CROP_OVERLAY_COLOR,
     CROP_SELECTION_COLOR,
@@ -45,7 +46,7 @@ VISUALIZATION_NAMES = (
 
 
 # Modes that only make sense for some cameras; hidden unless the image has them.
-OPTIONAL_VISUALIZATION_NAMES = frozenset({"NDWI", "NDMI"})
+OPTIONAL_VISUALIZATION_NAMES = frozenset(mode.value for mode in OPTIONAL_VISUALIZATION_MODES)
 
 
 def format_pixel_values_html(

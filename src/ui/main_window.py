@@ -20,6 +20,7 @@ from core import (
     HSIError,
     HSIReader,
     HSI_FILE_FILTER,
+    OPTIONAL_VISUALIZATION_MODES,
     SuperResolutionRequest,
     SuperResolutionResult,
     SuperResolutionService,
@@ -38,7 +39,7 @@ from ui.calibration_controller import CalibrationController
 from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
-from ui.image_capabilities import OPTIONAL_MODES, ImageCapabilityController
+from ui.image_capabilities import ImageCapabilityController
 from ui.resolution_toggle import ResolutionSwitchGroup
 from ui.hypercube_controller import HypercubeController
 from ui.spectrum_dialog import SpectrumDialog
@@ -842,15 +843,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hypercube_controller.stop_and_wait()
         self._visualization_results = {}
         data = self._display_data()
-        self._image_capabilities.refresh_visualizations(data, self._visualization_mode_buttons)
+        reasons = self._image_capabilities.refresh_visualizations(
+            data, self._visualization_mode_buttons
+        )
         available = frozenset(
-            mode.value for mode in OPTIONAL_MODES
-            if self._visualization_service.unavailable_reason(data, mode) is None
+            mode.value for mode in OPTIONAL_VISUALIZATION_MODES if reasons[mode] is None
         )
         for viewer in self._all_viewers():
             viewer.available_optional_indices = available
         for mode in _CACHED_VISUALIZATION_MODES:
-            if self._visualization_service.unavailable_reason(data, mode) is not None:
+            if reasons[mode] is not None:
                 continue
             try:
                 self._visualization_results[mode] = self._visualization_service.render(
