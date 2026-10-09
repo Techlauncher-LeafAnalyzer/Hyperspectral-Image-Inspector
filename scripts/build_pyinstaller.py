@@ -1,4 +1,4 @@
-"""Package the inspector with PyInstaller on Linux or Windows.
+"""Package HyperView with PyInstaller on Linux, Windows, or macOS.
 
 Usage (from any directory, with any Python 3.10+):
     python scripts/build_pyinstaller.py
@@ -10,9 +10,10 @@ developer's own environment never leak into the bundle. Pass --reuse-venv to
 skip recreating it when iterating on the script itself.
 
 Output:
-    dist/HyperspectralImageInspector/                  onedir build
-    dist/HyperspectralImageInspector-<os>-<arch>.*     distributable (.tar.xz on
-                                                       Linux, .zip on Windows)
+    dist/HyperView/                       onedir build (Linux/Windows)
+    dist/HyperView.app/                   application bundle (macOS)
+    dist/HyperView-<os>-<arch>.*           distributable (.tar.xz on Linux,
+                                          .zip on Windows/macOS)
 
 PyInstaller cannot cross-compile: run this on each target OS to get a build
 for it.
@@ -41,11 +42,13 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-APP_NAME = "HyperspectralImageInspector"
+APP_NAME = "HyperView"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 IS_WINDOWS = sys.platform == "win32"
 VENV_DIR = REPO_ROOT / "build" / "venv"
 REQUIREMENTS = ("requirements.txt", "requirements-sr.txt", "requirements-build.txt")
+IS_MACOS = sys.platform == "darwin"
+ASSETS_DIR = REPO_ROOT / "src" / "ui" / "assets"
 
 
 def pyinstaller_args() -> list[str]:
@@ -64,7 +67,12 @@ def pyinstaller_args() -> list[str]:
         "--add-data", "src/ui/assets:ui/assets",
         "--add-data", "model:model",
     ]
-    if not IS_WINDOWS:
+    if IS_WINDOWS or IS_MACOS:
+        extension = "icns" if IS_MACOS else "ico"
+        args += ["--icon", str(ASSETS_DIR / f"hyperview.{extension}")]
+    if IS_MACOS:
+        args += ["--osx-bundle-identifier", "leaf.HyperView"]
+    if sys.platform == "linux":
         # PyOpenGL imports its platform backend by name at runtime, and the
         # stock hook only bundles glx on Linux. Wayland sessions select egl,
         # so without it the hypercube tab's initializeGL fails to import
@@ -89,6 +97,12 @@ def prepare_venv(reuse: bool) -> Path:
     """Create a clean build environment and install pinned dependencies."""
     if not (REPO_ROOT / "model" / "fin_msdformer.pth").is_file():
         sys.exit("model/fin_msdformer.pth missing: Super-Resolution needs the checkpoint.")
+    extensions = {"png"}
+    if IS_WINDOWS or IS_MACOS:
+        extensions.add("icns" if IS_MACOS else "ico")
+    for extension in sorted(extensions):
+        if not (ASSETS_DIR / f"hyperview.{extension}").is_file():
+            sys.exit(f"src/ui/assets/hyperview.{extension} missing: restore the application icons.")
     if reuse and venv_python().is_file():
         return venv_python()
     stage("Creating fresh build venv")
@@ -106,11 +120,12 @@ def prepare_venv(reuse: bool) -> Path:
 
 
 def make_archive() -> Path:
-    """Compress dist/<APP_NAME> with the strongest standard-library codec."""
-    os_name = "windows" if IS_WINDOWS else "linux"
+    """Compress the native HyperView package with the platform's archive format."""
+    os_name = "windows" if IS_WINDOWS else "macos" if IS_MACOS else "linux"
     base = REPO_ROOT / "dist" / f"{APP_NAME}-{os_name}-{platform.machine().lower()}"
-    src = REPO_ROOT / "dist" / APP_NAME
-    if IS_WINDOWS:
+    package_name = f"{APP_NAME}.app" if IS_MACOS else APP_NAME
+    src = REPO_ROOT / "dist" / package_name
+    if IS_WINDOWS or IS_MACOS:
         archive = base.with_suffix(".zip")
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=5) as zf:
             for path in sorted(src.rglob("*")):
@@ -121,7 +136,7 @@ def make_archive() -> Path:
             # Python's lzma module is single-threaded; the xz CLI with -T0
             # uses every core, which is many times faster on a ~1GB bundle.
             tar = subprocess.Popen(
-                ["tar", "-C", str(src.parent), "-cf", "-", APP_NAME],
+                ["tar", "-C", str(src.parent), "-cf", "-", package_name],
                 stdout=subprocess.PIPE)
             with open(archive, "wb") as out:
                 subprocess.check_call(["xz", "-T0", "-5", "-c"], stdin=tar.stdout, stdout=out)
@@ -129,7 +144,7 @@ def make_archive() -> Path:
                 sys.exit("tar failed while creating the archive")
         else:
             with tarfile.open(archive, "w:xz", preset=5) as tf:
-                tf.add(src, arcname=APP_NAME)
+                tf.add(src, arcname=package_name)
     return archive
 
 
@@ -140,7 +155,10 @@ def main() -> None:
     stage("Running PyInstaller")
     subprocess.check_call([str(py), "-m", "PyInstaller", *pyinstaller_args()])
 
-    executable = Path("dist", APP_NAME, APP_NAME + (".exe" if IS_WINDOWS else ""))
+    executable = (
+        Path("dist", f"{APP_NAME}.app") if IS_MACOS
+        else Path("dist", APP_NAME, APP_NAME + (".exe" if IS_WINDOWS else ""))
+    )
     stage("Compressing archive")
     archive = make_archive()
     size_mb = archive.stat().st_size / 1024**2

@@ -36,6 +36,7 @@ from core import (
     WavelengthError,
 )
 from ui.calibration_controller import CalibrationController
+from ui.branding import APP_NAME, ICON_PATH
 from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
@@ -93,6 +94,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.setupUi(self)
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QtGui.QIcon(str(ICON_PATH)))
         # Qt's app stylesheet misses the combo's left edge when its border changes.
         self.comboBox.setStyleSheet(CLASSIFIER_BORDER_QSS)
         # Qt renders the combo popup in a separate window, so style its view directly.
