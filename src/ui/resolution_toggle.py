@@ -237,32 +237,114 @@ class CalibrationToggle(ResolutionToggle):
 
 
 class ImageStatePanel(QtWidgets.QFrame):
-    """A quiet, fixed-width rail that reserves space beside the image."""
+    """A collapsible rail that reserves space beside the image."""
+
+    collapsedChanged = QtCore.pyqtSignal(bool)
+    COLLAPSED_WIDTH = 48
 
     def __init__(self, parent: QtWidgets.QWidget, name: str) -> None:
         super().__init__(parent)
         self.setObjectName("imageStatePanel")
         self.setAccessibleName("Image version controls")
         self.setFixedWidth(INSPECTOR_PANEL_WIDTH)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Expanding)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Expanding)
+        self._collapsed = False
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(12, 20, 12, 20)
         layout.setSpacing(24)
-        title = QtWidgets.QLabel("Image view", self)
-        title.setObjectName("imageStateTitle")
-        layout.addWidget(title)
+        self._title = QtWidgets.QLabel("Image view", self)
+        self._title.setObjectName("imageStateTitle")
+        self._collapse_button = QtWidgets.QToolButton(self)
+        self._collapse_button.setObjectName("imageStateCollapseButton")
+        self._collapse_button.setText("‹")
+        self._collapse_button.setToolTip("Collapse image view")
+        self._collapse_button.setAccessibleName("Collapse image view")
+        self._collapse_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self._collapse_button.clicked.connect(self.toggle_collapsed)
+        header = QtWidgets.QWidget(self)
+        header.setFixedHeight(27)
+        header_layout = QtWidgets.QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(5)
+        header_layout.addWidget(self._title, 1)
+        header_layout.addWidget(self._collapse_button)
+        layout.addWidget(header)
+        self._body = QtWidgets.QWidget(self)
+        body_layout = QtWidgets.QVBoxLayout(self._body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(24)
         self.resolution_switch = ResolutionToggle(self, name)
         self.calibration_switch = CalibrationToggle(
             self, name.replace("ResolutionSwitch", "CalibrationSwitch")
         )
         self.resolution_section = self._section("Resolution", self.resolution_switch)
         self.calibration_section = self._section("Calibration", self.calibration_switch)
-        layout.addWidget(self.resolution_section)
-        layout.addWidget(self.calibration_section)
+        body_layout.addWidget(self.resolution_section)
+        body_layout.addWidget(self.calibration_section)
+        layout.addWidget(self._body)
         layout.addStretch(1)
+        self._width_animation = QtCore.QPropertyAnimation(self, b"maximumWidth", self)
+        self._width_animation.setDuration(220)
+        self._width_animation.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self._width_animation.finished.connect(self._finish_width_animation)
         self.resolution_section.hide()
         self.calibration_section.hide()
         self.hide()
+
+    @property
+    def is_collapsed(self) -> bool:
+        return self._collapsed
+
+    def sizeHint(self) -> QtCore.QSize:
+        # Follow the animated width rather than requesting the destination
+        # immediately; the adjacent image then gains space smoothly.
+        return QtCore.QSize(
+            self.maximumWidth(),
+            super().sizeHint().height(),
+        )
+
+    def toggle_collapsed(self) -> None:
+        self.set_collapsed(not self._collapsed)
+
+    def set_collapsed(self, collapsed: bool, *, animate: bool = True) -> None:
+        if self._collapsed == collapsed:
+            return
+        self._width_animation.stop()
+        self._collapsed = collapsed
+        self.setMinimumWidth(self.COLLAPSED_WIDTH)
+        # Keep the pills hidden until the full width is restored, so their
+        # rounded ends never clip during the transition.
+        self._body.hide()
+        self._title.hide()
+        margin = 11 if collapsed else 12
+        self.layout().setContentsMargins(margin, 20, margin, 20)
+        self._collapse_button.setText("›" if collapsed else "‹")
+        action = "Expand image view" if collapsed else "Collapse image view"
+        self._collapse_button.setToolTip(action)
+        self._collapse_button.setAccessibleName(action)
+        target = self.COLLAPSED_WIDTH if collapsed else INSPECTOR_PANEL_WIDTH
+        if animate and self.isVisible():
+            self._width_animation.setStartValue(self.width())
+            self._width_animation.setEndValue(target)
+            self._width_animation.start()
+        else:
+            self._finish_width_animation()
+        self.collapsedChanged.emit(collapsed)
+
+    def _finish_width_animation(self) -> None:
+        target = self.COLLAPSED_WIDTH if self._collapsed else INSPECTOR_PANEL_WIDTH
+        self.setFixedWidth(target)
+        self._title.setVisible(not self._collapsed)
+        self._body.setVisible(not self._collapsed)
+        self.updateGeometry()
+
+    def stop_animation(self) -> None:
+        self._width_animation.stop()
+        self._finish_width_animation()
+
+    def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        self.stop_animation()
+        super().hideEvent(event)
 
     def _section(self, title: str, switch: ResolutionToggle) -> QtWidgets.QWidget:
         section = QtWidgets.QWidget(self)
@@ -297,6 +379,9 @@ class ResolutionSwitchGroup(QtCore.QObject):
     ) -> None:
         super().__init__(parent)
         self.panels = tuple(panels)
+        self._collapsed = False
+        for panel in self.panels:
+            panel.collapsedChanged.connect(self._sync_collapsed)
         self.switches = tuple(panel.resolution_switch for panel in self.panels)
         self.calibration_switches = tuple(panel.calibration_switch for panel in self.panels)
         for switch in self.switches:
@@ -309,8 +394,17 @@ class ResolutionSwitchGroup(QtCore.QObject):
 
     def stop(self) -> None:
         self._raise_timer.stop()
+        for panel in self.panels:
+            panel.stop_animation()
         for switch in self.switches + self.calibration_switches:
             switch.stop_animation()
+
+    def _sync_collapsed(self, collapsed: bool) -> None:
+        if self._collapsed == collapsed:
+            return
+        self._collapsed = collapsed
+        for panel in self.panels:
+            panel.set_collapsed(collapsed)
 
     def sync(self, *, available: bool, high_resolution: bool, enabled: bool) -> None:
         for switch in self.switches:

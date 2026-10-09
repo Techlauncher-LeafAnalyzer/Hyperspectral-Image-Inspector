@@ -719,7 +719,8 @@ QLabel#classificationLayerCount {
     font-weight: 700;
 }
 
-QToolButton#classificationLayerCollapseButton {
+QToolButton#classificationLayerCollapseButton,
+QToolButton#imageStateCollapseButton {
     min-width: 22px;
     max-width: 22px;
     min-height: 22px;
@@ -733,18 +734,21 @@ QToolButton#classificationLayerCollapseButton {
     padding: 0 0 2px 0;
 }
 
-QToolButton#classificationLayerCollapseButton:hover {
+QToolButton#classificationLayerCollapseButton:hover,
+QToolButton#imageStateCollapseButton:hover {
     color: #126f62;
     background: #e5f3f0;
     border-color: #9fcac1;
 }
 
-QToolButton#classificationLayerCollapseButton:pressed {
+QToolButton#classificationLayerCollapseButton:pressed,
+QToolButton#imageStateCollapseButton:pressed {
     background: #d5ebe6;
     border-color: #78afa5;
 }
 
-QToolButton#classificationLayerCollapseButton:focus {
+QToolButton#classificationLayerCollapseButton:focus,
+QToolButton#imageStateCollapseButton:focus {
     border-color: #168b7b;
 }
 
