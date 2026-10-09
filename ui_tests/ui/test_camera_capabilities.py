@@ -150,3 +150,60 @@ def test_water_index_buttons_only_appear_for_swir_images(window, camera_cube_fac
     assert window.modeNDWI.isHidden() and window.modeNDMI.isHidden()
     assert not window.modeNDVI.isHidden() and window.modeNDVI.isEnabled()
     assert window.viewer.available_optional_indices == frozenset()
+
+
+@pytest.mark.parametrize("start, end, optional_indices", [
+    (398.25, 1001.17, frozenset()),
+    (935.613, 1720.233, frozenset({"NDWI", "NDMI"})),
+])
+def test_camera_capabilities_refresh_when_calibration_previews_are_cached(
+    window, camera_cube_factory, tmp_path, qtbot, monkeypatch, dialogs,
+    start, end, optional_indices,
+):
+    wavelengths = np.linspace(start, end, 224)
+    data, _ = camera_cube_factory(wavelengths)
+    window.load_image_from_path(data.source_path)
+    references = []
+    for name, value in (("dark", 0.0), ("bright", 1.0)):
+        path = tmp_path / f"{name}.hdr"
+        envi.save_image(
+            str(path), np.full((21, data.columns, data.bands), value, dtype=np.float32),
+            ext=".bip", interleave="bip", metadata={"wavelength": wavelengths.tolist()},
+        )
+        references.append(path)
+    window._calibration_controller._set_paths(*references)
+    window._calibration_controller._update_ready()
+    window.calibrateButton.click()
+    qtbot.waitUntil(lambda: not window._calibration_controller.is_running(), timeout=30000)
+    assert not dialogs.critical
+    calibrated = window._calibration_controller.result
+    assert calibrated is not None
+    after = window._visualization_results
+    switch = window._resolution_switches.calibration_switches[0]
+    switch.click()
+    before = window._visualization_results
+
+    def unexpected_processing(*args, **kwargs):
+        raise AssertionError("Camera comparisons must reuse cached previews")
+
+    monkeypatch.setattr(window._visualization_service, "render", unexpected_processing)
+    monkeypatch.setattr(window._calibration_controller.service, "calibrate", unexpected_processing)
+    refreshes = []
+    refresh = window._image_capabilities.refresh_visualizations
+
+    def track_refresh(source, buttons):
+        refreshes.append(source)
+        return refresh(source, buttons)
+
+    monkeypatch.setattr(window._image_capabilities, "refresh_visualizations", track_refresh)
+    for expected_source, expected_previews in (
+        (calibrated.data, after), (window._hsi_data, before),
+    ):
+        refreshes.clear()
+        switch.click()
+        assert refreshes and all(source is expected_source for source in refreshes)
+        assert window._visualization_results is expected_previews
+        assert all(viewer.available_optional_indices == optional_indices
+                   for viewer in window._all_viewers())
+        assert window.modeNDWI.isEnabled() == bool(optional_indices)
+        assert window.modeNDVI.isEnabled() == (not optional_indices)
