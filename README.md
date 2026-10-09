@@ -1,4 +1,26 @@
-# Hyperspectral Image Inspector
+# HyperView
+
+HyperView is the Hyperspectral Image Inspector for plant imaging. Its application
+icon combines a leaf, a spectral data cube, and Space Age orbital geometry in
+cream, warm orange, petrol blue, and navy.
+
+To package on the target operating system:
+
+```sh
+python scripts/build_pyinstaller.py
+```
+
+The script creates a fresh `build/venv` and installs the runtime,
+super-resolution, and build requirements automatically. Use `--reuse-venv`
+to reuse that environment when iterating on packaging.
+
+Outputs are `dist/HyperView/HyperView.exe` on Windows,
+`dist/HyperView/HyperView` on Linux, and `dist/HyperView.app` on macOS, with a
+`HyperView-<os>-<arch>` distribution archive (`.tar.xz` on Linux, `.zip` on
+Windows/macOS). Windows and macOS packages embed
+the supplied native icon; application windows use the same PNG on all platforms.
+Linux file managers do not embed application icons in ELF binaries; a desktop
+launcher must register the PNG separately. See [branding assets](docs/branding.md).
 
 The production application uses a PyQt6 View/Controller and a UI-independent
 Model under `src/core`.
