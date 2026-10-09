@@ -441,6 +441,26 @@ QGraphicsView#classificationViewer {
     border-radius: 8px;
 }
 
+QFrame#imageStatePanel {
+    background: #f8fbf9;
+    border: 1px solid #dce5df;
+    border-radius: 10px;
+}
+
+QLabel#imageStateTitle {
+    color: #2d4437;
+    font-size: 14px;
+    font-weight: 600;
+    background: transparent;
+}
+
+QLabel#imageStateLabel {
+    color: #788a7e;
+    font-size: 12px;
+    font-weight: 500;
+    background: transparent;
+}
+
 QLabel#pixelValueOverlay {
     background-color: rgba(20, 20, 20, 200);
     color: #f5f5f5;
@@ -699,7 +719,8 @@ QLabel#classificationLayerCount {
     font-weight: 700;
 }
 
-QToolButton#classificationLayerCollapseButton {
+QToolButton#classificationLayerCollapseButton,
+QToolButton#imageStateCollapseButton {
     min-width: 22px;
     max-width: 22px;
     min-height: 22px;
@@ -713,18 +734,21 @@ QToolButton#classificationLayerCollapseButton {
     padding: 0 0 2px 0;
 }
 
-QToolButton#classificationLayerCollapseButton:hover {
+QToolButton#classificationLayerCollapseButton:hover,
+QToolButton#imageStateCollapseButton:hover {
     color: #126f62;
     background: #e5f3f0;
     border-color: #9fcac1;
 }
 
-QToolButton#classificationLayerCollapseButton:pressed {
+QToolButton#classificationLayerCollapseButton:pressed,
+QToolButton#imageStateCollapseButton:pressed {
     background: #d5ebe6;
     border-color: #78afa5;
 }
 
-QToolButton#classificationLayerCollapseButton:focus {
+QToolButton#classificationLayerCollapseButton:focus,
+QToolButton#imageStateCollapseButton:focus {
     border-color: #168b7b;
 }
 
@@ -999,6 +1023,7 @@ QListView::item:hover {
 # QGraphicsScene items (the photo, mask overlay, watermark, and annotation
 # prompts drawn on HSIViewer) are painted directly and are not reachable by
 # QSS, so their colours live here as plain constants instead.
+INSPECTOR_PANEL_WIDTH = 236
 VIEWER_SCENE_BACKGROUND   = QColor(255, 255, 255)
 VIEWER_WATERMARK_COLOR    = QColor("#eaecee")
 VIEWER_WATERMARK_POINT_SIZE = 45

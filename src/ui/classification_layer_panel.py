@@ -14,10 +14,11 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from core import ClassificationLayer
 from ui.classification_colors import RGBColor, classification_palette
+from ui.theme import INSPECTOR_PANEL_WIDTH
 from ui.viewer import PixelValueEntry, format_pixel_values_html
 
 
-_EXPANDED_WIDTH = 280
+_EXPANDED_WIDTH = INSPECTOR_PANEL_WIDTH
 _EXPANDED_MINIMUM_WIDTH = 236
 _COLLAPSED_WIDTH = 48
 _COLLAPSE_DURATION_MS = 220
@@ -208,7 +209,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
 
         self._collapse_button = QtWidgets.QToolButton(self)
         self._collapse_button.setObjectName("classificationLayerCollapseButton")
-        self._collapse_button.setText("‹")
+        self._collapse_button.setText("›")
         self._collapse_button.setToolTip("Collapse class layers")
         self._collapse_button.setAccessibleName("Collapse class layers")
         self._collapse_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -441,13 +442,13 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         if collapsed:
             self._body.hide()
             self._header_details.hide()
-            self._collapse_button.setText("›")
+            self._collapse_button.setText("‹")
             self._collapse_button.setToolTip("Expand class layers")
             self._collapse_button.setAccessibleName("Expand class layers")
         else:
             self._body.show()
             self._header_details.show()
-            self._collapse_button.setText("‹")
+            self._collapse_button.setText("›")
             self._collapse_button.setToolTip("Collapse class layers")
             self._collapse_button.setAccessibleName("Collapse class layers")
 

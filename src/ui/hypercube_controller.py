@@ -45,6 +45,8 @@ class HypercubeController(QObject):
         self._worker: Optional[HypercubeWorker] = None
         self._generation = 0
         self._loaded = False
+        self._source_snapshot: Optional[HSIData] = None
+        self._view_cache: list[tuple[HSIData, HypercubeViewData]] = []
 
         mode_button.toggled.connect(self._on_mode_toggled)
 
@@ -52,29 +54,42 @@ class HypercubeController(QObject):
     # Public API                                                           #
     # ------------------------------------------------------------------ #
 
-    def refresh(self, hsi_data: HSIData) -> None:
-        """Recompute the cube for the current dataset.
+    def refresh(self, hsi_data: HSIData, *, reuse: bool = False) -> None:
+        """Refresh the cube, optionally reusing a completed comparison preview.
 
         Call after every load and every crop. Cancels any worker still in
         flight (bounded by a blocking wait, so a rapid second load/crop can't
         leave two readers on the same underlying SpyFile handle --
         ``HSIData.crop()`` wraps rather than replaces ``spectral_obj``)
         before starting a fresh one on a decoupled snapshot of the current
-        field values.
+        field values. Comparison caches retain at most four completed states;
+        source, crop, ROI and wavelength changes select a fresh preview.
         """
         self._loaded = hsi_data.is_loaded()
         self._view_data = None
         self._error = None
         self.stop_and_wait()
+        self._generation += 1
+        self._source_snapshot = dataclasses.replace(hsi_data)
+        self._source_snapshot.wavelengths = hsi_data.wavelengths.copy()
 
         if not self._loaded:
             self._refresh_display()
             return
 
-        self._generation += 1
+        if reuse:
+            for snapshot, view in reversed(self._view_cache):
+                if (
+                    snapshot.spectral_obj is hsi_data.spectral_obj
+                    and snapshot.roi_mask is hsi_data.roi_mask
+                    and snapshot.wavelengths == hsi_data.wavelengths
+                ):
+                    self._view_data = view
+                    if self._mode_button.isChecked():
+                        self._refresh_display()
+                    return
         generation = self._generation
-        snapshot = dataclasses.replace(hsi_data)
-        worker = HypercubeWorker(self._service, snapshot)
+        worker = HypercubeWorker(self._service, self._source_snapshot)
         worker.progress.connect(
             lambda value, message, gen=generation: self._on_progress(gen, value, message)
         )
@@ -114,11 +129,13 @@ class HypercubeController(QObject):
         only an unfinished build needs to be restarted.
         """
         if self._worker is None and self._view_data is None and self._error is None:
-            self.refresh(hsi_data)
+            self.refresh(hsi_data, reuse=True)
 
     def shutdown(self) -> None:
         """Detach any in-flight worker before the owning window closes."""
         self.stop_and_wait()
+        self._view_cache.clear()
+        self._source_snapshot = None
 
     # ------------------------------------------------------------------ #
     # Private: signal handlers                                            #
@@ -140,6 +157,15 @@ class HypercubeController(QObject):
             return
         self._view_data = result
         self._error = None
+        if self._source_snapshot is not None:
+            source = self._source_snapshot
+            self._view_cache = [
+                (snapshot, view) for snapshot, view in self._view_cache
+                if not (snapshot.spectral_obj is source.spectral_obj
+                        and snapshot.roi_mask is source.roi_mask)
+            ]
+            self._view_cache.append((source, result))
+            self._view_cache = self._view_cache[-4:]
         if self._mode_button.isChecked():
             self._refresh_display()
 

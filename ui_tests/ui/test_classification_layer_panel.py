@@ -193,7 +193,7 @@ def test_panel_collapses_and_expands_without_changing_layers(qtbot):
 
     panel.set_collapsed(False, animate=False)
     assert not panel.is_collapsed
-    assert panel.maximumWidth() == 280
+    assert panel.maximumWidth() == 236
     assert panel._body.isVisible()
     assert len(panel._rows) == 3
 

@@ -315,7 +315,7 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
 
     window.tabWidget.setCurrentWidget(window.Visualization)
     assert window._display_data() is result.data
-    assert window.visualizationStack.findChild(QtCore.QObject, "visualizationCalibrationSwitch") is None
+    assert window.Visualization.findChild(QtCore.QObject, "visualizationCalibrationSwitch") is not None
     window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
     np.testing.assert_allclose(
         received[-1].values, result.data.read_pixel(1, 2), atol=1e-6
@@ -404,3 +404,137 @@ def test_calibration_clears_obsolete_classification(
     _wait_for_calibration(qtbot, window)
     assert window._calibration_controller.result is not None
     assert all(slot.result is None for slot in window._classification_controller._slots.values())
+
+
+def test_calibration_comparison_reuses_results_and_keeps_view_state(
+    loaded_window, file_dialog, tmp_path, qtbot, monkeypatch
+):
+    window = loaded_window
+    raw = window._hsi_data
+    original = raw.read_bands(range(raw.bands)).copy()
+    shape = (21, raw.columns, raw.bands)
+    dark = _write_reference(tmp_path, "dark", np.full(shape, 0.15))
+    bright = _write_reference(tmp_path, "bright", np.full(shape, 1.15))
+    _select_references(window, file_dialog, dark, bright)
+    window.calibrateButton.click()
+    _wait_for_calibration(qtbot, window)
+    calibrated = window._calibration_controller.result
+    after_previews = window._visualization_results
+    switches = window._resolution_switches.calibration_switches
+    assert all(switch.isChecked() and switch.isEnabled() for switch in switches)
+    assert not window._super_res_result
+
+    window.show()
+    qtbot.waitExposed(window)
+    qtbot.wait(30)
+    window.viewer.set_view_state((3.0, QtCore.QPointF(3, 4)))
+    framing = window.viewer.get_view_state()
+    switches[0].click()
+    qtbot.wait(30)
+    assert window.viewer.get_view_state()[0] == framing[0]
+    assert window.viewer.get_view_state()[1] == framing[1]
+    assert window._display_data() is raw
+    assert window._calibration_controller.result is calibrated
+    assert all(not switch.isChecked() for switch in switches)
+    assert "Original:" in window.superResStatusText.text()
+    for viewer in window._all_viewers():
+        np.testing.assert_array_equal(viewer.rgb, raw.rgb_array)
+    assert "Calibrated RGB" not in window.calibrationViewer.pixel_value_provider(1, 2)
+    before_previews = window._visualization_results
+
+    # Once both previews exist, comparisons must neither read/render the cube
+    # again nor rerun calibration or super-resolution.
+    def unexpected_processing(*args, **kwargs):
+        raise AssertionError("Comparisons must reuse cached images")
+
+    monkeypatch.setattr(window._calibration_controller.service, "calibrate", unexpected_processing)
+    monkeypatch.setattr(window._super_resolution_service, "run", unexpected_processing)
+    monkeypatch.setattr(window._visualization_service, "render", unexpected_processing)
+    for _ in range(5):
+        switches[3].click()
+        assert window._display_data() is calibrated.data
+        assert window._visualization_results is after_previews
+        assert all(switch.isChecked() for switch in switches)
+        assert "Calibrated:" in window.superResStatusText.text()
+        switches[1].click()
+        assert window._display_data() is raw
+        assert window._visualization_results is before_previews
+    np.testing.assert_array_equal(raw.read_bands(range(raw.bands)), original)
+    assert window._calibration_controller.result is calibrated
+
+
+def test_before_calibration_spectrum_export_and_reset_follow_selection(
+    loaded_window, file_dialog, tmp_path, qtbot, monkeypatch, synthetic_cube_path
+):
+    window = loaded_window
+    raw = window._hsi_data
+    shape = (21, raw.columns, raw.bands)
+    dark = _write_reference(tmp_path, "dark", np.full(shape, 0.1))
+    bright = _write_reference(tmp_path, "bright", np.full(shape, 2.1))
+    _select_references(window, file_dialog, dark, bright)
+    window.calibrateButton.click()
+    _wait_for_calibration(qtbot, window)
+    switch = window._resolution_switches.calibration_switches[1]
+    switch.click()
+    received = []
+    import ui.main_window as controller
+    monkeypatch.setattr(controller, "SpectrumDialog", lambda spectrum, parent:
+                        SimpleNamespace(exec=lambda: received.append(spectrum)))
+    for viewer in (window.viewer, window.calibrationViewer, window.superResViewer):
+        viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
+        np.testing.assert_allclose(received[-1].values, raw.read_pixel(1, 2))
+    output = tmp_path / "before.png"
+    file_dialog.save_return = (str(output), "")
+    window.tabWidget.setCurrentWidget(window.Calibration)
+    window.actionSaveImage.trigger()
+    with Image.open(output) as image:
+        np.testing.assert_array_equal(np.asarray(image), raw.rgb_array)
+    # Reference replacement invalidates the old comparison even while Before
+    # is selected, then a new calibration automatically selects After again.
+    window.referenceFileButton.click()
+    assert window._calibration_controller.result is None
+    assert all(switch.isHidden() for switch in window._resolution_switches.calibration_switches)
+    window.calibrateButton.click()
+    _wait_for_calibration(qtbot, window)
+    assert switch.isChecked() and not switch.isHidden()
+    switch.click()
+    window.load_image_from_path(synthetic_cube_path)
+    assert window._calibration_controller.result is None
+    assert all(switch.isHidden() for switch in window._resolution_switches.calibration_switches)
+
+
+def test_classification_layers_are_independent_before_and_after_calibration(
+    loaded_window, file_dialog, tmp_path, qtbot
+):
+    window = loaded_window
+    shape = (21, window._hsi_data.columns, window._hsi_data.bands)
+    dark = _write_reference(tmp_path, "dark", np.full(shape, 0.1))
+    bright = _write_reference(tmp_path, "bright", np.full(shape, 2.1))
+    _select_references(window, file_dialog, dark, bright)
+    window.calibrateButton.click()
+    _wait_for_calibration(qtbot, window)
+    window.numOfClassesEdit.setText("2")
+    window.maxIterationsEdit.setText("3")
+    window.unsupervisedClassifyButton.click()
+    qtbot.waitUntil(lambda: not window._classification_controller.is_running())
+    controller = window._classification_controller
+    after_slot = controller._current_slot
+    window.classificationLayerPanel._rows[1]._toggle.setChecked(False)
+    switch = window._resolution_switches.calibration_switches[2]
+    switch.click()
+    assert controller._current_slot.result is None
+    assert not window.classificationLayerPanel._rows
+    np.testing.assert_array_equal(window.classificationViewer.rgb, window._hsi_data.rgb_array)
+    window.unsupervisedClassifyButton.click()
+    assert not switch.isEnabled()
+    qtbot.waitUntil(lambda: not controller.is_running())
+    before_slot = controller._current_slot
+    assert before_slot is not after_slot
+    assert before_slot.active_data is window._hsi_data
+    assert before_slot.result is not None
+    switch.click()
+    assert controller._current_slot is after_slot
+    assert not window.classificationLayerPanel._rows[1]._toggle.isChecked()
+    switch.click()
+    assert controller._current_slot is before_slot
+    assert window.classificationLayerPanel._rows[1]._toggle.isChecked()

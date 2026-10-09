@@ -96,15 +96,20 @@ spectrum disk reads are paused to serialize source access, while tabs, cached
 visualization modes, and pan/zoom remain interactive. Closing requests cancellation
 and waits asynchronously for the worker to finish.
 
-The raw `HSIData` remains unchanged. If calibration has completed, its result is
-the low-resolution input to SR; otherwise SR reads the raw cube. The SR tab shows
+The raw `HSIData` remains unchanged. SR always reads the raw cube. If calibration
+has completed, running SR asks for confirmation before discarding the calibration
+and its classification results. Calibrate after SR to generate calibrated results
+at both resolutions. The SR tab shows
 RGB from the selected low/high-resolution dataset. Pan/zoom coordinates
 are scaled when switching between resolutions. SR pixel RGB, spectrum lookup,
 and File → Save Image use the displayed dataset. Save Image exports the preview,
 not the complete 480-band cube. Index means remain available on the original
 image; crop the original and rerun SR instead of applying HR coordinates to LR.
 Loading or cropping/undoing a source invalidates the old SR result. Confirming
-calibration after SR also discards that result and its high-resolution derivatives.
+calibration after SR retains the raw SR result and calibrates both resolutions.
+The shared **Before Calibration / After Calibration** selector compares these
+cached results independently of **Low Res / High Res**, without rerunning either
+operation. Classification layers are retained separately for each combination.
 Every successful SR run clears previous classification at both resolutions and
 crop undo/redo history. Failures and cancellation retain the previous successful
 result.

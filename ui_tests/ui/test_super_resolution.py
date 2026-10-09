@@ -70,7 +70,7 @@ def test_processed_selection_without_result_does_not_show_original(loaded_window
 def test_canvas_resolution_switches_follow_the_toggle(loaded_window, stub_sr, qtbot):
     window = loaded_window
     switches = window._resolution_switches.switches
-    assert len(switches) == 3
+    assert len(switches) == 4
     assert all(switch.isHidden() for switch in switches)
 
     # Checking high-res before a result exists changes nothing: there is
@@ -97,7 +97,7 @@ def test_super_resolution_on_calibrated_image_warns_and_reverts_calibration(
     loaded_window, stub_sr, qtbot, file_dialog, tmp_path, monkeypatch
 ):
     window = loaded_window
-    badges = window._resolution_switches.calibration_badges
+    badges = window._resolution_switches.calibration_switches
     source = window._hsi_data
     shape = (21, source.original_shape[1], source.bands)
     _set_references(window, file_dialog, tmp_path, np.zeros(shape), np.full(shape, 2.0))
@@ -157,7 +157,7 @@ def test_calibrating_with_raw_sr_calibrates_both_resolutions_without_prompt(
     window.runSuperResButton.click()
     finish(qtbot, window)
     previous_sr = window._super_res_result
-    badges = window._resolution_switches.calibration_badges
+    badges = window._resolution_switches.calibration_switches
     assert all(badge.isHidden() for badge in badges)
     monkeypatch.setattr(
         QtWidgets.QMessageBox, "question",
@@ -455,7 +455,7 @@ def test_visualization_view_maps_framing_between_resolutions(
     assert window.viewer.get_view_state()[0] == pytest.approx(4.0)
 
 
-def test_canvas_switches_stay_fixed_and_above_each_page(
+def test_image_switches_stay_in_left_rail_without_covering_any_canvas(
     loaded_window, stub_sr, qtbot
 ):
     window = loaded_window
@@ -464,37 +464,31 @@ def test_canvas_switches_stay_fixed_and_above_each_page(
     finish(qtbot, window)
     window.show()
     qtbot.waitExposed(window)
-
     cases = (
         (window.Visualization, window.visualizationStack, 0),
         (window.Calibration, window.calibrationViewer, 1),
         (window.Classification, window.classificationViewer, 2),
+        (window.SuperResolution, window.superResViewer, 3),
     )
-    for page, canvas, index in cases:
-        window.tabWidget.setCurrentWidget(page)
-        qtbot.wait(30)
-        switch = window._resolution_switches.switches[index]
-        assert switch.parentWidget() is canvas
-        assert switch.pos() == QtCore.QPoint(12, 12)
-        assert switch.isVisible()
-        assert canvas.childAt(switch.geometry().center()) is switch
-
-    window.resize(1100, 820)
-    window._refresh_viewers_display()
-    qtbot.wait(30)
-    for page, canvas, index in cases:
-        window.tabWidget.setCurrentWidget(page)
-        qtbot.wait(30)
-        switch = window._resolution_switches.switches[index]
-        assert switch.pos() == QtCore.QPoint(12, 12)
-        assert canvas.childAt(switch.geometry().center()) is switch
-
+    for width in (924, 1100):
+        window.resize(width, 820)
+        for page, canvas, index in cases:
+            window.tabWidget.setCurrentWidget(page)
+            qtbot.wait(30)
+            panel = window._resolution_switches.panels[index]
+            switch = window._resolution_switches.switches[index]
+            assert panel.parentWidget() is canvas.parentWidget()
+            assert switch.isVisible()
+            assert panel.geometry().right() < canvas.geometry().left()
+            assert not panel.geometry().intersects(canvas.geometry())
+            assert switch.mapTo(panel, QtCore.QPoint()).x() == panel.contentsRect().left() + 12
+            assert panel.width() == window.classificationLayerPanel.width() == 236
     window.tabWidget.setCurrentWidget(window.Visualization)
     window.modeHyperCube.setChecked(True)
     qtbot.wait(30)
-    switch = window._resolution_switches.switches[0]
-    assert switch.pos() == QtCore.QPoint(12, 12)
-    assert window.visualizationStack.childAt(switch.geometry().center()) is switch
+    panel = window._resolution_switches.panels[0]
+    assert panel.geometry().right() < window.visualizationStack.geometry().left()
+    assert window._resolution_switches.switches[0].isVisible()
 
 
 def test_high_res_switch_shown_without_notice_when_switching_to_visualization(loaded_window, stub_sr, qtbot, dialogs):
@@ -710,3 +704,85 @@ def test_real_model_runs_from_button_without_blocking_qt(window, sr_source, qtbo
     assert window.superResViewer.has_photo()
     assert window.superResViewer.rgb.shape == (14, 18, 3)
     assert window.superResProgressBar.value() == 100
+
+
+def test_resolution_and_calibration_comparisons_cover_four_cached_states(
+    loaded_window, stub_sr, qtbot, file_dialog, tmp_path, monkeypatch
+):
+    window = loaded_window
+    source = window._hsi_data
+    shape = (21, source.columns, source.bands)
+    _set_references(window, file_dialog, tmp_path, np.full(shape, 0.1), np.full(shape, 2.1))
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    raw_high = window._super_res_result.data
+    window.calibrateButton.click()
+    assert all(not switch.isEnabled() for switch in window._resolution_switches.switches)
+    qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
+    controller = window._calibration_controller
+    low, high = controller.result_for_resolution(False), controller.result_for_resolution(True)
+    cases = ((False, False, source), (True, False, raw_high),
+             (True, True, high.data), (False, True, low.data))
+    received = []
+    import ui.main_window as main_window
+    monkeypatch.setattr(main_window, "SpectrumDialog", lambda spectrum, parent:
+                        SimpleNamespace(exec=lambda: received.append(spectrum)))
+    for resolution, calibrated, data in cases * 2:
+        window._select_canvas_resolution(resolution)
+        window._select_canvas_calibration(calibrated)
+        assert window._display_data() is data
+        assert all(switch.isChecked() == resolution for switch in window._resolution_switches.switches)
+        assert all(switch.isChecked() == calibrated for switch in window._resolution_switches.calibration_switches)
+        for viewer in window._all_viewers():
+            np.testing.assert_array_equal(viewer.rgb, data.rgb_array)
+        row, column = (14, 15) if resolution else (6, 7)
+        window.calibrationViewer.spectrumPlotRequested.emit(QtCore.QPointF(column, row))
+        np.testing.assert_allclose(received[-1].values, data.read_pixel(row, column))
+        window.tabWidget.setCurrentWidget(window.Calibration)
+        output = tmp_path / f"comparison-{resolution}-{calibrated}.png"
+        file_dialog.save_return = (str(output), "")
+        window.actionSaveImage.trigger()
+        with Image.open(output) as image:
+            np.testing.assert_array_equal(np.asarray(image), data.rgb_array)
+        assert controller.result_for_resolution(False) is low
+        assert controller.result_for_resolution(True) is high
+        assert window._super_res_result.data is raw_high
+        assert window._super_res_worker is None and not controller.is_running()
+    assert len(window._visualization_cache) == 4
+
+
+def test_partial_calibration_result_does_not_show_after_for_missing_resolution(
+    loaded_window, stub_sr, qtbot, file_dialog, tmp_path, monkeypatch, dialogs
+):
+    from core import CalibrationError
+    window = loaded_window
+    source = window._hsi_data
+    shape = (21, source.columns, source.bands)
+    _set_references(window, file_dialog, tmp_path, np.zeros(shape), np.full(shape, 2))
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    calibrate = window._calibration_controller.service.calibrate
+
+    def fail_high(data, *args, **kwargs):
+        if data is window._super_res_result.data:
+            raise CalibrationError("Test high-resolution failure")
+        return calibrate(data, *args, **kwargs)
+
+    monkeypatch.setattr(window._calibration_controller.service, "calibrate", fail_high)
+    window.calibrateButton.click()
+    qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
+    switches = window._resolution_switches.calibration_switches
+    assert dialogs.critical
+    assert window._display_data() is window._super_res_result.data
+    assert all(not switch.isChecked() and not switch.isEnabled() for switch in switches)
+    assert all("No calibrated result" in switch.toolTip() for switch in switches)
+    window._select_canvas_resolution(False)
+    assert window._display_data() is window._calibration_controller.result.data
+    assert all(switch.isChecked() and switch.isEnabled() for switch in switches)
+    switches[1].click()
+    window._select_canvas_resolution(True)
+    window._select_canvas_resolution(False)
+    assert window._display_data() is source
+    assert all(not switch.isChecked() and switch.isEnabled() for switch in switches)

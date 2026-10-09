@@ -3,13 +3,13 @@ from PyQt6 import QtCore
 from spectral.io import envi
 
 
-def test_calibrated_tag_shows_on_all_pages_and_clears_with_reference_or_source(
+def test_calibration_switch_shows_on_all_pages_and_clears_with_reference_or_source(
     loaded_window, file_dialog, tmp_path, qtbot, synthetic_cube_path
 ):
     window = loaded_window
     window.show()
     qtbot.waitExposed(window)
-    badges = window._resolution_switches.calibration_badges
+    badges = window._resolution_switches.calibration_switches
     assert len(badges) == 4
     assert all(badge.isHidden() for badge in badges)
     source = window._hsi_data
@@ -26,8 +26,9 @@ def test_calibrated_tag_shows_on_all_pages_and_clears_with_reference_or_source(
                            window.SuperResolution), badges):
         window.tabWidget.setCurrentWidget(page)
         qtbot.waitUntil(lambda: badge.isVisible())
-        assert badge.pos() == QtCore.QPoint(12, 16)
-        assert badge.text() == "Calibrated"
+        assert badge.height() == 40
+        assert badge.geometry().right() < badge.parentWidget().width()
+        assert badge.isChecked()
     window.referenceFileButton.click()
     assert all(badge.isHidden() for badge in badges)
     window.calibrateButton.click()
