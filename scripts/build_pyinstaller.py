@@ -119,6 +119,32 @@ def prepare_venv(reuse: bool) -> Path:
     return venv_python()
 
 
+def ensure_python_dll(py: Path) -> None:
+    """Windows: guarantee the bundle contains the interpreter DLL.
+
+    Building from a venv, PyInstaller occasionally fails to locate the base
+    interpreter's pythonXY.dll, producing an exe that dies at launch with
+    "python3XX.dll was not found". Copy it from the base install if missing.
+    """
+    if not IS_WINDOWS:
+        return
+    probe = ("import sys, sysconfig; "
+             "print(sys.base_prefix); print(f'python{sys.version_info.major}{sys.version_info.minor}.dll')")
+    base_prefix, dll_name = subprocess.check_output([str(py), "-c", probe], text=True).split()
+    bundle = REPO_ROOT / "dist" / APP_NAME
+    if any(bundle.rglob(dll_name)):
+        return
+    source = next((c for c in (Path(base_prefix) / dll_name,
+                               Path(base_prefix) / "DLLs" / dll_name,
+                               Path(sys.executable).parent / dll_name) if c.is_file()), None)
+    if source is None:
+        sys.exit(f"{dll_name} is not in the bundle and was not found under {base_prefix}. "
+                 "Build with a python.org (non-Store) Python install.")
+    internal = bundle / "_internal"
+    shutil.copy2(source, (internal if internal.is_dir() else bundle) / dll_name)
+    print(f"Copied missing {dll_name} from {source}")
+
+
 def make_archive() -> Path:
     """Compress the native HyperView package with the platform's archive format."""
     os_name = "windows" if IS_WINDOWS else "macos" if IS_MACOS else "linux"
@@ -159,6 +185,7 @@ def main() -> None:
         Path("dist", f"{APP_NAME}.app") if IS_MACOS
         else Path("dist", APP_NAME, APP_NAME + (".exe" if IS_WINDOWS else ""))
     )
+    ensure_python_dll(py)
     stage("Compressing archive")
     archive = make_archive()
     size_mb = archive.stat().st_size / 1024**2
