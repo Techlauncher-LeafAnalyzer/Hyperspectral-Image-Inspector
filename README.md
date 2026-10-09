@@ -121,6 +121,17 @@ The script creates a fresh `build/venv`, installs the runtime, super-resolution 
 
 plus a `HyperView-<os>-<arch>` archive (`.tar.xz` on Linux, `.zip` on Windows/macOS). Pass `--reuse-venv` to speed up repeated builds.
 
+Upload the archive to GitHub Releases. On macOS, the script uses the system
+`ditto` utility to preserve the `.app` bundle's symbolic links and permissions.
+To repackage an existing macOS build without rebuilding the app, run:
+
+```sh
+python -c 'from scripts.build_pyinstaller import make_archive; print(make_archive())'
+```
+
+Extract the archive into a separate directory and check that the app opens
+before publishing it.
+
 ## Testing
 
 A headless `pytest` / `pytest-qt` suite lives in `ui_tests/` and runs in CI on every push to `main` and every pull request.

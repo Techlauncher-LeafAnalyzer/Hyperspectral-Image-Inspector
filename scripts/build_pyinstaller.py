@@ -10,7 +10,7 @@ developer's own environment never leak into the bundle. Pass --reuse-venv to
 skip recreating it when iterating on the script itself.
 
 Output:
-    dist/HyperView/                       onedir build (Linux/Windows)
+    dist/HyperView/                       onedir build (also created on macOS)
     dist/HyperView.app/                   application bundle (macOS)
     dist/HyperView-<os>-<arch>.*           distributable (.tar.xz on Linux,
                                           .zip on Windows/macOS)
@@ -151,7 +151,16 @@ def make_archive() -> Path:
     base = REPO_ROOT / "dist" / f"{APP_NAME}-{os_name}-{platform.machine().lower()}"
     package_name = f"{APP_NAME}.app" if IS_MACOS else APP_NAME
     src = REPO_ROOT / "dist" / package_name
-    if IS_WINDOWS or IS_MACOS:
+    if IS_MACOS:
+        archive = base.with_suffix(".zip")
+        # PyInstaller's .app uses symlinks throughout its frameworks/resources.
+        # zipfile.write() dereferences them, breaking the bundle and its signature.
+        # ditto preserves the links, executable permissions and macOS metadata.
+        subprocess.check_call([
+            "/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
+            "--zlibCompressionLevel", "5", str(src), str(archive),
+        ])
+    elif IS_WINDOWS:
         archive = base.with_suffix(".zip")
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=5) as zf:
             for path in sorted(src.rglob("*")):
