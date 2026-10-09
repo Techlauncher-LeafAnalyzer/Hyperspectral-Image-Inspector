@@ -9,6 +9,7 @@
 Load, calibrate, super-resolve, classify and analyse hyperspectral captures, and derive plant-health indices, in one reliable app.
 
 [![UI Tests](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/actions/workflows/ui-tests.yml/badge.svg)](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/actions/workflows/ui-tests.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Qt](https://img.shields.io/badge/GUI-PyQt6-41cd52)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
@@ -34,6 +35,7 @@ Load, calibrate, super-resolve, classify and analyse hyperspectral captures, and
 - [Project Structure](#project-structure)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
+- [License](#license)
 - [Acknowledgements](#acknowledgements)
 
 ## About
@@ -177,6 +179,10 @@ Contributions are welcome.
 4. Open a pull request against `main`.
 
 Please open an [issue](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/issues) first for larger changes.
+
+## License
+
+Distributed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgements
 
