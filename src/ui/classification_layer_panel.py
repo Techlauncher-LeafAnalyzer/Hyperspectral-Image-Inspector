@@ -209,7 +209,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
 
         self._collapse_button = QtWidgets.QToolButton(self)
         self._collapse_button.setObjectName("classificationLayerCollapseButton")
-        self._collapse_button.setText("‹")
+        self._collapse_button.setText("›")
         self._collapse_button.setToolTip("Collapse class layers")
         self._collapse_button.setAccessibleName("Collapse class layers")
         self._collapse_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -442,13 +442,13 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         if collapsed:
             self._body.hide()
             self._header_details.hide()
-            self._collapse_button.setText("›")
+            self._collapse_button.setText("‹")
             self._collapse_button.setToolTip("Expand class layers")
             self._collapse_button.setAccessibleName("Expand class layers")
         else:
             self._body.show()
             self._header_details.show()
-            self._collapse_button.setText("‹")
+            self._collapse_button.setText("›")
             self._collapse_button.setToolTip("Collapse class layers")
             self._collapse_button.setAccessibleName("Collapse class layers")
 
