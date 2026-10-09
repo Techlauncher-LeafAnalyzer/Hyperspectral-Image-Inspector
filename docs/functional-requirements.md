@@ -4,7 +4,7 @@ This page synthesizes the answers gathered in the [Hyperspectral Image Planning 
 
 ## 1. Purpose & Problem Statement
 
-The Hyperspectral Image Inspector is built for APPN facility operators, researchers, and technicians who capture hyperspectral images of plants on a routine (weekly/yearly) basis and need to derive plant-health indicators, for example nitrogen content and other biological markers of disease, from those captures.
+The Hyperspectral Image Inspector is built for Australian Plant Phenomics Network (APPN) facility operators, researchers, and technicians who capture hyperspectral images of plants on a routine (weekly/yearly) basis and need to derive plant-health indicators, for example nitrogen content and other biological markers of disease, from those captures.
 
 The manufacturer's existing tool only performs basic RGB visualization and operating-the-machine functions; it does not compute vegetation indices, and the previous internal attempt at a replacement was unreliable (frequent crashes, especially during super-resolution) and had an unprofessional interface. This project replaces both with a purpose-built, reliable inspection tool.
 

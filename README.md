@@ -6,7 +6,7 @@
 
 **A desktop inspector for hyperspectral plant imagery.**
 
-Load, calibrate, super-resolve, classify and analyse hyperspectral captures, and derive plant-health indices, in one reliable app.
+HyperView is the in-house hyperspectral image inspector for the Australian Plant Phenomics Network (APPN), built to analyse captures in the visible to near-infrared (VNIR, roughly 352–899 nm) spectrum range.
 
 [![UI Tests](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/actions/workflows/ui-tests.yml/badge.svg)](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/actions/workflows/ui-tests.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
@@ -24,37 +24,17 @@ Load, calibrate, super-resolve, classify and analyse hyperspectral captures, and
 
 ## Table of Contents
 
-- [About](#about)
-- [Features](#features)
 - [Installation](#installation)
   - [Option 1: Download a release](#option-1-download-a-release-recommended)
   - [Option 2: Run from source](#option-2-run-from-source)
+- [Features](#features)
 - [Usage](#usage)
 - [Building a Binary](#building-a-binary)
 - [Testing](#testing)
 - [Project Structure](#project-structure)
 - [Documentation](#documentation)
-- [Contributing](#contributing)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
-
-## About
-
-HyperView (the Hyperspectral Image Inspector) is built for plant-phenotyping facility operators, researchers and technicians who routinely capture hyperspectral images of plants and need to turn them into actionable plant-health indicators, such as nitrogen content and markers of disease.
-
-It replaces a vendor tool limited to basic RGB visualisation with a purpose-built application that computes vegetation indices, corrects captures against dark and reference frames, and supports segmentation and spectral super-resolution, without sacrificing stability.
-
-## Features
-
-- **Visualization:** RGB composites, single bands, and the NDVI, EVI, MCARI, MTVI, OSAVI and PRI vegetation indices, plus an interactive 3D OpenGL hypercube view.
-- **Pixel inspection:** per-pixel spectrum plots, numeric value overlays and index mean/min/max.
-- **Calibration:** automatic dark/bright frame discovery with reflectance correction and a one-click **Before / After** comparison.
-- **Classification:** unsupervised K-means and supervised (reference-example) classification with per-class layers, visibility and statistics.
-- **Super-Resolution:** 2× spatial upscaling of 480-band captures using a spectral-aware model (optional; see [SR setup](docs/super-resolution.md)).
-- **Cropping:** rectangle and polygon region-of-interest tools with undo/redo.
-- **Export:** save the current rendered view as an image.
-- **Formats:** ENVI `.bil`/`.hdr` and PSI headers (converted automatically on load).
-- **Live resource monitor:** CPU and RAM usage shown in the header.
 
 ## Installation
 
@@ -97,6 +77,18 @@ python src/main.py
 ```
 
 > **Linux note:** if Qt fails to start, install the system libraries PyQt6 expects, e.g. on Debian/Ubuntu: `sudo apt install libegl1 libgl1 libxkbcommon0`.
+
+## Features
+
+- **Visualization:** RGB composites, single bands, and the NDVI, EVI, MCARI, MTVI, OSAVI and PRI vegetation indices, plus an interactive 3D OpenGL hypercube view.
+- **Pixel inspection:** per-pixel spectrum plots, numeric value overlays and index mean/min/max.
+- **Calibration:** automatic dark/bright frame discovery with reflectance correction and a one-click **Before / After** comparison.
+- **Classification:** unsupervised K-means and supervised (reference-example) classification with per-class layers, visibility and statistics.
+- **Super-Resolution:** 2× spatial upscaling of 480-band captures using a spectral-aware model (optional; see [SR setup](docs/super-resolution.md)).
+- **Cropping:** rectangle and polygon region-of-interest tools with undo/redo.
+- **Export:** save the current rendered view as an image.
+- **Formats:** ENVI `.bil`/`.hdr` and PSI headers (converted automatically on load).
+- **Live resource monitor:** CPU and RAM usage shown in the header.
 
 ## Usage
 
@@ -168,17 +160,6 @@ from core import HSIReader, VisualizationRequest, VisualizationService
 - [Super-Resolution setup and limitations](docs/super-resolution.md)
 - [Model development workflow](docs/model-development-workflow.md)
 - [Branding assets](docs/branding.md)
-
-## Contributing
-
-Contributions are welcome.
-
-1. Fork the repository and create a branch (`task/<ticket>-short-description`).
-2. Make your changes and add or update tests in `ui_tests/`.
-3. Run `pytest` and make sure it passes.
-4. Open a pull request against `main`.
-
-Please open an [issue](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/issues) first for larger changes.
 
 ## License
 

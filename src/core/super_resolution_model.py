@@ -61,7 +61,7 @@ class SuperResolutionService:
 
     BANDS = 480
     SCALE = 2
-    # Known compatible APPF capture range, not a claim about other sensors'
+    # Known compatible APPN capture range, not a claim about other sensors'
     # training distributions. The checkpoint does not carry a wavelength grid.
     WAVELENGTH_RANGE_NM = (352.49, 898.81)
     WAVELENGTH_RANGE_TOLERANCE_NM = 2.0
