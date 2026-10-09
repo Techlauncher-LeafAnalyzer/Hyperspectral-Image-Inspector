@@ -80,3 +80,17 @@ Essential cleanup: remove EVERY fleck, white grain, rough cutout residue or stra
 ```text
 Use case: background-extraction. Production cleanup of the attached HyperView app icon. Preserve EXACTLY the colored artwork INSIDE the cream rounded-square outline, including the cream outline itself. Change only the exterior outside this outline. There are unwanted opaque white/cream distressed flecks above, below and beside the badge; REMOVE ALL of them completely to transparent alpha. The OUTER edge of the cream rounded-square border must be one continuous mathematically smooth curve without any grain or protrusions. Flat, perfectly clean, vector-like outer silhouette. Keep the existing leaf, hyperspectral cube, orange/petrol palette, orbit and star unchanged. Genuine transparency outside. Do not reinterpret, redraw, add texture or add a shadow. Output one pristine app icon with 5 percent clear transparent padding around the badge.
 ```
+
+## Missing-color repair prompt
+
+A low-alpha patch in the upper-left navy backing was repaired with the built-in
+imagegen tool. The marked pixel changed from alpha 57 to 254 (8-bit), matching
+the surrounding backing. The 90-pixel neighborhood and the sampled enclosed
+interior now have alpha 253–254; the exterior remains transparent.
+
+```text
+Use case: precise-object-edit.
+Edit target: the attached final HyperView icon.
+Repair a transparency defect ONLY. The user marked x=26.4%, y=20.8% (pixel 331,261 on this 1254 square). At this point the navy backing has alpha about 57 instead of 255, creating an ugly dark/empty blotch. Nearby interior navy regions also have unwanted low alpha. Restore a continuous evenly colored deep navy backing at this patch, blending into the neighboring navy. Make ALL pixels inside the cream rounded-square enclosure fully OPAQUE, alpha 255, including the navy, leaf, cube, orbit, and all colored regions. Dark navy is PAINT, not transparency: preserve fully saturated opaque navy color rather than cutting it out. Only pixels OUTSIDE the badge enclosure should be transparent.
+Preserve the exact existing design, composition, cream border, original canvas size, leaf, cube geometry, orbital curve, star and warm orange / petrol / sage / cream colors. Do not redesign, shift, reframe or add content. Do not erase dark paint. Do not add holes, distress, glow, shadows, noise, letters, or a watermark. The repair must look like the same icon with the missing upper-left navy color filled in and an entirely solid opaque interior. Pristine outer alpha edge, empty exterior transparency.
+```
