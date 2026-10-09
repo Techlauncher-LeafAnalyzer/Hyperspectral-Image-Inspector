@@ -17,7 +17,7 @@ with arbitrary spectral channel counts by changing constructor arguments.
 
 Camera compatibility is checked before enabling the Run button and again in
 the inference service. The current gate requires 480 finite, increasing bands
-with endpoints matching the known APPF capture's 352.49–898.81 nm range within
+with endpoints matching the known APPN capture's 352.49–898.81 nm range within
 2 nm (to allow minor metadata rounding). Both endpoints must match: merely
 enclosing the range or having 480 bands is insufficient. Incompatible images
 show a disabled **Image incompatible with SR** button with the reason in its
@@ -158,7 +158,7 @@ Executed in `pytorch_env` (Python 3.12.12, PyTorch 2.10.0, SciPy 1.17.1) on CPU:
 480 matching bands is a shape requirement, not evidence that an arbitrary
 sensor matches the training distribution. The checkpoint does not contain the
 training wavelength grid or a normalization specification. The previous code
-targets APPF data and assumes the supplied band ordering and intensity units.
+targets APPN data and assumes the supplied band ordering and intensity units.
 No new training, spectral interpolation, calibration, or accuracy claim is made.
 Higher pixel count does not establish recovered ground-truth detail; quality
 should be evaluated against matched LR/HR captures before scientific use.

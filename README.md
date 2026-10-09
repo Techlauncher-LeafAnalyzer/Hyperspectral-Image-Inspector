@@ -1,75 +1,170 @@
+<div align="center">
+
+<img src="src/ui/assets/hyperview.png" alt="HyperView logo" width="140">
+
 # HyperView
 
-HyperView is the Hyperspectral Image Inspector for plant imaging. Its application
-icon combines a leaf, a spectral data cube, and Space Age orbital geometry in
-cream, warm orange, petrol blue, and navy.
+**A desktop inspector for hyperspectral plant imagery.**
 
-To package on the target operating system:
+HyperView is the in-house hyperspectral image inspector for the Australian Plant Phenomics Network (APPN), built to analyse captures in the visible to near-infrared (VNIR, roughly 352–899 nm) spectrum range.
+
+[![UI Tests](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/actions/workflows/ui-tests.yml/badge.svg)](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/actions/workflows/ui-tests.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Qt](https://img.shields.io/badge/GUI-PyQt6-41cd52)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+
+[Download](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/releases) ·
+[Documentation](docs/) ·
+[Report a bug](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/issues)
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Installation](#installation)
+  - [Option 1: Download a release](#option-1-download-a-release-recommended)
+  - [Option 2: Run from source](#option-2-run-from-source)
+- [Features](#features)
+- [Usage](#usage)
+- [Building a Binary](#building-a-binary)
+- [Testing](#testing)
+- [Project Structure](#project-structure)
+- [Documentation](#documentation)
+- [License](#license)
+- [Acknowledgements](#acknowledgements)
+
+## Installation
+
+### Option 1: Download a release (recommended)
+
+No Python required.
+
+1. Go to the [**Releases**](https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector/releases) page.
+2. Download the archive for your operating system (`HyperView-<os>-<arch>`):
+   - **Windows:** `.zip`, then extract and run `HyperView.exe`
+   - **macOS:** `.zip`, then extract and open `HyperView.app`
+   - **Linux:** `.tar.xz`, then extract and run `./HyperView`
+3. Launch the app and use **Load Image** to open a capture.
+
+```sh
+# Linux example
+tar -xf HyperView-linux-x86_64.tar.xz
+./HyperView/HyperView
+```
+
+### Option 2: Run from source
+
+**Prerequisites:** Python 3.10 or newer (CI runs 3.14) and Git.
+
+```sh
+# 1. Clone the repository
+git clone https://github.com/Techlauncher-LeafAnalyzer/Hyperspectral-Image-Inspector.git
+cd Hyperspectral-Image-Inspector
+
+# 2. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+# 3. Install requirements
+pip install -r requirements.txt
+pip install -r requirements-sr.txt   # optional: Super-Resolution (PyTorch CPU, SciPy)
+
+# 4. Run
+python src/main.py
+```
+
+> **Linux note:** if Qt fails to start, install the system libraries PyQt6 expects, e.g. on Debian/Ubuntu: `sudo apt install libegl1 libgl1 libxkbcommon0`.
+
+## Features
+
+- **Visualization:** RGB composites, single bands, and the NDVI, EVI, MCARI, MTVI, OSAVI and PRI vegetation indices, plus an interactive 3D OpenGL hypercube view.
+- **Pixel inspection:** per-pixel spectrum plots, numeric value overlays and index mean/min/max.
+- **Calibration:** automatic dark/bright frame discovery with reflectance correction and a one-click **Before / After** comparison.
+- **Classification:** unsupervised K-means and supervised (reference-example) classification with per-class layers, visibility and statistics.
+- **Super-Resolution:** 2× spatial upscaling of 480-band captures using a spectral-aware model (optional; see [SR setup](docs/super-resolution.md)).
+- **Cropping:** rectangle and polygon region-of-interest tools with undo/redo.
+- **Export:** save the current rendered view as an image.
+- **Formats:** ENVI `.bil`/`.hdr` and PSI headers (converted automatically on load).
+- **Live resource monitor:** CPU and RAM usage shown in the header.
+
+## Usage
+
+1. Click **Load Image** and select a `.bil` file (its `.hdr` header must sit alongside it).
+2. Explore the tabs: **Visualization**, **Super-Resolution**, **Calibration** and **Classification**.
+3. Right-click the image for spectrum plots, pixel values, index means and crop tools.
+4. Export the displayed result with the save button.
+
+To open an image directly at startup:
+
+```sh
+python src/main.py --image path/to/capture.bil
+```
+
+## Building a Binary
+
+Packaging must be done on the target operating system:
 
 ```sh
 python scripts/build_pyinstaller.py
 ```
 
-The script creates a fresh `build/venv` and installs the runtime,
-super-resolution, and build requirements automatically. Use `--reuse-venv`
-to reuse that environment when iterating on packaging.
+The script creates a fresh `build/venv`, installs the runtime, super-resolution and build requirements, and produces:
 
-Outputs are `dist/HyperView/HyperView.exe` on Windows,
-`dist/HyperView/HyperView` on Linux, and `dist/HyperView.app` on macOS, with a
-`HyperView-<os>-<arch>` distribution archive (`.tar.xz` on Linux, `.zip` on
-Windows/macOS). Windows and macOS packages embed
-the supplied native icon; application windows use the same PNG on all platforms.
-Linux file managers do not embed application icons in ELF binaries; a desktop
-launcher must register the PNG separately. See [branding assets](docs/branding.md).
+| OS | Output |
+| --- | --- |
+| Windows | `dist/HyperView/HyperView.exe` |
+| Linux | `dist/HyperView/HyperView` |
+| macOS | `dist/HyperView.app` |
 
-The production application uses a PyQt6 View/Controller and a UI-independent
-Model under `src/core`.
+plus a `HyperView-<os>-<arch>` archive (`.tar.xz` on Linux, `.zip` on Windows/macOS). Pass `--reuse-venv` to speed up repeated builds.
 
-Visualization Model capabilities include lazy ENVI/PSI loading, RGB, single
-bands, NDVI, EVI, MCARI, MTVI, OSAVI, PRI, pixel spectra, and renderer-neutral
-hypercube payloads. Rendered display arrays can be exported through the
-View-neutral visualization export Model. The Classification Model provides
-SPy-backed unsupervised K-means and reference-example Gaussian/Mahalanobis
-classification with class-first one-hot masks. `ClassificationLayerModel`
-adds per-class visibility, true-RGB/transparent composites, and NDVI/EVI/
-MCARI/MTVI/OSAVI/PRI statistics and masked rasters for layer-style GUIs.
-The Calibration Model averages the middle 21 rows of timestamped dark/bright
-frames, aligns them to the source's pre-crop geometry and current crop, performs
-bounded-memory reflectance correction, and renders the lazy float32 result
-through a cancellable Calibration-tab worker without modifying the source.
-Nearby earlier `_calibFrame` pairs are selected automatically on source load,
-with manual Dark/Bright replacement always available.
+## Testing
 
-After calibration, use **Before / After** under **Calibration** beside any
-image to compare the retained raw and calibrated cubes without rerunning
-calibration. **Low Res / High Res** independently selects the resolution after
-Super-Resolution completes. Both equal-width pill selectors are stacked in a
-dedicated left rail, keeping the image unobstructed. They stay synchronized
-across tabs and preserve pan/zoom. Spectra,
-pixel values, visualization modes, and image export follow the selected cube;
-classification layers are retained separately for each combination. Processing
-temporarily disables the selectors. Loading a new image, changing references,
-or cropping invalidates the affected comparisons.
+A headless `pytest` / `pytest-qt` suite lives in `ui_tests/` and runs in CI on every push to `main` and every pull request.
 
-The top-right application header shows system-wide CPU usage as a percentage
-and this program's resident RAM in MB, updated once per second on every page.
-Hover over RAM to compare program usage with system-wide used/total memory
-in MB (1 MB = 1,000,000 bytes). CPU includes other applications; the RAM label
-measures only the inspector's process.
+```sh
+pip install -r requirements-dev.txt
+pytest
+```
 
-Controllers should depend on the public Model surface:
+## Project Structure
+
+```text
+├── src/
+│   ├── main.py        # application entry point
+│   ├── core/          # UI-independent Model (loading, indices, calibration, classification, SR)
+│   ├── ui/            # PyQt6 Views and Controllers
+│   └── qt/            # Qt Designer .ui files
+├── docs/              # architecture, API and workflow documentation
+├── scripts/           # packaging scripts
+└── ui_tests/          # headless UI test suite
+```
+
+HyperView follows a Model / View / Controller split: controllers depend only on the public Model surface.
 
 ```python
 from core import HSIReader, VisualizationRequest, VisualizationService
 ```
 
-See [the Visualization Model API](docs/model_visualization_api.md),
-[the Calibration Model API](docs/model_calibration_api.md),
-[the Classification Model API](docs/model_classification_api.md), the detailed
-[Classification Layer View/Controller guide](docs/classification_layer_api.md),
-and the [Model development workflow](docs/model-development-workflow.md).
+## Documentation
 
-Super-Resolution uses the existing `model/fin_msdformer.pth` checkpoint for
-480-band, 2× spatial inference. Install `requirements-sr.txt` in the environment
-used to launch the app, load a compatible capture, and click **Run Super-Resolution**.
-See [SR setup, model contract, and limitations](docs/super-resolution.md).
+- [Design overview & functional requirements](docs/functional-requirements.md)
+- [Architecture](docs/architecture.md)
+- [Visualization Model API](docs/model_visualization_api.md)
+- [Calibration Model API](docs/model_calibration_api.md)
+- [Classification Model API](docs/model_classification_api.md)
+- [Classification layer View/Controller guide](docs/classification_layer_api.md)
+- [Super-Resolution setup and limitations](docs/super-resolution.md)
+- [Model development workflow](docs/model-development-workflow.md)
+- [Branding assets](docs/branding.md)
+
+## License
+
+Distributed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
+
+## Acknowledgements
+
+Built by the Techlauncher LeafAnalyzer team. Powered by [PyQt6](https://www.riverbankcomputing.com/software/pyqt/), [Spectral Python](https://www.spectralpython.net/), [NumPy](https://numpy.org/), [Matplotlib](https://matplotlib.org/) and [PyTorch](https://pytorch.org/).
