@@ -14,10 +14,11 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from core import ClassificationLayer
 from ui.classification_colors import RGBColor, classification_palette
+from ui.theme import INSPECTOR_PANEL_WIDTH
 from ui.viewer import PixelValueEntry, format_pixel_values_html
 
 
-_EXPANDED_WIDTH = 280
+_EXPANDED_WIDTH = INSPECTOR_PANEL_WIDTH
 _EXPANDED_MINIMUM_WIDTH = 236
 _COLLAPSED_WIDTH = 48
 _COLLAPSE_DURATION_MS = 220

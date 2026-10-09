@@ -1019,6 +1019,7 @@ QListView::item:hover {
 # QGraphicsScene items (the photo, mask overlay, watermark, and annotation
 # prompts drawn on HSIViewer) are painted directly and are not reachable by
 # QSS, so their colours live here as plain constants instead.
+INSPECTOR_PANEL_WIDTH = 236
 VIEWER_SCENE_BACKGROUND   = QColor(255, 255, 255)
 VIEWER_WATERMARK_COLOR    = QColor("#eaecee")
 VIEWER_WATERMARK_POINT_SIZE = 45

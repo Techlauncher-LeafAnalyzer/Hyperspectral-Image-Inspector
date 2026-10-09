@@ -481,7 +481,8 @@ def test_image_switches_stay_in_left_rail_without_covering_any_canvas(
             assert switch.isVisible()
             assert panel.geometry().right() < canvas.geometry().left()
             assert not panel.geometry().intersects(canvas.geometry())
-            assert switch.mapTo(panel, QtCore.QPoint()).x() == 18
+            assert switch.mapTo(panel, QtCore.QPoint()).x() == panel.contentsRect().left() + 12
+            assert panel.width() == window.classificationLayerPanel.width() == 236
     window.tabWidget.setCurrentWidget(window.Visualization)
     window.modeHyperCube.setChecked(True)
     qtbot.wait(30)

@@ -26,7 +26,8 @@ def test_calibration_switch_shows_on_all_pages_and_clears_with_reference_or_sour
                            window.SuperResolution), badges):
         window.tabWidget.setCurrentWidget(page)
         qtbot.waitUntil(lambda: badge.isVisible())
-        assert badge.size() == QtCore.QSize(216, 40)
+        assert badge.height() == 40
+        assert badge.geometry().right() < badge.parentWidget().width()
         assert badge.isChecked()
     window.referenceFileButton.click()
     assert all(badge.isHidden() for badge in badges)

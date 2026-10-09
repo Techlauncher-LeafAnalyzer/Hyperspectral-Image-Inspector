@@ -15,7 +15,7 @@ def test_resolution_toggle_is_compact_and_animates_between_states(qtbot):
     canvas.show()
     qtbot.waitExposed(canvas)
 
-    assert switch.size() == QtCore.QSize(216, 40)
+    assert switch.size() == QtCore.QSize(208, 40)
     assert switch.pos() == QtCore.QPoint(12, 12)
     assert switch.progress == pytest.approx(0.0)
 
@@ -110,11 +110,16 @@ def test_image_state_panel_stacks_equal_pills_and_reclaims_space_when_empty(qtbo
     group.sync_calibration(available=True, calibrated=True, enabled=True, current_available=True)
     qtbot.wait(20)
     resolution, calibration = group.switches[0], group.calibration_switches[0]
-    assert resolution.size() == calibration.size() == QtCore.QSize(216, 40)
+    assert panel.width() == 236
+    assert resolution.size() == calibration.size()
+    assert resolution.height() == 40
+    assert resolution.width() <= panel.contentsRect().width() - 24
+    for switch in (resolution, calibration):
+        assert switch.geometry().right() < switch.parentWidget().width()
     origin = QtCore.QPoint()
     resolution_pos = resolution.mapTo(panel, origin)
     calibration_pos = calibration.mapTo(panel, origin)
-    assert resolution_pos.x() == calibration_pos.x() == 18
+    assert resolution_pos.x() == calibration_pos.x() == panel.contentsRect().left() + 12
     assert calibration_pos.y() > resolution_pos.y() + resolution.height()
     assert not panel.geometry().intersects(image.geometry())
     canvas.resize(520, 400)

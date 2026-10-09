@@ -199,7 +199,7 @@ class Ui_MainWindow(object):
         self.classificationViewerRow.addWidget(self.classificationViewer)
         self.classificationLayerPanel = ClassificationLayerPanel(parent=self.Classification)
         self.classificationLayerPanel.setMinimumSize(QtCore.QSize(236, 0))
-        self.classificationLayerPanel.setMaximumSize(QtCore.QSize(280, 16777215))
+        self.classificationLayerPanel.setMaximumSize(QtCore.QSize(236, 16777215))
         self.classificationLayerPanel.setObjectName("classificationLayerPanel")
         self.classificationViewerRow.addWidget(self.classificationLayerPanel)
         self.classificationLayout.addLayout(self.classificationViewerRow)

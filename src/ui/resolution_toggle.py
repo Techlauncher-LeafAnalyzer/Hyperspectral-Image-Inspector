@@ -5,12 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from PyQt6 import QtCore, QtGui, QtWidgets
+from ui.theme import INSPECTOR_PANEL_WIDTH
 
 
 class ResolutionToggle(QtWidgets.QAbstractButton):
     """Two visible choices with a sliding selection and direct mouse/keyboard input."""
 
-    WIDTH = 216
+    WIDTH = 208
     HEIGHT = 40
     INSET = 12
 
@@ -29,10 +30,14 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         self._display_labels = display_labels or (low_label, high_label)
         self._mouse_selection: bool | None = None
         self._hovered_segment: bool | None = None
+        self._keyboard_focus = False
         self.setObjectName(name)
         self.setAccessibleName(f"{low_label} or {high_label}")
         self.setCheckable(True)
-        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self.setFixedHeight(self.HEIGHT)
+        self.setMinimumWidth(180)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.resize(self.WIDTH, self.HEIGHT)
         self.move(self.INSET, self.INSET)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
@@ -102,6 +107,23 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
             not self.isChecked() if self._mouse_selection is None else self._mouse_selection
         )
 
+    def sizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(self.WIDTH, self.HEIGHT)
+
+    def focusInEvent(self, event: QtGui.QFocusEvent) -> None:
+        self._keyboard_focus = event.reason() in (
+            QtCore.Qt.FocusReason.TabFocusReason,
+            QtCore.Qt.FocusReason.BacktabFocusReason,
+            QtCore.Qt.FocusReason.ShortcutFocusReason,
+        )
+        super().focusInEvent(event)
+        self.update()
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._keyboard_focus = False
+        super().mousePressEvent(event)
+        self.update()
+
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         self._mouse_selection = event.position().x() >= self.width() / 2
         super().mouseReleaseEvent(event)
@@ -118,6 +140,8 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         super().leaveEvent(event)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        self._keyboard_focus = True
+        self.update()
         if event.key() in (QtCore.Qt.Key.Key_Left, QtCore.Qt.Key.Key_Right):
             checked = event.key() == QtCore.Qt.Key.Key_Right
             self.setChecked(checked)
@@ -165,18 +189,18 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
         painter.setBrush(QtGui.QColor(28, 65, 47, 15 if enabled else 0))
         painter.drawRoundedRect(selected.translated(0, 1.5), 16, 16)
-        painter.setPen(QtGui.QPen(QtGui.QColor("#c4d9cc" if enabled else "#d5ddd7")))
-        fill = QtGui.QColor("#e0eee5")
+        fill = QtGui.QColor("#247b64")
         if not enabled:
             fill = QtGui.QColor("#e5ebe7")
         elif self.isDown():
-            fill = QtGui.QColor("#d3e6da")
+            fill = QtGui.QColor("#1c6753")
         elif self._hovered_segment == self.isChecked():
-            hovered = QtGui.QColor("#d4e8dc")
+            hovered = QtGui.QColor("#2b856c")
             fill = QtGui.QColor(*(
                 round(start * (1 - self._hover_progress) + end * self._hover_progress)
                 for start, end in zip(fill.getRgb()[:3], hovered.getRgb()[:3])
             ))
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
         painter.setBrush(fill)
         painter.drawRoundedRect(selected, selected.height() / 2, selected.height() / 2)
         font = painter.font()
@@ -186,7 +210,7 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
         for high, label in enumerate(self._display_labels):
             weight = self._progress if high else 1 - self._progress
             inactive = QtGui.QColor("#66786e" if enabled else "#9aa69f")
-            active = QtGui.QColor("#205b40" if enabled else "#73877a")
+            active = QtGui.QColor("#ffffff" if enabled else "#73877a")
             color = QtGui.QColor(*(
                 round(start * (1 - weight) + end * weight)
                 for start, end in zip(inactive.getRgb()[:3], active.getRgb()[:3])
@@ -196,7 +220,7 @@ class ResolutionToggle(QtWidgets.QAbstractButton):
                 QtCore.QRectF(4 + segment_width * high, 4, segment_width, self.HEIGHT - 8),
                 QtCore.Qt.AlignmentFlag.AlignCenter, label,
             )
-        if self.hasFocus():
+        if self.hasFocus() and self._keyboard_focus:
             painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             painter.setPen(QtGui.QPen(QtGui.QColor("#4d9272"), 2))
             painter.drawRoundedRect(track.adjusted(1, 1, -1, -1), 18, 18)
@@ -219,10 +243,10 @@ class ImageStatePanel(QtWidgets.QFrame):
         super().__init__(parent)
         self.setObjectName("imageStatePanel")
         self.setAccessibleName("Image version controls")
-        self.setFixedWidth(ResolutionToggle.WIDTH + 36)
+        self.setFixedWidth(INSPECTOR_PANEL_WIDTH)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Expanding)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(18, 20, 18, 20)
+        layout.setContentsMargins(12, 20, 12, 20)
         layout.setSpacing(24)
         title = QtWidgets.QLabel("Image view", self)
         title.setObjectName("imageStateTitle")
