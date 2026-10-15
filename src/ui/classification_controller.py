@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from threading import Event
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Union
@@ -18,6 +18,10 @@ from core import (
     AnnotationKind,
     AnnotationLayerModel,
     AnnotationStyle,
+    CalibrationError,
+    CalibrationFrameResolver,
+    CalibrationResult,
+    CalibrationService,
     CancelledError,
     ClassificationError,
     ClassificationLayerComposite,
@@ -151,23 +155,74 @@ class _SupervisedClassificationWorker(QtCore.QObject):
         target_data: HSIData,
         training_pair: TrainingFilePair,
         request: SupervisedClassificationRequest,
+        *,
+        target_is_calibrated: bool = False,
     ) -> None:
         super().__init__()
         self._service = service
         self._target_data = target_data
         self._training_pair = training_pair
         self._request = request
+        self._target_is_calibrated = target_is_calibrated
         self._cancel_requested = Event()
+
+    def _calibrate_training(
+        self, training_data: HSIData
+    ) -> tuple[HSIData, Optional[CalibrationResult], SupervisedClassificationRequest]:
+        """Put the training cube in the target's calibrated units.
+
+        Returns the cube to train on, the calibration result that owns its
+        temporary files (``None`` when uncalibrated), and the request to use.
+        Without a usable dark/bright pair the cube stays raw and the request
+        switches to per-band standardization, which removes the unit gap.
+        """
+
+        fallback = replace(self._request, standardize_features=True)
+        pair = CalibrationFrameResolver().resolve(training_data.source_path)
+        if pair is None:
+            self.progressChanged.emit(
+                0, "No calibration frames for training image; standardizing features"
+            )
+            return training_data, None, fallback
+        reader = HSIReader()
+        dark = bright = None
+        try:
+            self.progressChanged.emit(0, "Calibrating training image")
+            dark = reader.open(pair.dark_path)
+            bright = reader.open(pair.bright_path)
+            result = CalibrationService().calibrate(
+                training_data,
+                dark,
+                bright,
+                is_cancelled=self._cancel_requested.is_set,
+            )
+        except CalibrationError as exc:
+            LOGGER.warning("Training calibration failed, standardizing instead: %s", exc)
+            self.progressChanged.emit(
+                0, "Training calibration failed; standardizing features"
+            )
+            return training_data, None, fallback
+        finally:
+            for frame in (dark, bright):
+                if frame is not None:
+                    frame.close()
+        return result.data, result, self._request
 
     @QtCore.pyqtSlot()
     def run(self) -> None:
+        training_data: Optional[HSIData] = None
+        calibration: Optional[CalibrationResult] = None
         try:
             training_data = HSIReader().open(self._training_pair.cube_path)
+            request = self._request
+            cube = training_data
+            if self._target_is_calibrated:
+                cube, calibration, request = self._calibrate_training(training_data)
             result = self._service.classify_supervised(
                 self._target_data,
-                training_data,
+                cube,
                 self._training_pair.mask_path,
-                self._request,
+                request,
                 progress=self.progressChanged.emit,
                 is_cancelled=self._cancel_requested.is_set,
             )
@@ -181,6 +236,10 @@ class _SupervisedClassificationWorker(QtCore.QObject):
         else:
             self.resultReady.emit(result)
         finally:
+            if calibration is not None:
+                calibration.cleanup()
+            if training_data is not None:
+                training_data.close()
             self.finished.emit()
 
     def cancel(self) -> None:
@@ -685,6 +744,7 @@ class ClassificationController(QObject):
             data,
             self._training_pair,
             request,
+            target_is_calibrated=self._pending_calibrated,
         )
         self._launch_worker(
             worker,
