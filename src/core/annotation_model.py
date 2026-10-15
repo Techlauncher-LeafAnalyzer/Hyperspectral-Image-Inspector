@@ -25,6 +25,9 @@ class AnnotationKind(Enum):
     TEXT = "Text"
 
 
+ROTATABLE_KINDS = frozenset({AnnotationKind.RECTANGLE, AnnotationKind.TEXT})
+
+
 @dataclass(frozen=True)
 class AnnotationStyle:
     """Appearance shared by every kind; text uses ``fill`` as its colour."""
@@ -52,6 +55,10 @@ class AnnotationLayer:
     Shapes use ``x``/``y``/``width``/``height`` as their bounding box. Text uses
     ``x``/``y`` as its top-left anchor. An arrow runs from ``(x, y)`` to
     ``(x + width, y + height)``, so ``width``/``height`` may be negative.
+
+    ``rotation`` is in degrees, clockwise, about the centre of the unrotated
+    box. Only rectangles and text rotate; ``x``/``y``/``width``/``height`` always
+    describe the unrotated box.
     """
 
     layer_id: int
@@ -64,6 +71,7 @@ class AnnotationLayer:
     text: str = ""
     style: AnnotationStyle = field(default_factory=AnnotationStyle)
     visible: bool = True
+    rotation: float = 0.0
 
 
 class AnnotationLayerModel:
@@ -243,6 +251,19 @@ class AnnotationLayerModel:
             width=width,
             height=height,
         )
+
+    def set_rotation(self, layer_id: int, degrees: float) -> None:
+        """Rotate a rectangle or text layer; the angle is wrapped to (-180, 180]."""
+
+        layer = self.get(layer_id)
+        if layer.kind not in ROTATABLE_KINDS:
+            raise AnnotationError(f"{layer.kind.value} annotations cannot be rotated.")
+        wrapped = (degrees + 180.0) % 360.0 - 180.0
+        if wrapped == -180.0:
+            wrapped = 180.0
+        if wrapped == layer.rotation:
+            return
+        self._update(layer_id, coalesce_key=("rotation", layer_id), rotation=wrapped)
 
     def set_text(self, layer_id: int, text: str) -> None:
         if self.get(layer_id).kind is not AnnotationKind.TEXT:

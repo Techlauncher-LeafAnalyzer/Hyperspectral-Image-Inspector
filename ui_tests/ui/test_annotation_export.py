@@ -157,3 +157,30 @@ def test_save_image_after_classification_draws_annotations_over_the_class_colour
     assert np.array_equal(saved[outside], classified[outside])  # class colours intact elsewhere
     # And the composite itself stays annotation-free, so the viewer isn't doubled up.
     assert tuple(window._classification_controller.composited_rgb()[3, 3]) != RED
+
+
+def test_rotated_rectangle_is_exported_rotated(qtbot):
+    model = AnnotationLayerModel()
+    layer = model.add_shape(AnnotationKind.RECTANGLE, 5, 17, 30, 6, _solid(RED))
+    flat = render_annotations(_canvas(), model.layers)
+    model.set_rotation(layer.layer_id, 90)
+    turned = render_annotations(_canvas(), model.layers)
+    red = lambda img: (img == RED).all(axis=-1)
+    flat_rows, flat_cols = np.where(red(flat))
+    rows, cols = np.where(red(turned))
+    assert np.ptp(flat_cols) > np.ptp(flat_rows)          # wide before
+    assert np.ptp(rows) > np.ptp(cols)                     # tall after
+    assert abs((rows.min() + rows.max()) - (flat_rows.min() + flat_rows.max())) <= 1  # same centre
+    assert abs((cols.min() + cols.max()) - (flat_cols.min() + flat_cols.max())) <= 1
+
+
+def test_rotated_text_is_exported_rotated(qtbot):
+    model = AnnotationLayerModel()
+    style = AnnotationStyle(fill=RED, stroke_width=0, font_size=16)
+    layer = model.add_text(2, 14, "Hello", style)
+    flat = render_annotations(_canvas(60), model.layers)
+    model.set_rotation(layer.layer_id, 90)
+    turned = render_annotations(_canvas(60), model.layers)
+    red = lambda img: np.argwhere((img == RED).all(axis=-1))
+    f, t = red(flat), red(turned)
+    assert np.ptp(f[:, 1]) > np.ptp(f[:, 0]) and np.ptp(t[:, 0]) > np.ptp(t[:, 1])

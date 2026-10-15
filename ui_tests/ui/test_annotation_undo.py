@@ -103,3 +103,19 @@ def test_deselecting_clears_selection_but_keeps_the_layer_and_history(loaded_win
     loaded_window.classificationViewer.annotationDeselected.emit()  # idempotent
     loaded_window._undo_crop()
     assert _count(loaded_window) == 0
+
+
+def test_rotating_is_a_single_undo_step_and_survives_deselect(loaded_window):
+    _open_classification_tab(loaded_window)
+    _draw_rect(loaded_window)
+    controller = loaded_window._classification_controller
+    layer_id = controller._annotation_slot.selected_id
+    viewer = loaded_window.classificationViewer
+    for degrees in (10, 25, 40):
+        viewer.annotationRotationChanged.emit(layer_id, degrees)
+    viewer.annotationInteractionFinished.emit()
+    assert controller._annotation_slot.layers.get(layer_id).rotation == 40
+    viewer.annotationDeselected.emit()
+    assert controller._annotation_slot.layers.get(layer_id).rotation == 40
+    loaded_window._undo_crop()
+    assert controller._annotation_slot.layers.get(layer_id).rotation == 0

@@ -11,6 +11,7 @@ from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPainterPath, QPe
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 
 from ui.annotation_render import make_annotation_item
+from core.annotation_model import ROTATABLE_KINDS
 from core import (
     OPTIONAL_VISUALIZATION_MODES,
     AnnotationKind,
@@ -43,13 +44,38 @@ _HANDLE_EDGES = {
     "tl": ("l", "t"), "t": ("t",), "tr": ("r", "t"), "r": ("r",),
     "br": ("r", "b"), "b": ("b",), "bl": ("l", "b"), "l": ("l",),
 }
-_HANDLE_CURSORS = {
-    "tl": Qt.CursorShape.SizeFDiagCursor, "br": Qt.CursorShape.SizeFDiagCursor,
-    "tr": Qt.CursorShape.SizeBDiagCursor, "bl": Qt.CursorShape.SizeBDiagCursor,
-    "t": Qt.CursorShape.SizeVerCursor, "b": Qt.CursorShape.SizeVerCursor,
-    "l": Qt.CursorShape.SizeHorCursor, "r": Qt.CursorShape.SizeHorCursor,
-    "tail": Qt.CursorShape.CrossCursor, "head": Qt.CursorShape.CrossCursor,
+# Direction each resize handle points, in degrees clockwise from +x, unrotated.
+_HANDLE_BASE_ANGLE = {
+    "r": 0, "br": 45, "b": 90, "bl": 135, "l": 180, "tl": 225, "t": 270, "tr": 315,
 }
+# Screen distance from a shape's top edge to its rotate handle, and handle radius.
+_ROTATE_HANDLE_PX = 24
+_ROTATE_KNOB_PX = 5
+# Holding Shift while rotating snaps to this many degrees.
+_ROTATE_SNAP_DEGREES = 15
+
+
+def _rotate_point(point: QPointF, center: QPointF, degrees: float) -> QPointF:
+    """Rotate ``point`` about ``center``; positive is clockwise on screen (y down)."""
+
+    if not degrees:
+        return QPointF(point)
+    radians = math.radians(degrees)
+    cos, sin = math.cos(radians), math.sin(radians)
+    dx, dy = point.x() - center.x(), point.y() - center.y()
+    return QPointF(center.x() + dx * cos - dy * sin, center.y() + dx * sin + dy * cos)
+
+
+def _resize_cursor(handle: str, rotation: float) -> Qt.CursorShape:
+    """Resize cursor matching the handle's on-screen direction once rotated."""
+
+    angle = (_HANDLE_BASE_ANGLE[handle] + rotation) % 180
+    return (
+        Qt.CursorShape.SizeHorCursor,
+        Qt.CursorShape.SizeFDiagCursor,
+        Qt.CursorShape.SizeVerCursor,
+        Qt.CursorShape.SizeBDiagCursor,
+    )[int(round(angle / 45)) % 4]
 
 
 def _in_ellipse(bounds: QtCore.QRectF, point: QPointF) -> bool:
@@ -165,6 +191,8 @@ class HSIViewer(QtWidgets.QGraphicsView):
     # The selected annotation was moved/resized: (layer_id, x, y, width, height),
     # emitted continuously during the drag and once more at its end.
     annotationGeometryChanged = pyqtSignal(int, float, float, float, float)
+    # The selected annotation was rotated: (layer_id, degrees clockwise).
+    annotationRotationChanged = pyqtSignal(int, float)
     annotationInteractionFinished = pyqtSignal()
     # A plain click (no drag, no tool) landed on an annotation.
     annotationPicked = pyqtSignal(int)
@@ -406,13 +434,15 @@ class HSIViewer(QtWidgets.QGraphicsView):
         selected = self._selected_layer
         if selected is not None:
             top_z = _ANNOTATION_BASE_Z + (len(layers) + 1) * _ANNOTATION_Z_STEP
-            bounds = self._annotation_bounds(selected).adjusted(-3, -3, 3, 3)
-            outline = self._scene.addRect(
-                bounds, QPen(QColor(0, 120, 215), 0, Qt.PenStyle.DashLine)
+            outline = self._scene.addPolygon(
+                QtGui.QPolygonF(self._layer_corners(selected, grow=3)),
+                QPen(QColor(0, 120, 215), 0, Qt.PenStyle.DashLine),
             )
             outline.setZValue(top_z)
             self._annotation_items.append(outline)
-            for point in self._annotation_handles(selected).values():
+            for name, point in self._annotation_handles(selected).items():
+                if name == "rotate":
+                    continue
                 handle = QGraphicsRectItem(
                     -_HANDLE_PX / 2, -_HANDLE_PX / 2, _HANDLE_PX, _HANDLE_PX
                 )
@@ -425,6 +455,36 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 handle.setZValue(top_z)
                 self._scene.addItem(handle)
                 self._annotation_items.append(handle)
+            if selected.kind in ROTATABLE_KINDS:
+                self._add_rotate_handle(selected, top_z)
+
+    def _add_rotate_handle(self, layer: AnnotationLayer, z: float) -> None:
+        """Draw a knob on a stalk above the shape's top edge.
+
+        The stalk is a screen-sized child of an anchor on the top edge, so it
+        keeps its length at any zoom; hit-testing derives the same position.
+        """
+
+        rect = self._unrotated_rect(layer)
+        center = rect.center()
+        anchor = _rotate_point(QPointF(center.x(), rect.top()), center, layer.rotation)
+        stalk = _rotate_point(
+            QPointF(0, -_ROTATE_HANDLE_PX), QPointF(0, 0), layer.rotation
+        )
+        root = QGraphicsRectItem(-0.5, -0.5, 1, 1)
+        root.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        root.setPen(QPen(Qt.PenStyle.NoPen))
+        root.setPos(anchor)
+        root.setZValue(z)
+        pen = QPen(QColor(0, 120, 215), 0)
+        line = QtWidgets.QGraphicsLineItem(0, 0, stalk.x(), stalk.y(), root)
+        line.setPen(pen)
+        r = _ROTATE_KNOB_PX
+        knob = QtWidgets.QGraphicsEllipseItem(stalk.x() - r, stalk.y() - r, 2 * r, 2 * r, root)
+        knob.setPen(pen)
+        knob.setBrush(QBrush(QColor(255, 255, 255)))
+        self._scene.addItem(root)
+        self._annotation_items.append(root)
 
     def draw_circle(self, point: NDArray[np.uint32], label: int) -> None:
         """Draw a foreground (green) or background (red) prompt circle."""
@@ -504,7 +564,11 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         if self._annotation_interaction is not None:
-            self._drag_annotation(self._clamped_scene_point(event))
+            self._drag_annotation(
+                self._clamped_scene_point(event),
+                self.mapToScene(event.position().toPoint()),
+                bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
+            )
             return
         if self._annotation_start is not None:
             self._update_annotation_preview(self._clamped_scene_point(event))
@@ -747,18 +811,31 @@ class HSIViewer(QtWidgets.QGraphicsView):
     # Private helpers                                                      #
     # ------------------------------------------------------------------ #
 
-    def _annotation_bounds(self, layer: AnnotationLayer) -> QtCore.QRectF:
-        """Scene-space bounding box of ``layer`` (arrows may have negative extents)."""
+    def _unrotated_rect(self, layer: AnnotationLayer) -> QtCore.QRectF:
+        """Scene-space box of ``layer`` before rotation (arrows: their extent)."""
 
         if layer.kind is AnnotationKind.TEXT:
             item = self._annotation_items_by_id.get(layer.layer_id)
             if item is not None:
-                return item.sceneBoundingRect()
+                return item.boundingRect().translated(item.pos())
             return QtCore.QRectF(layer.x, layer.y, 0, 0)
         return QtCore.QRectF(
             QPointF(layer.x, layer.y),
             QPointF(layer.x + layer.width, layer.y + layer.height),
         ).normalized()
+
+    def _layer_corners(self, layer: AnnotationLayer, grow: float = 0.0) -> list[QPointF]:
+        """Corners (tl, tr, br, bl) of the layer's box with rotation applied."""
+
+        base = self._unrotated_rect(layer)
+        box = base.adjusted(-grow, -grow, grow, grow)
+        corners = [box.topLeft(), box.topRight(), box.bottomRight(), box.bottomLeft()]
+        return [_rotate_point(c, base.center(), layer.rotation) for c in corners]
+
+    def _annotation_bounds(self, layer: AnnotationLayer) -> QtCore.QRectF:
+        """Axis-aligned scene bounds of ``layer``, including any rotation."""
+
+        return QtGui.QPolygonF(self._layer_corners(layer)).boundingRect()
 
     def _annotation_handles(self, layer: AnnotationLayer) -> dict[str, QPointF]:
         if layer.kind is AnnotationKind.ARROW:
@@ -766,16 +843,24 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 "tail": QPointF(layer.x, layer.y),
                 "head": QPointF(layer.x + layer.width, layer.y + layer.height),
             }
-        if layer.kind is AnnotationKind.TEXT:
-            return {}
-        r = QtCore.QRectF(layer.x, layer.y, layer.width, layer.height)
-        c = r.center()
-        return {
-            "tl": r.topLeft(), "t": QPointF(c.x(), r.top()), "tr": r.topRight(),
-            "r": QPointF(r.right(), c.y()), "br": r.bottomRight(),
-            "b": QPointF(c.x(), r.bottom()), "bl": r.bottomLeft(),
-            "l": QPointF(r.left(), c.y()),
-        }
+        rect = self._unrotated_rect(layer)
+        center = rect.center()
+        handles: dict[str, QPointF] = {}
+        if layer.kind is not AnnotationKind.TEXT:
+            c = center
+            local = {
+                "tl": rect.topLeft(), "t": QPointF(c.x(), rect.top()), "tr": rect.topRight(),
+                "r": QPointF(rect.right(), c.y()), "br": rect.bottomRight(),
+                "b": QPointF(c.x(), rect.bottom()), "bl": rect.bottomLeft(),
+                "l": QPointF(rect.left(), c.y()),
+            }
+            handles = {n: _rotate_point(p, c, layer.rotation) for n, p in local.items()}
+        if layer.kind in ROTATABLE_KINDS:
+            reach = rect.top() - _ROTATE_HANDLE_PX / self._view_scale()
+            handles["rotate"] = _rotate_point(
+                QPointF(center.x(), reach), center, layer.rotation
+            )
+        return handles
 
     def _view_scale(self) -> float:
         return self.transform().m11() or 1.0
@@ -796,7 +881,8 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 QPointF(layer.x + layer.width, layer.y + layer.height),
             )
             return _distance_to_segment(point, line) <= tolerance
-        bounds = self._annotation_bounds(layer)
+        bounds = self._unrotated_rect(layer)
+        point = _rotate_point(point, bounds.center(), -layer.rotation)
         if layer.kind is AnnotationKind.TEXT:
             return bounds.adjusted(-slack, -slack, slack, slack).contains(point)
         outer = bounds.adjusted(-tolerance, -tolerance, tolerance, tolerance)
@@ -830,7 +916,11 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 return layer.layer_id
         return None
 
-    def _drag_annotation(self, point: QPointF) -> None:
+    def _drag_annotation(
+        self, point: QPointF, raw_point: QPointF, snap: bool = False
+    ) -> None:
+        """Apply a drag; ``point`` is clamped to the image, ``raw_point`` is not."""
+
         if self._annotation_interaction is None:
             return
         layer_id, mode, press, layer, bounds = self._annotation_interaction
@@ -842,6 +932,15 @@ class HSIViewer(QtWidgets.QGraphicsView):
             if bounds.height() <= image.height():
                 dy = min(max(dy, image.top() - bounds.top()), image.bottom() - bounds.bottom())
             geometry = (layer.x + dx, layer.y + dy, layer.width, layer.height)
+        elif mode == "rotate":
+            center = self._unrotated_rect(layer).center()
+            now = math.degrees(math.atan2(raw_point.y() - center.y(), raw_point.x() - center.x()))
+            then = math.degrees(math.atan2(press.y() - center.y(), press.x() - center.x()))
+            degrees = layer.rotation + now - then
+            if snap:
+                degrees = round(degrees / _ROTATE_SNAP_DEGREES) * _ROTATE_SNAP_DEGREES
+            self.annotationRotationChanged.emit(layer_id, degrees)
+            return
         elif layer.kind is AnnotationKind.ARROW:
             tail = QPointF(layer.x, layer.y)
             head = QPointF(layer.x + layer.width, layer.y + layer.height)
@@ -853,22 +952,42 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 return
             geometry = (tail.x(), tail.y(), head.x() - tail.x(), head.y() - tail.y())
         else:
-            left, top = layer.x, layer.y
-            right, bottom = layer.x + layer.width, layer.y + layer.height
+            # Resize in the shape's own frame so rotated edges follow the
+            # cursor, then re-centre so the opposite edge stays put on screen.
+            base = self._unrotated_rect(layer)
+            center = base.center()
+            local = _rotate_point(point, center, -layer.rotation)
+            left, top, right, bottom = base.left(), base.top(), base.right(), base.bottom()
             edges = _HANDLE_EDGES[mode]
             if "l" in edges:
-                left = point.x()
+                left = local.x()
             if "r" in edges:
-                right = point.x()
+                right = local.x()
             if "t" in edges:
-                top = point.y()
+                top = local.y()
             if "b" in edges:
-                bottom = point.y()
+                bottom = local.y()
             rect = QtCore.QRectF(QPointF(left, top), QPointF(right, bottom)).normalized()
             if rect.width() < 1 or rect.height() < 1:
                 return
-            geometry = (rect.x(), rect.y(), rect.width(), rect.height())
+            new_center = _rotate_point(rect.center(), center, layer.rotation)
+            geometry = (
+                new_center.x() - rect.width() / 2,
+                new_center.y() - rect.height() / 2,
+                rect.width(),
+                rect.height(),
+            )
         self.annotationGeometryChanged.emit(layer_id, *geometry)
+
+    def _cursor_for_hit(self, mode: str) -> Qt.CursorShape:
+        if mode == "move":
+            return Qt.CursorShape.SizeAllCursor
+        if mode == "rotate":
+            return Qt.CursorShape.PointingHandCursor
+        if mode in ("tail", "head"):
+            return Qt.CursorShape.CrossCursor
+        rotation = self._selected_layer.rotation if self._selected_layer else 0.0
+        return _resize_cursor(mode, rotation)
 
     def _update_annotation_hover_cursor(self, event: QtGui.QMouseEvent) -> None:
         if event.buttons() != Qt.MouseButton.NoButton or self._cropping or self._polygon_cropping:
@@ -877,9 +996,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier == 0:
             mode = self._selected_annotation_hit(self.mapToScene(event.position().toPoint()))
         if mode is not None:
-            self.viewport().setCursor(
-                Qt.CursorShape.SizeAllCursor if mode == "move" else _HANDLE_CURSORS[mode]
-            )
+            self.viewport().setCursor(self._cursor_for_hit(mode))
             self._annotation_hover_cursor = True
         elif self._annotation_hover_cursor:
             self._annotation_hover_cursor = False

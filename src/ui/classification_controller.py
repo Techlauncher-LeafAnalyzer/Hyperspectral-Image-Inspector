@@ -455,6 +455,7 @@ class ClassificationController(QObject):
         self._viewer.annotationInteractionFinished.connect(
             lambda: self._annotation_slot.layers.break_coalescing()
         )
+        self._viewer.annotationRotationChanged.connect(self._on_annotation_rotation_changed)
         self._viewer.annotationPicked.connect(self._on_annotation_picked)
         self._viewer.annotationDeselected.connect(self._on_annotation_deselected)
         self._layer_panel.modeChanged.connect(self._on_panel_mode_changed)
@@ -989,6 +990,15 @@ class ClassificationController(QObject):
             return
         # Only the canvas needs redrawing; rebuilding the list mid-drag would
         # steal its selection state for no visible change.
+        self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
+
+    def _on_annotation_rotation_changed(self, layer_id: int, degrees: float) -> None:
+        slot = self._annotation_slot
+        try:
+            slot.layers.set_rotation(layer_id, degrees)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
         self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
 
     def _on_annotation_deselected(self) -> None:

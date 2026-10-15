@@ -84,7 +84,7 @@ def test_viewer_stacks_items_in_layer_order_and_skips_hidden(qtbot):
     assert len(z) == 2 and z == sorted(z) and z[0] < z[1] < 10
     model.move(a.layer_id, 1)  # rect now above hidden ellipse, below text
     viewer.set_annotations(model.layers, c.layer_id)
-    assert len(viewer._annotation_items) == 3  # 2 visible + selection outline
+    assert len(viewer._annotation_items) == 4  # 2 visible + outline + text rotate handle
 
 
 def test_drag_with_shape_tool_emits_clamped_rect(qtbot):
@@ -347,3 +347,91 @@ def test_text_tool_click_on_empty_image_places_text_instead_of_deselecting(qtbot
     qtbot.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton,
                      pos=viewer.mapFromScene(90, 90))
     assert len(requested) == 1 and log["deselected"] == 0
+
+
+def _rotated_viewer(qtbot, rotation, kind=AnnotationKind.RECTANGLE):
+    viewer = _viewer(qtbot)
+    model = AnnotationLayerModel()
+    layer = model.add_shape(kind, 30, 40, 40, 10, FILLED)  # wide, short box
+    model.set_rotation(layer.layer_id, rotation)
+    viewer.set_annotations(model.layers, layer.layer_id)
+    return viewer, model, layer, _record(viewer)
+
+
+def test_hit_testing_follows_the_rotated_shape(qtbot):
+    viewer, model, layer, _ = _rotated_viewer(qtbot, 90)
+    # Centre (50, 45); at 90 degrees the 40x10 box becomes 10 wide, 40 tall.
+    assert viewer._annotation_at(QPointF(50, 28)) == layer.layer_id   # now inside (was outside)
+    assert viewer._annotation_at(QPointF(50, 62)) == layer.layer_id
+    assert viewer._annotation_at(QPointF(33, 45)) is None             # was inside before rotating
+
+
+def test_rotate_handle_exists_for_rectangle_and_text_but_not_ellipse_or_arrow(qtbot):
+    viewer = _viewer(qtbot)
+    model = AnnotationLayerModel()
+    ids = {
+        "rect": model.add_shape(AnnotationKind.RECTANGLE, 10, 40, 30, 20, STYLE).layer_id,
+        "ellipse": model.add_shape(AnnotationKind.ELLIPSE, 10, 40, 30, 20, STYLE).layer_id,
+        "arrow": model.add_arrow(10, 10, 50, 10, STYLE).layer_id,
+        "text": model.add_text(10, 10, "hi", STYLE).layer_id,
+    }
+    present = {}
+    for name, layer_id in ids.items():
+        viewer.set_annotations(model.layers, layer_id)
+        present[name] = "rotate" in viewer._annotation_handles(viewer._selected_layer)
+    assert present == {"rect": True, "ellipse": False, "arrow": False, "text": True}
+
+
+def test_dragging_the_rotate_handle_emits_the_angle_swept(qtbot):
+    viewer, model, layer, log = _rotated_viewer(qtbot, 0)
+    rotations = []
+    viewer.annotationRotationChanged.connect(lambda i, d: rotations.append((i, d)))
+    handle = viewer._annotation_handles(viewer._selected_layer)["rotate"]
+    assert handle.y() < 40  # above the top edge
+    _press_move_release(qtbot, viewer, (handle.x(), handle.y()), (80, 45))  # to the right of centre
+    layer_id, degrees = rotations[-1]
+    assert layer_id == layer.layer_id and abs(degrees - 90) <= 3
+    assert not log["geom"] and log["finished"] == 1  # a rotation, not a move
+
+
+def test_shift_snaps_rotation_to_fifteen_degrees(qtbot):
+    viewer, model, layer, log = _rotated_viewer(qtbot, 0)
+    rotations = []
+    viewer.annotationRotationChanged.connect(lambda i, d: rotations.append(d))
+    handle = viewer._annotation_handles(viewer._selected_layer)["rotate"]
+    vp, left = viewer.viewport(), QtCore.Qt.MouseButton.LeftButton
+    shift = QtCore.Qt.KeyboardModifier.ShiftModifier
+    qtbot.mousePress(vp, left, pos=viewer.mapFromScene(handle.x(), handle.y()))
+    qtbot.mouseMove(vp, viewer.mapFromScene(75, 38))  # an awkward angle
+    # QTest's mouseMove carries no modifiers, so drive the move directly.
+    viewer._drag_annotation(QPointF(75, 38), QPointF(75, 38), snap=True)
+    qtbot.mouseRelease(vp, left, pos=viewer.mapFromScene(75, 38))
+    assert rotations[-1] % 15 == 0 and rotations[-1] != rotations[0]
+
+
+def test_resizing_a_rotated_rectangle_follows_its_own_edges(qtbot):
+    viewer, model, layer, log = _rotated_viewer(qtbot, 90)
+    # Centre (50, 45). Rotated 90 degrees clockwise, the box's right edge ("r",
+    # originally at x=70) now sits at the bottom, at (50, 65).
+    handles = viewer._annotation_handles(viewer._selected_layer)
+    r = handles["r"]
+    assert abs(r.x() - 50) < 0.5 and abs(r.y() - 65) < 0.5
+    _press_move_release(qtbot, viewer, (r.x(), r.y()), (50, 75))  # drag it 10px further out
+    _, x, y, w, h = log["geom"][-1]
+    assert abs(w - 50) <= 2 and abs(h - 10) <= 0.5  # grew along its own width only
+    # the opposite (left) edge stayed put on screen: it is at the top, (50, 25)
+    new_center_y = y + h / 2
+    assert abs((new_center_y - w / 2) - 25) <= 2
+
+
+def test_rotated_text_is_hit_and_has_a_rotate_handle(qtbot):
+    viewer = _viewer(qtbot)
+    model = AnnotationLayerModel()
+    text = model.add_text(10, 40, "Hello", AnnotationStyle(font_size=14))
+    model.set_rotation(text.layer_id, 90)
+    viewer.set_annotations(model.layers, text.layer_id)
+    rect = viewer._unrotated_rect(viewer._selected_layer)
+    assert rect.width() > rect.height()
+    c = rect.center()
+    assert viewer._annotation_at(QPointF(c.x(), c.y() - rect.width() / 2 + 2)) == text.layer_id
+    assert viewer._annotation_at(QPointF(c.x() - rect.width() / 2 + 2, c.y())) is None

@@ -34,6 +34,7 @@ def make_annotation_item(layer: AnnotationLayer) -> QtWidgets.QGraphicsItem:
             item.setPen(QPen(Qt.PenStyle.NoPen))
         item.setPos(layer.x, layer.y)
         item.setOpacity(style.opacity)
+        _apply_rotation(item, layer)
         return item
     if layer.kind is AnnotationKind.ARROW:
         return make_arrow_item(layer)
@@ -51,7 +52,16 @@ def make_annotation_item(layer: AnnotationLayer) -> QtWidgets.QGraphicsItem:
     item.setPen(pen)
     item.setBrush(QBrush(fill) if style.fill_enabled else QBrush(Qt.BrushStyle.NoBrush))
     item.setOpacity(style.opacity)
+    _apply_rotation(item, layer)
     return item
+
+
+def _apply_rotation(item: QtWidgets.QGraphicsItem, layer: AnnotationLayer) -> None:
+    """Rotate ``item`` about the centre of its own (unrotated) bounds."""
+
+    if layer.rotation:
+        item.setTransformOriginPoint(item.boundingRect().center())
+        item.setRotation(layer.rotation)
 
 def make_arrow_item(layer: AnnotationLayer) -> QtWidgets.QGraphicsItem:
     """Build a shaft and filled head, drawn in the stroke colour."""

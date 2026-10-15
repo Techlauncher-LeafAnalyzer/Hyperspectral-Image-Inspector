@@ -155,3 +155,28 @@ def test_a_drag_of_many_geometry_updates_is_one_undo_step():
     assert model.undo() and model.get(rect).x == 0
     model.set_geometry(rect, 0, 0, 5, 5)  # unchanged: no history
     assert model.undo() and len(model) == 0
+
+
+def test_rotation_only_applies_to_rectangles_and_text_and_wraps():
+    model, (rect, ellipse, text) = _model_with_three()
+    arrow = model.add_arrow(0, 0, 5, 5, STYLE).layer_id
+    model.set_rotation(rect, 30)
+    model.set_rotation(text, 270)
+    assert model.get(rect).rotation == 30 and model.get(text).rotation == -90
+    model.set_rotation(rect, 180)
+    assert model.get(rect).rotation == 180
+    model.set_rotation(rect, -180)
+    assert model.get(rect).rotation == 180  # one canonical value for half a turn
+    for other in (ellipse, arrow):
+        with pytest.raises(AnnotationError):
+            model.set_rotation(other, 10)
+
+
+def test_rotation_drag_is_one_undo_step_and_geometry_is_independent():
+    model = AnnotationLayerModel()
+    rect = model.add_shape(AnnotationKind.RECTANGLE, 0, 0, 5, 5, STYLE).layer_id
+    for angle in (10, 20, 30):
+        model.set_rotation(rect, angle)
+    model.set_geometry(rect, 1, 1, 5, 5)  # different field: its own step
+    assert model.undo() and model.get(rect).rotation == 30 and model.get(rect).x == 0
+    assert model.undo() and model.get(rect).rotation == 0
