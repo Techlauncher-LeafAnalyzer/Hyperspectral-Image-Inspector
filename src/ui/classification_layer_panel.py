@@ -210,6 +210,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
     globalOpacityChanged = pyqtSignal(float)
     outlineModeChanged = pyqtSignal(bool)
     backgroundChanged = pyqtSignal(str)
+    exportRequested = pyqtSignal()
     # "classes" or "annotations"
     modeChanged = pyqtSignal(str)
 
@@ -290,6 +291,14 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         header_controls_row.addWidget(self._toggle_all_button, 1)
         header_controls_row.addWidget(self._outline_toggle_button, 1)
 
+        self._export_button = QtWidgets.QPushButton("Export CSV", self)
+        self._export_button.setObjectName("layerExportButton")
+        self._export_button.setToolTip(
+            "Save class names, sizes, and index means to a CSV file for analysis"
+        )
+        self._export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._export_button.clicked.connect(self.exportRequested)
+
         global_opacity_label = QtWidgets.QLabel("Overall opacity", self)
         global_opacity_label.setObjectName("globalOpacityLabel")
 
@@ -341,6 +350,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         controls_layout.setSpacing(9)
         controls_layout.addLayout(background_row)
         controls_layout.addLayout(header_controls_row)
+        controls_layout.addWidget(self._export_button)
         controls_layout.addLayout(global_opacity_header)
         controls_layout.addWidget(self._global_opacity_slider)
 
@@ -631,6 +641,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._scroll_area.setVisible(has_rows)
         self._toggle_all_button.setEnabled(has_rows)
         self._outline_toggle_button.setEnabled(has_rows)
+        self._export_button.setEnabled(has_rows)
         self._global_opacity_slider.setEnabled(has_rows)
         self._layer_count_label.setText(str(len(self._rows)))
         self._update_layer_summary()

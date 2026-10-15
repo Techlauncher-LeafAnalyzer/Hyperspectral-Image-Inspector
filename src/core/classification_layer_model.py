@@ -535,30 +535,8 @@ class ClassificationLayerModel:
             zip(self._class_ids, self._pixel_indices, strict=True), start=1
         ):
             self._check_cancelled(is_cancelled)
-            finite = self._finite_class_values(visualization.values, indices)
-            pixel_count = int(indices.size)
-            finite_count = int(finite.size)
-            if finite_count:
-                mean = float(np.mean(finite, dtype=np.float64))
-                median = float(np.median(finite))
-                standard_deviation = float(np.std(finite, dtype=np.float64))
-                minimum = float(np.min(finite))
-                maximum = float(np.max(finite))
-            else:
-                mean = median = standard_deviation = minimum = maximum = None
             statistics.append(
-                ClassIndexStatistics(
-                    class_id=class_id,
-                    class_name=self._names[class_id],
-                    pixel_count=pixel_count,
-                    finite_pixel_count=finite_count,
-                    image_fraction=(pixel_count / total_pixels if total_pixels else 0.0),
-                    mean=mean,
-                    median=median,
-                    standard_deviation=standard_deviation,
-                    minimum=minimum,
-                    maximum=maximum,
-                )
+                self._class_statistics(visualization.values, class_id, indices, total_pixels)
             )
             completed = progress_start + round(
                 remaining * position / max(1, len(self._class_ids))
@@ -574,6 +552,60 @@ class ClassificationLayerModel:
             statistics=tuple(statistics),
             class_ids=self._class_ids,
             _one_hot_masks=self._one_hot_masks,
+        )
+
+    def visualization_statistics(
+        self, visualization: VisualizationResult
+    ) -> dict[int, ClassIndexStatistics]:
+        """Return per-class statistics of any visualization with analytical values.
+
+        Unlike :meth:`analyze_visualization` this accepts BAND, NDWI and NDMI
+        too. RGB has no analytical values, so it yields an empty mapping.
+        """
+
+        if visualization.values is None:
+            return {}
+        if visualization.values.shape != self.image_shape:
+            raise ClassificationError(
+                f"{visualization.mode.value} raster shape {visualization.values.shape} "
+                f"does not match classification shape {self.image_shape}."
+            )
+        total_pixels = int(np.prod(self.image_shape))
+        return {
+            class_id: self._class_statistics(
+                visualization.values, class_id, indices, total_pixels
+            )
+            for class_id, indices in zip(self._class_ids, self._pixel_indices, strict=True)
+        }
+
+    def _class_statistics(
+        self,
+        values: np.ndarray,
+        class_id: int,
+        indices: np.ndarray,
+        total_pixels: int,
+    ) -> ClassIndexStatistics:
+        finite = self._finite_class_values(values, indices)
+        pixel_count = int(indices.size)
+        if finite.size:
+            mean = float(np.mean(finite, dtype=np.float64))
+            median = float(np.median(finite))
+            standard_deviation = float(np.std(finite, dtype=np.float64))
+            minimum = float(np.min(finite))
+            maximum = float(np.max(finite))
+        else:
+            mean = median = standard_deviation = minimum = maximum = None
+        return ClassIndexStatistics(
+            class_id=class_id,
+            class_name=self._names[class_id],
+            pixel_count=pixel_count,
+            finite_pixel_count=int(finite.size),
+            image_fraction=(pixel_count / total_pixels if total_pixels else 0.0),
+            mean=mean,
+            median=median,
+            standard_deviation=standard_deviation,
+            minimum=minimum,
+            maximum=maximum,
         )
 
     def visualization_means(

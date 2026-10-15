@@ -19,6 +19,7 @@ from core import (
     AnnotationLayerModel,
     AnnotationStyle,
     CancelledError,
+    ClassIndexStatistics,
     ClassificationError,
     ClassificationLayerComposite,
     ClassificationLayerModel,
@@ -36,6 +37,7 @@ from core import (
     UnsupervisedClassificationResult,
     VisualizationMode,
     VisualizationResult,
+    export_class_summary_csv,
 )
 from ui.annotation_render import render_annotations
 from ui.classification_colors import classification_palette
@@ -441,6 +443,7 @@ class ClassificationController(QObject):
         self._layer_panel.globalOpacityChanged.connect(self._on_global_opacity_changed)
         self._layer_panel.outlineModeChanged.connect(self._on_outline_mode_changed)
         self._layer_panel.backgroundChanged.connect(self._on_background_changed)
+        self._layer_panel.exportRequested.connect(self._on_export_requested)
         page = self._layer_panel.annotation_page
         page.toolChanged.connect(self._on_annotation_tool_changed)
         page.styleChanged.connect(self._on_annotation_style_changed)
@@ -882,6 +885,46 @@ class ClassificationController(QObject):
             self._statusbar.showMessage(str(exc), 8000)
             return
         self._opacity_refresh_timer.start()
+
+    @QtCore.pyqtSlot()
+    def _on_export_requested(self) -> None:
+        """Save per-class names, sizes, and visualization means as a CSV."""
+
+        slot = self._current_slot
+        if slot.layers is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self._parent,
+            "Export Class Summary",
+            "class_summary.csv",
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            return
+        if not Path(path).suffix:
+            path += ".csv"
+        means = {
+            class_id: {name: entry.value for name, entry in entries.items()}
+            for class_id, entries in self._segment_means(slot).items()
+        }
+        statistics: dict[int, dict[str, ClassIndexStatistics]] = {}
+        for mode, visualization in self._visualization_results.items():
+            try:
+                per_class = slot.layers.visualization_statistics(visualization)
+            except ClassificationError as exc:
+                LOGGER.info("Skipping %s class statistics: %s", mode.value, exc)
+                continue
+            for class_id, stats in per_class.items():
+                statistics.setdefault(class_id, {})[mode.value] = stats
+        rows, columns = slot.layers.image_shape
+        try:
+            export_class_summary_csv(
+                path, slot.layers.layers, means, rows * columns, statistics
+            )
+        except ClassificationError as exc:
+            QMessageBox.critical(self._parent, "Export failed", str(exc))
+            return
+        self._statusbar.showMessage(f"Class summary exported to {path}", 8000)
 
     @QtCore.pyqtSlot(bool)
     def _on_outline_mode_changed(self, enabled: bool) -> None:
