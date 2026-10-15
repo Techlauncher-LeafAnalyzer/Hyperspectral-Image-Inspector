@@ -177,6 +177,23 @@ def test_calibrate_rejects_nonpositive_white_response(tmp_path):
     assert str(error.value).endswith("\nTry cropping before calibration.")
 
 
+def test_calibrate_interpolates_over_dead_reference_border_columns(tmp_path):
+    source = _cube(tmp_path, "source", np.full((2, 100, 3), 6))
+    dark = _cube(tmp_path, "dark", np.full((21, 100, 3), 2))
+    white_values = np.full((21, 100, 3), 10, dtype=np.float32)
+    white_values[:, :20, :] = 2
+    white_values[:, -20:, :] = 2
+    white = _cube(tmp_path, "white", white_values)
+
+    result = CalibrationService().calibrate(source, dark, white)
+    try:
+        data = np.asarray(result.data.image.read_subregion((0, 2), (0, 100), [0, 1, 2]))
+        assert np.isfinite(data).all()
+        np.testing.assert_allclose(data, 0.5, rtol=1e-5)
+    finally:
+        result.cleanup()
+
+
 def test_calibrate_honours_cancellation_before_reading(tmp_path):
     source = _cube(tmp_path, "source", np.full((2, 2, 3), 5))
     dark = _cube(tmp_path, "dark", np.ones((21, 2, 3)))

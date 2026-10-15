@@ -29,6 +29,7 @@ from .hsi_reader import DATA_EXTENSIONS, METADATA_EXTENSIONS, HSIReader
 
 ProgressCallback = Callable[[int, str], None]
 CancellationCheck = Callable[[], bool]
+REFERENCE_BORDER_COLUMNS = 30
 REFERENCE_ROW_COUNT = 21
 MAX_CALIBRATION_PAIR_INTERVAL = timedelta(minutes=1)
 _CAPTURE_TIMESTAMP = re.compile(
@@ -368,6 +369,9 @@ class CalibrationService:
 
         original_shape = source.original_shape
         row_bounds, column_bounds = source.spatial_bounds
+        dark_mean, white_mean = self._repair_reference_borders(
+            dark_mean, white_mean, request.minimum_response
+        )
         if reference_source is None:
             dark_aligned = self._expand_and_crop_reference(
                 dark_mean, original_shape, row_bounds, column_bounds
@@ -542,6 +546,38 @@ class CalibrationService:
                 )
             total += values.sum(axis=0, dtype=np.float64)
         return total / REFERENCE_ROW_COUNT, (start, end)
+
+    @staticmethod
+    def _repair_reference_borders(
+        dark_mean: np.ndarray,
+        white_mean: np.ndarray,
+        minimum_response: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Trim dead detector edges off the references and interpolate back.
+
+        Uncropped captures have border columns where the bright reference is
+        as dark as the dark reference. When any response is invalid, drop
+        ``REFERENCE_BORDER_COLUMNS`` columns from each side and linearly
+        resample the remainder to the full width.
+        """
+
+        response = white_mean - dark_mean
+        if (np.isfinite(response) & (response > minimum_response)).all():
+            return dark_mean, white_mean
+        columns = dark_mean.shape[0]
+        left = REFERENCE_BORDER_COLUMNS
+        right = columns - 1 - REFERENCE_BORDER_COLUMNS
+        if right <= left:
+            return dark_mean, white_mean
+        positions = np.linspace(left, right, columns)
+        lower = np.floor(positions).astype(np.intp)
+        upper = np.minimum(lower + 1, right)
+        weight = (positions - lower)[:, None]
+
+        def resample(reference: np.ndarray) -> np.ndarray:
+            return reference[lower] * (1 - weight) + reference[upper] * weight
+
+        return resample(dark_mean), resample(white_mean)
 
     @staticmethod
     def _middle_row_bounds(row_count: int) -> tuple[int, int]:
