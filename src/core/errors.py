@@ -34,6 +34,10 @@ class ClassificationError(HSIError):
     """A classification request is invalid or could not be computed."""
 
 
+class AnnotationError(HSIError):
+    """An annotation layer request is invalid."""
+
+
 class CalibrationError(HSIError):
     """Calibration inputs or computed reflectance values are invalid."""
 

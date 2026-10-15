@@ -1,6 +1,7 @@
 """Stable public Model API consumed by application Controllers."""
 
 from .errors import (
+    AnnotationError,
     CalibrationError,
     CancelledError,
     ClassificationError,
@@ -11,6 +12,12 @@ from .errors import (
     VisualizationError,
     VisualizationExportError,
     WavelengthError,
+)
+from .annotation_model import (
+    AnnotationKind,
+    AnnotationLayer,
+    AnnotationLayerModel,
+    AnnotationStyle,
 )
 from .classification_model import (
     ClassificationService,
@@ -66,6 +73,11 @@ from .visualization_export_model import (
 )
 
 __all__ = [
+    "AnnotationError",
+    "AnnotationKind",
+    "AnnotationLayer",
+    "AnnotationLayerModel",
+    "AnnotationStyle",
     "CalibrationError",
     "CalibrationFramePair",
     "CalibrationFrameResolver",

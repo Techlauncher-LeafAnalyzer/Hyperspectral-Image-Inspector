@@ -926,6 +926,68 @@ QPushButton#layerOutlineToggleButton:checked:hover {
     border-color: #117b6d;
 }
 
+QWidget#classificationLayerResizeGrip {
+    background: transparent;
+    border-radius: 3px;
+}
+
+QWidget#classificationLayerResizeGrip:hover {
+    background: #8fbcb4;
+}
+
+QPushButton#layerModeButton {
+    color: #254c46;
+    background: #ffffff;
+    border: 1px solid #c7d8d4;
+    font-size: 11px;
+    font-weight: 650;
+    padding: 6px 8px;
+}
+
+QPushButton#layerModeButton:hover {
+    color: #126f62;
+    background: #f8fcfb;
+}
+
+QPushButton#layerModeButton:checked {
+    color: #ffffff;
+    background: #168b7b;
+    border-color: #168b7b;
+}
+
+QToolButton#annotationToolButton {
+    color: #254c46;
+    background: #ffffff;
+    border: 1px solid #c7d8d4;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 650;
+    padding: 5px 4px;
+}
+
+QToolButton#annotationToolButton:hover {
+    color: #126f62;
+    border-color: #8fbcb4;
+}
+
+QToolButton#annotationToolButton:checked {
+    color: #ffffff;
+    background: #168b7b;
+    border-color: #168b7b;
+}
+
+QListWidget#annotationLayerList {
+    background: #ffffff;
+    border: 1px solid #c7d8d4;
+    border-radius: 8px;
+    padding: 3px;
+}
+
+QListWidget#annotationLayerList::item:selected {
+    color: #126f62;
+    background: #dcefeb;
+}
+
 QPushButton#layerToggleAllButton:disabled,
 QPushButton#layerOutlineToggleButton:disabled {
     color: #9daba8;

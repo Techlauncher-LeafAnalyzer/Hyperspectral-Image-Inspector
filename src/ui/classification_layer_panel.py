@@ -13,6 +13,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from core import ClassificationLayer
+from ui.annotation_panel import AnnotationToolsPage
 from ui.classification_colors import RGBColor, classification_palette
 from ui.theme import INSPECTOR_PANEL_WIDTH
 from ui.viewer import PixelValueEntry, format_pixel_values_html
@@ -20,6 +21,8 @@ from ui.viewer import PixelValueEntry, format_pixel_values_html
 
 _EXPANDED_WIDTH = INSPECTOR_PANEL_WIDTH
 _EXPANDED_MINIMUM_WIDTH = 236
+_MAXIMUM_WIDTH = 520
+_GRIP_WIDTH = 6
 _COLLAPSED_WIDTH = 48
 _COLLAPSE_DURATION_MS = 220
 
@@ -51,6 +54,35 @@ class _ColorSwatch(QtWidgets.QLabel):
     @property
     def color(self) -> RGBColor:
         return self._color.red(), self._color.green(), self._color.blue()
+
+
+class _ResizeGrip(QtWidgets.QWidget):
+    """Thin strip on the panel's left edge; dragging it asks for a new width."""
+
+    widthRequested = pyqtSignal(int)
+
+    def __init__(self, panel: QtWidgets.QWidget) -> None:
+        super().__init__(panel)
+        self.setObjectName("classificationLayerResizeGrip")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setCursor(Qt.CursorShape.SplitHCursor)
+        self.setToolTip("Drag to resize the panel")
+        self._drag_origin: Optional[tuple[float, int]] = None
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_origin = (event.globalPosition().x(), self.parentWidget().width())
+            event.accept()
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._drag_origin is not None:
+            start_x, start_width = self._drag_origin
+            # The panel sits right of the image, so dragging left widens it.
+            self.widthRequested.emit(round(start_width + start_x - event.globalPosition().x()))
+            event.accept()
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._drag_origin = None
 
 
 class _LayerRowWidget(QtWidgets.QWidget):
@@ -178,6 +210,8 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
     globalOpacityChanged = pyqtSignal(float)
     outlineModeChanged = pyqtSignal(bool)
     backgroundChanged = pyqtSignal(str)
+    # "classes" or "annotations"
+    modeChanged = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -190,6 +224,9 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self.setMinimumWidth(_EXPANDED_MINIMUM_WIDTH)
         self.setMaximumWidth(_EXPANDED_WIDTH)
         self._collapsed = False
+        self._expanded_width = _EXPANDED_WIDTH
+        self._resize_grip = _ResizeGrip(self)
+        self._resize_grip.widthRequested.connect(self.set_expanded_width)
 
         self._title = QtWidgets.QLabel("Class layers", self)
         self._title.setObjectName("classificationLayerPanelTitle")
@@ -345,12 +382,41 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         body_layout.addWidget(self._empty_label, 1)
         body_layout.addWidget(self._scroll_area, 1)
 
+        self.annotation_page = AnnotationToolsPage(self)
+
+        self._classes_mode_button = self._make_mode_button("Classes", "Show class layers")
+        self._annotations_mode_button = self._make_mode_button(
+            "Annotations", "Show annotation tools and layers"
+        )
+        self._classes_mode_button.setChecked(True)
+        mode_group = QtWidgets.QButtonGroup(self)
+        mode_group.setExclusive(True)
+        mode_group.addButton(self._classes_mode_button)
+        mode_group.addButton(self._annotations_mode_button)
+        self._classes_mode_button.clicked.connect(lambda: self.set_mode("classes"))
+        self._annotations_mode_button.clicked.connect(
+            lambda: self.set_mode("annotations")
+        )
+        self._mode_row = QtWidgets.QWidget(self)
+        self._mode_row.setObjectName("classificationLayerHeaderDetails")
+        mode_layout = QtWidgets.QHBoxLayout(self._mode_row)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(0)
+        mode_layout.addWidget(self._classes_mode_button)
+        mode_layout.addWidget(self._annotations_mode_button)
+
+        self._stack = QtWidgets.QStackedWidget(self)
+        self._stack.setObjectName("classificationLayerBody")
+        self._stack.addWidget(self._body)
+        self._stack.addWidget(self.annotation_page)
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(11, 10, 11, 10)
         layout.setSpacing(10)
         layout.addWidget(header)
         layout.setAlignment(header, Qt.AlignmentFlag.AlignTop)
-        layout.addWidget(self._body, 1)
+        layout.addWidget(self._mode_row)
+        layout.addWidget(self._stack, 1)
 
         self._width_animation = QtCore.QPropertyAnimation(self, b"maximumWidth", self)
         self._width_animation.setDuration(_COLLAPSE_DURATION_MS)
@@ -360,13 +426,63 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._rows: dict[int, _LayerRowWidget] = {}
         self._update_empty_state()
 
+    def _make_mode_button(self, text: str, tip: str) -> QtWidgets.QPushButton:
+        button = QtWidgets.QPushButton(text, self)
+        button.setObjectName("layerModeButton")
+        button.setCheckable(True)
+        button.setToolTip(tip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        return button
+
+    @property
+    def mode(self) -> str:
+        return "annotations" if self._stack.currentWidget() is self.annotation_page else "classes"
+
+    def set_mode(self, mode: str) -> None:
+        """Switch between the class layers and the annotation tools/layers."""
+
+        if mode not in ("classes", "annotations"):
+            raise ValueError(f"Unknown layer panel mode: {mode!r}")
+        annotations = mode == "annotations"
+        self._classes_mode_button.setChecked(not annotations)
+        self._annotations_mode_button.setChecked(annotations)
+        self._title.setText("Annotations" if annotations else "Class layers")
+        self._stack.setCurrentWidget(self.annotation_page if annotations else self._body)
+        if mode != getattr(self, "_announced_mode", "classes"):
+            self._announced_mode = mode
+            self.modeChanged.emit(mode)
+
     @property
     def is_collapsed(self) -> bool:
         return self._collapsed
 
+    @property
+    def expanded_width(self) -> int:
+        """Width the panel takes when expanded (user-adjustable)."""
+
+        return self._expanded_width
+
+    def set_expanded_width(self, width: int) -> None:
+        """Set the expanded width, clamped to the supported range.
+
+        A collapsed panel remembers the width and restores it on expanding.
+        """
+
+        self._expanded_width = max(_EXPANDED_MINIMUM_WIDTH, min(_MAXIMUM_WIDTH, width))
+        if not self._collapsed and self._width_animation.state() != (
+            QtCore.QAbstractAnimation.State.Running
+        ):
+            self.setMaximumWidth(self._expanded_width)
+            self.updateGeometry()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._resize_grip.setGeometry(0, 0, _GRIP_WIDTH, self.height())
+        self._resize_grip.raise_()
+
     def sizeHint(self) -> QtCore.QSize:
         return QtCore.QSize(
-            _COLLAPSED_WIDTH if self._collapsed else _EXPANDED_WIDTH,
+            _COLLAPSED_WIDTH if self._collapsed else self._expanded_width,
             super().sizeHint().height(),
         )
 
@@ -436,17 +552,20 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
 
         self._width_animation.stop()
         self._collapsed = collapsed
-        target_width = _COLLAPSED_WIDTH if collapsed else _EXPANDED_WIDTH
+        target_width = _COLLAPSED_WIDTH if collapsed else self._expanded_width
         self.setMinimumWidth(_COLLAPSED_WIDTH)
+        self._resize_grip.setVisible(not collapsed)
 
         if collapsed:
-            self._body.hide()
+            self._stack.hide()
+            self._mode_row.hide()
             self._header_details.hide()
             self._collapse_button.setText("‹")
             self._collapse_button.setToolTip("Expand class layers")
             self._collapse_button.setAccessibleName("Expand class layers")
         else:
-            self._body.show()
+            self._stack.show()
+            self._mode_row.show()
             self._header_details.show()
             self._collapse_button.setText("›")
             self._collapse_button.setToolTip("Collapse class layers")
@@ -462,7 +581,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._width_animation.start()
 
     def _finish_width_animation(self) -> None:
-        target_width = _COLLAPSED_WIDTH if self._collapsed else _EXPANDED_WIDTH
+        target_width = _COLLAPSED_WIDTH if self._collapsed else self._expanded_width
         self.setMaximumWidth(target_width)
         self.setMinimumWidth(
             _COLLAPSED_WIDTH if self._collapsed else _EXPANDED_MINIMUM_WIDTH
