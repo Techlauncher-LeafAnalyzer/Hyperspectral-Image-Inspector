@@ -404,7 +404,7 @@
           <item row="1" column="0">
            <widget class="QPushButton" name="referenceFileButton">
             <property name="text">
-             <string>Bright File</string>
+             <string>White File</string>
             </property>
            </widget>
           </item>
@@ -434,7 +434,7 @@
       </widget>
       <widget class="QWidget" name="Classification">
        <attribute name="title">
-        <string>Classification</string>
+        <string>Segmentation</string>
        </attribute>
        <layout class="QVBoxLayout" name="classificationLayout">
         <item>
