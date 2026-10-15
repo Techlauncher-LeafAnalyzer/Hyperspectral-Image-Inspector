@@ -188,13 +188,13 @@ def test_panel_collapses_and_expands_without_changing_layers(qtbot):
     panel.set_collapsed(True, animate=False)
     assert panel.is_collapsed
     assert panel.maximumWidth() == 48
-    assert panel._body.isHidden()
+    assert panel._stack.isHidden()
     assert len(panel._rows) == 3
 
     panel.set_collapsed(False, animate=False)
     assert not panel.is_collapsed
     assert panel.maximumWidth() == 236
-    assert panel._body.isVisible()
+    assert panel._stack.isVisible()
     assert len(panel._rows) == 3
 
 
@@ -790,3 +790,38 @@ def test_new_visualization_results_rebuild_cached_means(qtbot):
     controller.refresh_display()
 
     assert "NDVI: 0.750" in layer_panel._rows[0]._means_label.text()
+
+
+def test_panel_width_is_user_resizable_within_limits(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.show()
+    assert panel.expanded_width == 236 and panel.maximumWidth() == 236
+    panel.set_expanded_width(340)
+    assert panel.expanded_width == 340 and panel.maximumWidth() == 340
+    panel.set_expanded_width(10)
+    assert panel.expanded_width == 236  # never below the minimum
+    panel.set_expanded_width(5000)
+    assert panel.expanded_width == 520  # nor above the maximum
+
+
+def test_dragging_the_grip_widens_the_panel_and_collapse_remembers_it(qtbot):
+    from PyQt6 import QtCore
+
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.resize(236, 500)
+    panel.show()
+    grip = panel._resize_grip
+    assert grip.isVisible() and grip.geometry().left() == 0
+    start = grip.rect().center()
+    qtbot.mousePress(grip, QtCore.Qt.MouseButton.LeftButton, pos=start)
+    qtbot.mouseMove(grip, start + QtCore.QPoint(-80, 0))
+    qtbot.mouseRelease(grip, QtCore.Qt.MouseButton.LeftButton, pos=start + QtCore.QPoint(-80, 0))
+    assert panel.expanded_width > 236
+
+    widened = panel.expanded_width
+    panel.set_collapsed(True, animate=False)
+    assert panel.maximumWidth() == 48 and not grip.isVisible()
+    panel.set_collapsed(False, animate=False)
+    assert panel.maximumWidth() == widened and grip.isVisible()

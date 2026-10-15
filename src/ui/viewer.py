@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import math
 from typing import Callable, Mapping, NamedTuple, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QPointF, pyqtSignal
-from PyQt6.QtGui import QBrush, QFontDatabase, QImage, QPainterPath, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 
-from core import OPTIONAL_VISUALIZATION_MODES
+from ui.annotation_render import make_annotation_item
+from core import (
+    OPTIONAL_VISUALIZATION_MODES,
+    AnnotationKind,
+    AnnotationLayer,
+    AnnotationStyle,
+)
 from ui.theme import (
     CROP_OVERLAY_COLOR,
     CROP_SELECTION_COLOR,
@@ -20,6 +27,47 @@ from ui.theme import (
     VIEWER_WATERMARK_COLOR,
     VIEWER_WATERMARK_POINT_SIZE,
 )
+
+# Annotation items sit above the photo (z=1) and mask (z=3) but below the crop
+# overlays (z=10/11), in layer order. Layers are spaced finely so the whole
+# stack stays below the overlays however many layers there are.
+_ANNOTATION_BASE_Z = 4
+_ANNOTATION_Z_STEP = 0.0005
+# Edge length, in screen pixels, of a resize handle.
+_HANDLE_PX = 8
+# Extra screen pixels, beyond the stroke, that still count as clicking an annotation.
+_HIT_SLACK_PX = 4
+# A press/release closer than this (screen px) is a click, not a drag.
+_CLICK_SLOP_PX = 3
+_HANDLE_EDGES = {
+    "tl": ("l", "t"), "t": ("t",), "tr": ("r", "t"), "r": ("r",),
+    "br": ("r", "b"), "b": ("b",), "bl": ("l", "b"), "l": ("l",),
+}
+_HANDLE_CURSORS = {
+    "tl": Qt.CursorShape.SizeFDiagCursor, "br": Qt.CursorShape.SizeFDiagCursor,
+    "tr": Qt.CursorShape.SizeBDiagCursor, "bl": Qt.CursorShape.SizeBDiagCursor,
+    "t": Qt.CursorShape.SizeVerCursor, "b": Qt.CursorShape.SizeVerCursor,
+    "l": Qt.CursorShape.SizeHorCursor, "r": Qt.CursorShape.SizeHorCursor,
+    "tail": Qt.CursorShape.CrossCursor, "head": Qt.CursorShape.CrossCursor,
+}
+
+
+def _in_ellipse(bounds: QtCore.QRectF, point: QPointF) -> bool:
+    rx, ry = bounds.width() / 2, bounds.height() / 2
+    if rx <= 0 or ry <= 0:
+        return False
+    c = bounds.center()
+    return ((point.x() - c.x()) / rx) ** 2 + ((point.y() - c.y()) / ry) ** 2 <= 1
+
+
+def _distance_to_segment(point: QPointF, line: QtCore.QLineF) -> float:
+    dx, dy = line.dx(), line.dy()
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0:
+        return QtCore.QLineF(point, line.p1()).length()
+    t = ((point.x() - line.x1()) * dx + (point.y() - line.y1()) * dy) / length_sq
+    t = max(0.0, min(1.0, t))
+    return QtCore.QLineF(point, QPointF(line.x1() + t * dx, line.y1() + t * dy)).length()
 
 
 class PixelValueEntry(NamedTuple):
@@ -108,6 +156,20 @@ class HSIViewer(QtWidgets.QGraphicsView):
     # to the image. Kept separate from `cropRequested` so the rectangle path
     # and its regression tests stay untouched.
     polygonCropRequested  = pyqtSignal(list)
+    # A finished drag with an annotation shape tool: (kind, image-pixel rect).
+    annotationShapeDrawn  = pyqtSignal(object, QtCore.QRectF)
+    # A click with the text tool, at an image-pixel position.
+    annotationTextRequested = pyqtSignal(QPointF)
+    # A finished drag with the arrow tool: (tail, head) in image pixels.
+    annotationArrowDrawn = pyqtSignal(QPointF, QPointF)
+    # The selected annotation was moved/resized: (layer_id, x, y, width, height),
+    # emitted continuously during the drag and once more at its end.
+    annotationGeometryChanged = pyqtSignal(int, float, float, float, float)
+    annotationInteractionFinished = pyqtSignal()
+    # A plain click (no drag, no tool) landed on an annotation.
+    annotationPicked = pyqtSignal(int)
+    # A plain click (no drag) landed on empty image area.
+    annotationDeselected = pyqtSignal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -126,6 +188,22 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._polygon_cropping: bool = False
         self._polygon_points: list[QPointF] = []
         self._polygon_item: Optional[QtWidgets.QGraphicsPathItem] = None
+
+        # --- annotation state ---
+        self._annotation_tool: Optional[AnnotationKind] = None
+        self._annotation_style_provider: Callable[[], AnnotationStyle] = AnnotationStyle
+        self._annotation_start: Optional[QPointF] = None
+        self._annotation_preview: Optional[QtWidgets.QGraphicsItem] = None
+        self._annotation_items: list[QtWidgets.QGraphicsItem] = []
+        self._annotation_items_by_id: dict[int, QtWidgets.QGraphicsItem] = {}
+        self._annotation_layers: tuple[AnnotationLayer, ...] = ()
+        self._selected_layer: Optional[AnnotationLayer] = None
+        # (layer_id, "move" or handle name, press point, layer at press, bounds at press)
+        self._annotation_interaction: Optional[
+            tuple[int, str, QPointF, AnnotationLayer, QtCore.QRectF]
+        ] = None
+        self._annotation_hover_cursor = False
+        self._press_view_pos: Optional[QtCore.QPoint] = None
 
         # --- image data ---
         self._zoom: int = 0
@@ -216,12 +294,11 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._zoom = 0
         if pixmap and not pixmap.isNull():
             self._empty = False
-            self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
             self._photo.setPixmap(pixmap)
         else:
             self._empty = True
-            self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
             self._photo.setPixmap(QtGui.QPixmap())
+        self._apply_drag_mode()
         self._apply_idle_cursor()
         self.fit_in_view()
         if self.has_photo():
@@ -289,6 +366,66 @@ class HSIViewer(QtWidgets.QGraphicsView):
         elif self._pending_fit:
             self.fit_in_view()
 
+    def set_annotation_tool(
+        self,
+        kind: Optional[AnnotationKind],
+        style_provider: Optional[Callable[[], AnnotationStyle]] = None,
+    ) -> None:
+        """Select the drawing tool; ``None`` restores normal pan/zoom."""
+
+        self._cancel_annotation_drag()
+        self._annotation_tool = kind
+        if style_provider is not None:
+            self._annotation_style_provider = style_provider
+        self._apply_drag_mode()
+        self._apply_idle_cursor()
+
+    def set_annotations(
+        self,
+        layers: tuple[AnnotationLayer, ...],
+        selected_id: Optional[int] = None,
+    ) -> None:
+        """Replace the drawn annotations with ``layers`` (bottom to top)."""
+
+        for item in self._annotation_items:
+            self._scene.removeItem(item)
+        self._annotation_items = []
+        self._annotation_items_by_id = {}
+        self._annotation_layers = tuple(layer for layer in layers if layer.visible)
+        self._selected_layer = None
+        for order, layer in enumerate(layers):
+            if not layer.visible:
+                continue
+            item = make_annotation_item(layer)
+            item.setZValue(_ANNOTATION_BASE_Z + order * _ANNOTATION_Z_STEP)
+            self._scene.addItem(item)
+            self._annotation_items.append(item)
+            self._annotation_items_by_id[layer.layer_id] = item
+            if layer.layer_id == selected_id:
+                self._selected_layer = layer
+        selected = self._selected_layer
+        if selected is not None:
+            top_z = _ANNOTATION_BASE_Z + (len(layers) + 1) * _ANNOTATION_Z_STEP
+            bounds = self._annotation_bounds(selected).adjusted(-3, -3, 3, 3)
+            outline = self._scene.addRect(
+                bounds, QPen(QColor(0, 120, 215), 0, Qt.PenStyle.DashLine)
+            )
+            outline.setZValue(top_z)
+            self._annotation_items.append(outline)
+            for point in self._annotation_handles(selected).values():
+                handle = QGraphicsRectItem(
+                    -_HANDLE_PX / 2, -_HANDLE_PX / 2, _HANDLE_PX, _HANDLE_PX
+                )
+                handle.setFlag(
+                    QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+                )
+                handle.setPen(QPen(QColor(0, 120, 215), 0))
+                handle.setBrush(QBrush(QColor(255, 255, 255)))
+                handle.setPos(point)
+                handle.setZValue(top_z)
+                self._scene.addItem(handle)
+                self._annotation_items.append(handle)
+
     def draw_circle(self, point: NDArray[np.uint32], label: int) -> None:
         """Draw a foreground (green) or background (red) prompt circle."""
         color = PROMPT_POSITIVE_COLOR if label == 1 else PROMPT_NEGATIVE_COLOR
@@ -319,6 +456,32 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._zoom = 0
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._press_view_pos = event.position().toPoint()
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.has_photo()
+            and not self._cropping
+            and not self._polygon_cropping
+            and not event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            # A selected annotation under the cursor wins over every tool, so
+            # it can be moved/resized without switching tools first.
+            point = self.mapToScene(event.position().toPoint())
+            mode = self._selected_annotation_hit(point)
+            if mode is not None and self._selected_layer is not None:
+                layer = self._selected_layer
+                self._annotation_interaction = (
+                    layer.layer_id, mode, point, layer, self._annotation_bounds(layer)
+                )
+                return
+        if self._annotation_tool is not None and self.has_photo():
+            if event.button() == Qt.MouseButton.LeftButton:
+                point = self._clamped_scene_point(event)
+                if self._annotation_tool is AnnotationKind.TEXT:
+                    self.annotationTextRequested.emit(point)
+                else:
+                    self._annotation_start = point
+            return
         if self._polygon_cropping:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._add_polygon_vertex(
@@ -340,6 +503,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._annotation_interaction is not None:
+            self._drag_annotation(self._clamped_scene_point(event))
+            return
+        if self._annotation_start is not None:
+            self._update_annotation_preview(self._clamped_scene_point(event))
+            return
         if self._polygon_cropping:
             if self._polygon_points:
                 self._update_polygon_overlay(
@@ -388,6 +557,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             else:
                 self._crop_rect_item.setRect(selection)
             return
+        self._update_annotation_hover_cursor(event)
         super().mouseMoveEvent(event)
         self._update_pixel_overlay(event.position().toPoint())
 
@@ -396,6 +566,34 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._pixel_overlay.hide()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._annotation_interaction is not None:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._annotation_interaction = None
+                self.annotationInteractionFinished.emit()
+                self._update_annotation_hover_cursor(event)
+            return
+        if self._annotation_tool is not None:
+            start, kind = self._annotation_start, self._annotation_tool
+            if start is not None and event.button() == Qt.MouseButton.LeftButton:
+                end = self._clamped_scene_point(event)
+                self._cancel_annotation_drag()
+                is_click = (
+                    self._press_view_pos is not None
+                    and (event.position().toPoint() - self._press_view_pos).manhattanLength()
+                    <= _CLICK_SLOP_PX
+                )
+                if is_click:
+                    if self._annotation_at(start) is None:
+                        self.annotationDeselected.emit()
+                    return
+                if kind is AnnotationKind.ARROW:
+                    if QtCore.QLineF(start, end).length() >= 1:
+                        self.annotationArrowDrawn.emit(start, end)
+                else:
+                    rect = QtCore.QRectF(start, end).normalized()
+                    if rect.width() >= 1 and rect.height() >= 1:
+                        self.annotationShapeDrawn.emit(kind, rect)
+            return
         if self._cropping:
             if event.button() != Qt.MouseButton.LeftButton:
                 self._end_crop_mode()
@@ -417,6 +615,18 @@ class HSIViewer(QtWidgets.QGraphicsView):
             return
 
         super().mouseReleaseEvent(event)
+
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and not event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            and self._press_view_pos is not None
+            and (event.position().toPoint() - self._press_view_pos).manhattanLength() <= _CLICK_SLOP_PX
+        ):
+            picked = self._annotation_at(self.mapToScene(event.position().toPoint()))
+            if picked is not None:
+                self.annotationPicked.emit(picked)
+            else:
+                self.annotationDeselected.emit()
 
         if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
             # Qt's own ScrollHandDrag release handling just reset the cursor
@@ -455,6 +665,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._polygon_points.pop()
                 self._update_polygon_overlay(None)
                 return
+        if event.key() == Qt.Key.Key_Escape and self._annotation_start is not None:
+            self._cancel_annotation_drag()
+            return
         if event.key() == Qt.Key.Key_Escape and self._cropping:
             self._end_crop_mode()
             return
@@ -464,7 +677,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Control:
-            self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
+            self._apply_drag_mode()
             self._apply_idle_cursor()
         if event.key() == Qt.Key.Key_Shift:
             self._render_mask()
@@ -533,6 +746,188 @@ class HSIViewer(QtWidgets.QGraphicsView):
     # ------------------------------------------------------------------ #
     # Private helpers                                                      #
     # ------------------------------------------------------------------ #
+
+    def _annotation_bounds(self, layer: AnnotationLayer) -> QtCore.QRectF:
+        """Scene-space bounding box of ``layer`` (arrows may have negative extents)."""
+
+        if layer.kind is AnnotationKind.TEXT:
+            item = self._annotation_items_by_id.get(layer.layer_id)
+            if item is not None:
+                return item.sceneBoundingRect()
+            return QtCore.QRectF(layer.x, layer.y, 0, 0)
+        return QtCore.QRectF(
+            QPointF(layer.x, layer.y),
+            QPointF(layer.x + layer.width, layer.y + layer.height),
+        ).normalized()
+
+    def _annotation_handles(self, layer: AnnotationLayer) -> dict[str, QPointF]:
+        if layer.kind is AnnotationKind.ARROW:
+            return {
+                "tail": QPointF(layer.x, layer.y),
+                "head": QPointF(layer.x + layer.width, layer.y + layer.height),
+            }
+        if layer.kind is AnnotationKind.TEXT:
+            return {}
+        r = QtCore.QRectF(layer.x, layer.y, layer.width, layer.height)
+        c = r.center()
+        return {
+            "tl": r.topLeft(), "t": QPointF(c.x(), r.top()), "tr": r.topRight(),
+            "r": QPointF(r.right(), c.y()), "br": r.bottomRight(),
+            "b": QPointF(c.x(), r.bottom()), "bl": r.bottomLeft(),
+            "l": QPointF(r.left(), c.y()),
+        }
+
+    def _view_scale(self) -> float:
+        return self.transform().m11() or 1.0
+
+    def _layer_contains(self, layer: AnnotationLayer, point: QPointF) -> bool:
+        """Whether ``point`` selects ``layer``.
+
+        The target extends a few screen pixels past the stroke so thin lines are
+        easy to grab. An unfilled rectangle or circle only responds near its
+        outline, so its empty interior counts as empty image.
+        """
+
+        slack = _HIT_SLACK_PX / self._view_scale()
+        tolerance = layer.style.stroke_width / 2 + slack
+        if layer.kind is AnnotationKind.ARROW:
+            line = QtCore.QLineF(
+                QPointF(layer.x, layer.y),
+                QPointF(layer.x + layer.width, layer.y + layer.height),
+            )
+            return _distance_to_segment(point, line) <= tolerance
+        bounds = self._annotation_bounds(layer)
+        if layer.kind is AnnotationKind.TEXT:
+            return bounds.adjusted(-slack, -slack, slack, slack).contains(point)
+        outer = bounds.adjusted(-tolerance, -tolerance, tolerance, tolerance)
+        inner = bounds.adjusted(tolerance, tolerance, -tolerance, -tolerance)
+        hollow = not layer.style.fill_enabled and inner.width() > 0 and inner.height() > 0
+        if layer.kind is AnnotationKind.ELLIPSE:
+            if not _in_ellipse(outer, point):
+                return False
+            return not (hollow and _in_ellipse(inner, point))
+        if not outer.contains(point):
+            return False
+        return not (hollow and inner.contains(point))
+
+    def _selected_annotation_hit(self, point: QPointF) -> Optional[str]:
+        """Return ``"move"`` / a handle name if ``point`` is on the selected layer."""
+
+        layer = self._selected_layer
+        if layer is None:
+            return None
+        tolerance = (_HANDLE_PX / 2 + 2) / self._view_scale()
+        for name, handle in self._annotation_handles(layer).items():
+            if abs(point.x() - handle.x()) <= tolerance and abs(point.y() - handle.y()) <= tolerance:
+                return name
+        return "move" if self._layer_contains(layer, point) else None
+
+    def _annotation_at(self, point: QPointF) -> Optional[int]:
+        """Topmost visible annotation under ``point``, if any."""
+
+        for layer in reversed(self._annotation_layers):
+            if self._layer_contains(layer, point):
+                return layer.layer_id
+        return None
+
+    def _drag_annotation(self, point: QPointF) -> None:
+        if self._annotation_interaction is None:
+            return
+        layer_id, mode, press, layer, bounds = self._annotation_interaction
+        image = QtCore.QRectF(self._photo.pixmap().rect())
+        if mode == "move":
+            dx, dy = point.x() - press.x(), point.y() - press.y()
+            if bounds.width() <= image.width():
+                dx = min(max(dx, image.left() - bounds.left()), image.right() - bounds.right())
+            if bounds.height() <= image.height():
+                dy = min(max(dy, image.top() - bounds.top()), image.bottom() - bounds.bottom())
+            geometry = (layer.x + dx, layer.y + dy, layer.width, layer.height)
+        elif layer.kind is AnnotationKind.ARROW:
+            tail = QPointF(layer.x, layer.y)
+            head = QPointF(layer.x + layer.width, layer.y + layer.height)
+            if mode == "tail":
+                tail = point
+            else:
+                head = point
+            if QtCore.QLineF(tail, head).length() < 1:
+                return
+            geometry = (tail.x(), tail.y(), head.x() - tail.x(), head.y() - tail.y())
+        else:
+            left, top = layer.x, layer.y
+            right, bottom = layer.x + layer.width, layer.y + layer.height
+            edges = _HANDLE_EDGES[mode]
+            if "l" in edges:
+                left = point.x()
+            if "r" in edges:
+                right = point.x()
+            if "t" in edges:
+                top = point.y()
+            if "b" in edges:
+                bottom = point.y()
+            rect = QtCore.QRectF(QPointF(left, top), QPointF(right, bottom)).normalized()
+            if rect.width() < 1 or rect.height() < 1:
+                return
+            geometry = (rect.x(), rect.y(), rect.width(), rect.height())
+        self.annotationGeometryChanged.emit(layer_id, *geometry)
+
+    def _update_annotation_hover_cursor(self, event: QtGui.QMouseEvent) -> None:
+        if event.buttons() != Qt.MouseButton.NoButton or self._cropping or self._polygon_cropping:
+            return
+        mode = None
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier == 0:
+            mode = self._selected_annotation_hit(self.mapToScene(event.position().toPoint()))
+        if mode is not None:
+            self.viewport().setCursor(
+                Qt.CursorShape.SizeAllCursor if mode == "move" else _HANDLE_CURSORS[mode]
+            )
+            self._annotation_hover_cursor = True
+        elif self._annotation_hover_cursor:
+            self._annotation_hover_cursor = False
+            self._apply_idle_cursor()
+
+    def _clamped_scene_point(self, event: QtGui.QMouseEvent) -> QPointF:
+        point = self.mapToScene(event.position().toPoint())
+        bounds = QtCore.QRectF(self._photo.pixmap().rect())
+        return QPointF(
+            min(max(point.x(), bounds.left()), bounds.right()),
+            min(max(point.y(), bounds.top()), bounds.bottom()),
+        )
+
+    def _update_annotation_preview(self, current: QPointF) -> None:
+        if self._annotation_start is None or self._annotation_tool is None:
+            return
+        start = self._annotation_start
+        if self._annotation_tool is AnnotationKind.ARROW:
+            geometry = (start.x(), start.y(), current.x() - start.x(), current.y() - start.y())
+        else:
+            rect = QtCore.QRectF(start, current).normalized()
+            geometry = (rect.x(), rect.y(), rect.width(), rect.height())
+        if self._annotation_preview is not None:
+            self._scene.removeItem(self._annotation_preview)
+        preview = make_annotation_item(
+            AnnotationLayer(
+                -1,
+                "",
+                self._annotation_tool,
+                *geometry,
+                style=self._annotation_style_provider(),
+            )
+        )
+        preview.setZValue(_ANNOTATION_BASE_Z + 5)
+        self._scene.addItem(preview)
+        self._annotation_preview = preview
+
+    def _cancel_annotation_drag(self) -> None:
+        self._annotation_start = None
+        if self._annotation_preview is not None:
+            self._scene.removeItem(self._annotation_preview)
+            self._annotation_preview = None
+
+    def _apply_drag_mode(self) -> None:
+        if not self.has_photo() or self._annotation_tool is not None:
+            self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+        else:
+            self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
 
     def _clear(self) -> None:
         self.text_item.setVisible(False)
@@ -658,7 +1053,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         """
         if self._cropping or self._polygon_cropping:
             return
-        if self._pixel_overlay_enabled:
+        if self._annotation_tool is not None and self.has_photo():
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        elif self._pixel_overlay_enabled:
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         elif self.has_photo():
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)

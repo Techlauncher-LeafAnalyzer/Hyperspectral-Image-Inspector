@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Event
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Union
@@ -14,6 +14,10 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
 from core import (
+    AnnotationError,
+    AnnotationKind,
+    AnnotationLayerModel,
+    AnnotationStyle,
     CancelledError,
     ClassificationError,
     ClassificationLayerComposite,
@@ -33,6 +37,7 @@ from core import (
     VisualizationMode,
     VisualizationResult,
 )
+from ui.annotation_render import render_annotations
 from ui.classification_colors import classification_palette
 from ui.classification_layer_panel import ClassificationLayerPanel
 from ui.theme import VIEWER_SCENE_BACKGROUND
@@ -67,6 +72,18 @@ class _ClassificationSlot:
     layers: Optional[ClassificationLayerModel] = None
     active_data: Optional[HSIData] = None
     means: Optional[dict[int, dict[str, PixelValueEntry]]] = None
+
+
+@dataclass
+class _AnnotationSlot:
+    """Annotation stack for one displayed image.
+
+    Annotations use image-pixel coordinates, so each resolution/calibration
+    state keeps its own stack rather than sharing mismatched coordinates.
+    """
+
+    layers: AnnotationLayerModel = field(default_factory=AnnotationLayerModel)
+    selected_id: Optional[int] = None
 
 
 class _ClassificationWorker(QtCore.QObject):
@@ -241,6 +258,7 @@ class ClassificationController(QObject):
         self._calibrated_slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
         self._pending_calibrated = False
         self._background_mode = VisualizationMode.RGB.value
+        self._annotation_slots: dict[tuple[bool, bool], _AnnotationSlot] = {}
         self._opacity_refresh_timer = QtCore.QTimer(self)
         self._opacity_refresh_timer.setSingleShot(True)
         self._opacity_refresh_timer.setInterval(_OPACITY_REFRESH_INTERVAL_MS)
@@ -270,6 +288,11 @@ class ClassificationController(QObject):
         return slots[self._is_super_resolution_active()]
 
     @property
+    def _annotation_slot(self) -> _AnnotationSlot:
+        key = (self._is_calibrated(), self._is_super_resolution_active())
+        return self._annotation_slots.setdefault(key, _AnnotationSlot())
+
+    @property
     def rgb(self) -> Optional[NDArray[np.uint8]]:
         return self._current_slot.rgb
 
@@ -291,6 +314,16 @@ class ClassificationController(QObject):
 
         composite = self._composite()
         return composite.display_rgb if composite is not None else None
+
+    def with_annotations(self, rgb: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        """Draw the displayed image's visible annotations onto ``rgb`` for export.
+
+        Annotations are kept out of :meth:`composited_rgb` because the viewer
+        draws them itself, as editable items; baking them in there would show
+        them twice. Only an export should flatten them into pixels.
+        """
+
+        return render_annotations(rgb, self._annotation_slot.layers.layers)
 
     def class_id_at(self, row: int, column: int) -> Optional[int]:
         """Return the zero-based class ID at ``(row, column)``, if any."""
@@ -316,7 +349,9 @@ class ClassificationController(QObject):
 
         self._slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
         self._calibrated_slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
+        self._annotation_slots = {}
         self._layer_panel.clear()
+        self._sync_annotations()
 
     def set_visualization_results(
         self, results: Mapping[VisualizationMode, VisualizationResult]
@@ -364,6 +399,12 @@ class ClassificationController(QObject):
             self._populate_layer_panel(slot)
         else:
             self._layer_panel.clear()
+        self._sync_annotations()
+
+    def sync_annotations(self) -> None:
+        """Redraw annotations after another component replaced the viewer photo."""
+
+        self._sync_annotations()
 
     def request_close(self) -> bool:
         """Begin cancelling a running classification for an application close.
@@ -400,6 +441,23 @@ class ClassificationController(QObject):
         self._layer_panel.globalOpacityChanged.connect(self._on_global_opacity_changed)
         self._layer_panel.outlineModeChanged.connect(self._on_outline_mode_changed)
         self._layer_panel.backgroundChanged.connect(self._on_background_changed)
+        page = self._layer_panel.annotation_page
+        page.toolChanged.connect(self._on_annotation_tool_changed)
+        page.styleChanged.connect(self._on_annotation_style_changed)
+        page.layerSelected.connect(self._on_annotation_selected)
+        page.visibilityChanged.connect(self._on_annotation_visibility_changed)
+        page.moveRequested.connect(self._on_annotation_move_requested)
+        page.deleteRequested.connect(self._on_annotation_delete_requested)
+        self._viewer.annotationShapeDrawn.connect(self._on_annotation_shape_drawn)
+        self._viewer.annotationTextRequested.connect(self._on_annotation_text_requested)
+        self._viewer.annotationArrowDrawn.connect(self._on_annotation_arrow_drawn)
+        self._viewer.annotationGeometryChanged.connect(self._on_annotation_geometry_changed)
+        self._viewer.annotationInteractionFinished.connect(
+            lambda: self._annotation_slot.layers.break_coalescing()
+        )
+        self._viewer.annotationPicked.connect(self._on_annotation_picked)
+        self._viewer.annotationDeselected.connect(self._on_annotation_deselected)
+        self._layer_panel.modeChanged.connect(self._on_panel_mode_changed)
 
         self._num_classes_edit.setValidator(QtGui.QIntValidator(2, 65535, self))
         self._max_iterations_edit.setValidator(QtGui.QIntValidator(1, 10000, self))
@@ -832,6 +890,184 @@ class ClassificationController(QObject):
         layers.set_outline_mode(enabled)
         self._show_result()
 
+    # ------------------------------------------------------------------ #
+    # Private: annotations                                                #
+    # ------------------------------------------------------------------ #
+
+    def _sync_annotations(self) -> None:
+        slot = self._annotation_slot
+        self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
+        self._layer_panel.annotation_page.set_layers(
+            slot.layers.layers, slot.selected_id
+        )
+
+    def _on_panel_mode_changed(self, mode: str) -> None:
+        # Leaving the annotation view must not leave a drawing tool armed,
+        # otherwise clicks on the class view would silently draw.
+        if mode != "annotations":
+            self._layer_panel.annotation_page.set_tool(None)
+            self._viewer.set_annotation_tool(None)
+
+    def _on_annotation_tool_changed(self, kind: Optional[AnnotationKind]) -> None:
+        self._viewer.set_annotation_tool(
+            kind, self._layer_panel.annotation_page.current_style
+        )
+
+    def _on_annotation_style_changed(self, style: AnnotationStyle) -> None:
+        """Apply style edits to the selected layer; they also seed new shapes."""
+
+        slot = self._annotation_slot
+        if slot.selected_id is None:
+            return
+        try:
+            slot.layers.set_style(slot.selected_id, style)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._sync_annotations()
+
+    def _on_annotation_selected(self, layer_id: int) -> None:
+        slot = self._annotation_slot
+        layer = slot.layers.selected_or_none(layer_id)
+        if layer is None:
+            return
+        slot.selected_id = layer_id
+        slot.layers.break_coalescing()
+        self._layer_panel.annotation_page.set_style(layer.style)
+        self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
+
+    def _on_annotation_visibility_changed(self, layer_id: int, visible: bool) -> None:
+        slot = self._annotation_slot
+        try:
+            slot.layers.set_visible(layer_id, visible)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
+
+    def _on_annotation_move_requested(self, layer_id: int, delta: int) -> None:
+        slot = self._annotation_slot
+        try:
+            slot.layers.move(layer_id, delta)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._sync_annotations()
+
+    def _on_annotation_delete_requested(self, layer_id: int) -> None:
+        slot = self._annotation_slot
+        try:
+            slot.layers.remove(layer_id)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        if slot.selected_id == layer_id:
+            slot.selected_id = None
+        self._sync_annotations()
+
+    def _on_annotation_shape_drawn(self, kind: AnnotationKind, rect: QtCore.QRectF) -> None:
+        slot = self._annotation_slot
+        style = self._layer_panel.annotation_page.current_style()
+        try:
+            layer = slot.layers.add_shape(
+                kind, rect.x(), rect.y(), rect.width(), rect.height(), style
+            )
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        slot.selected_id = layer.layer_id
+        self._sync_annotations()
+
+    def _on_annotation_geometry_changed(
+        self, layer_id: int, x: float, y: float, width: float, height: float
+    ) -> None:
+        slot = self._annotation_slot
+        try:
+            slot.layers.set_geometry(layer_id, x, y, width, height)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        # Only the canvas needs redrawing; rebuilding the list mid-drag would
+        # steal its selection state for no visible change.
+        self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
+
+    def _on_annotation_deselected(self) -> None:
+        slot = self._annotation_slot
+        if slot.selected_id is None:
+            return
+        slot.selected_id = None
+        slot.layers.break_coalescing()
+        self._sync_annotations()
+
+    def _on_annotation_picked(self, layer_id: int) -> None:
+        slot = self._annotation_slot
+        layer = slot.layers.selected_or_none(layer_id)
+        if layer is None:
+            return
+        slot.selected_id = layer_id
+        slot.layers.break_coalescing()
+        self._layer_panel.annotation_page.set_style(layer.style)
+        self._sync_annotations()
+
+    def _on_annotation_arrow_drawn(
+        self, tail: QtCore.QPointF, head: QtCore.QPointF
+    ) -> None:
+        slot = self._annotation_slot
+        style = self._layer_panel.annotation_page.current_style()
+        try:
+            layer = slot.layers.add_arrow(
+                tail.x(), tail.y(), head.x(), head.y(), style
+            )
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        slot.selected_id = layer.layer_id
+        self._sync_annotations()
+
+    def undo_annotation(self) -> bool:
+        """Undo the last annotation change on the displayed image.
+
+        Returns whether anything was undone, so the caller can fall back to
+        its own undo (crop) when there was nothing to undo here.
+        """
+
+        return self._step_annotation_history(redo=False)
+
+    def redo_annotation(self) -> bool:
+        return self._step_annotation_history(redo=True)
+
+    def _step_annotation_history(self, *, redo: bool) -> bool:
+        slot = self._annotation_slot
+        changed = slot.layers.redo() if redo else slot.layers.undo()
+        if not changed:
+            return False
+        selected = slot.layers.selected_or_none(slot.selected_id)
+        if selected is None:
+            slot.selected_id = None
+        else:
+            self._layer_panel.annotation_page.set_style(selected.style)
+        self._sync_annotations()
+        self._statusbar.showMessage(
+            "Annotation change redone" if redo else "Annotation change undone", 4000
+        )
+        return True
+
+    def _on_annotation_text_requested(self, point: QtCore.QPointF) -> None:
+        text, accepted = QtWidgets.QInputDialog.getText(
+            self._parent, "Add text", "Annotation text:"
+        )
+        if not accepted:
+            return
+        slot = self._annotation_slot
+        style = self._layer_panel.annotation_page.current_style()
+        try:
+            layer = slot.layers.add_text(point.x(), point.y(), text, style)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        slot.selected_id = layer.layer_id
+        self._sync_annotations()
+
     def _on_background_changed(self, mode: str) -> None:
         self._background_mode = mode
         self._show_result()
@@ -919,6 +1155,7 @@ class ClassificationController(QObject):
         )
         if state is not None:
             self._viewer.queue_view_state(state)
+        self._sync_annotations()
 
     @staticmethod
     def _colorize_class_map(

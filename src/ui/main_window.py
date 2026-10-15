@@ -394,11 +394,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self,
             self._undo_crop,
         )
-        QtGui.QShortcut(
-            QtGui.QKeySequence.StandardKey.Redo,
-            self,
-            self._redo_crop,
-        )
+        # Ctrl+Shift+Z is the platform redo on Linux/macOS but not Windows;
+        # list it explicitly, without repeating a key the platform already
+        # provides (a duplicate would make the shortcut ambiguous).
+        redo_keys = QtGui.QKeySequence.keyBindings(QtGui.QKeySequence.StandardKey.Redo)
+        extra = QtGui.QKeySequence("Ctrl+Shift+Z")
+        if extra not in redo_keys:
+            redo_keys.append(extra)
+        redo_shortcut = QtGui.QShortcut(redo_keys[0], self, self._redo_crop)
+        redo_shortcut.setKeys(redo_keys)
 
     def _update_super_resolution_view_state(self, show_processed: bool) -> None:
         if self._super_res_worker is not None:
@@ -863,6 +867,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         if classification_rgb is not None:
             display_rgb = classification_rgb
+        if self._active_viewer is self.classificationViewer:
+            # The viewer draws annotations as live items over this image, so
+            # they must be flattened into the saved pixels explicitly. This
+            # also covers annotating the plain image before any classification.
+            display_rgb = self._classification_controller.with_annotations(display_rgb)
         calibration_result = self._calibration_controller.display_result
         if self._active_viewer is self.calibrationViewer and calibration_result:
             display_rgb = calibration_result.data.rgb_array
@@ -1006,6 +1015,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                     (state[0] / viewer_factor, state[1] * viewer_factor)
                 )
         self._viz_view_scale = new_scale
+        self._classification_controller.sync_annotations()
         self._refresh_super_resolution_display()
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
@@ -1267,7 +1277,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._hsi_data.roi_mask     = snapshot.roi_mask
         self._invalidate_for_crop_change()
 
+    def _annotation_history_active(self) -> bool:
+        """Whether Ctrl+Z should target annotations rather than the crop."""
+
+        return self._active_viewer is self.classificationViewer
+
     def _undo_crop(self) -> None:
+        if self._annotation_history_active() and (
+            self._classification_controller.undo_annotation()
+        ):
+            return
         if self._pipeline_busy() or not self._crop_undo_stack:
             return
         self._crop_redo_stack.append(self._snapshot_current_state())
@@ -1275,6 +1294,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.statusbar.showMessage("Crop undone")
 
     def _redo_crop(self) -> None:
+        if self._annotation_history_active() and (
+            self._classification_controller.redo_annotation()
+        ):
+            return
         if self._pipeline_busy() or not self._crop_redo_stack:
             return
         self._crop_undo_stack.append(self._snapshot_current_state())
