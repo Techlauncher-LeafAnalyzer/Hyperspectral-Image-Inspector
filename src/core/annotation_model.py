@@ -29,11 +29,11 @@ class AnnotationKind(Enum):
 class AnnotationStyle:
     """Appearance shared by every kind; text uses ``fill`` as its colour."""
 
-    fill: RGB = (255, 214, 0)
+    fill: RGB = (255, 255, 255)
     fill_enabled: bool = False
-    stroke: RGB = (220, 30, 30)
-    stroke_width: float = 2.0
-    font_size: int = 24
+    stroke: RGB = (0, 0, 0)
+    stroke_width: float = 1.0
+    font_size: int = 18
     opacity: float = 1.0
 
     def __post_init__(self) -> None:

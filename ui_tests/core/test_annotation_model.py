@@ -122,7 +122,7 @@ def test_slider_drag_collapses_to_one_undo_step_but_other_fields_do_not():
     for value in (0.9, 0.7, 0.5):
         model.set_style(rect, AnnotationStyle(opacity=value))
     model.set_style(rect, AnnotationStyle(opacity=0.5, stroke_width=8.0))
-    assert model.undo() and model.get(rect).style.stroke_width == 2.0
+    assert model.undo() and model.get(rect).style.stroke_width == STYLE.stroke_width
     assert model.get(rect).style.opacity == 0.5
     assert model.undo() and model.get(rect).style.opacity == 1.0
     model.set_style(rect, AnnotationStyle(opacity=1.0))  # unchanged: no history
