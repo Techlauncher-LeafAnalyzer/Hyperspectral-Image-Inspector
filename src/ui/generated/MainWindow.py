@@ -323,7 +323,7 @@ class Ui_MainWindow(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.SuperResolution), _translate("MainWindow", "Super-Resolution"))
         self.darkFileButton.setText(_translate("MainWindow", "Dark File"))
         self.darkFileEdit.setPlaceholderText(_translate("MainWindow", "Select dark reference file"))
-        self.referenceFileButton.setText(_translate("MainWindow", "Bright File"))
+        self.referenceFileButton.setText(_translate("MainWindow", "White File"))
         self.referenceFileEdit.setPlaceholderText(_translate("MainWindow", "Select bright calibration file"))
         self.calibrateButton.setText(_translate("MainWindow", "Calibrate"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.Calibration), _translate("MainWindow", "Calibration"))
@@ -343,7 +343,7 @@ class Ui_MainWindow(object):
         self.comboBox.setAccessibleName(_translate("MainWindow", "Classifier"))
         self.pushButton_2.setText(_translate("MainWindow", "Classify"))
         self.classificationModeTabs.setTabText(self.classificationModeTabs.indexOf(self.supervisedClassificationTab), _translate("MainWindow", "Supervised"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.Classification), _translate("MainWindow", "Classification"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.Classification), _translate("MainWindow", "Segmentation"))
         self.actionLoadImage.setText(_translate("MainWindow", "Load Image"))
         self.actionSaveImage.setText(_translate("MainWindow", "Save Image"))
 from ui.classification_layer_panel import ClassificationLayerPanel
