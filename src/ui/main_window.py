@@ -12,6 +12,7 @@ from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
+from core.marker_crop import find_plus_crop
 from core import (
     CalibrationFrameResolver,
     CalibrationService,
@@ -844,11 +845,27 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._crop_redo_stack.clear()
         self._active_visualization_mode = VisualizationMode.RGB
         self.modeRGB.setChecked(True)
+        auto_cropped = self._auto_crop_marker_pattern()
         self._push_image_to_viewers()
-        self.statusbar.showMessage(
-            f"Loaded {loaded_path.name}. {calibration_status}",
-            8000,
+        status = f"Loaded {loaded_path.name}. {calibration_status}"
+        if auto_cropped:
+            status += " Auto-cropped to Leaf2QR pattern (Ctrl+Z to undo)."
+        self.statusbar.showMessage(status, 8000)
+
+    def _auto_crop_marker_pattern(self) -> bool:
+        """Polygon-crop to the inner borders of the four Leaf2QR corner tags.
+
+        Silently does nothing when the pattern is absent. Goes through
+        `_apply_crop` so the crop is undoable like a manual one.
+        """
+        rgb = self._hsi_data.rgb_array
+        polygon = None if rgb is None else find_plus_crop(rgb)
+        if polygon is None:
+            return False
+        self._apply_crop(
+            lambda: self._hsi_data.crop_polygon(polygon), "Auto-cropped"
         )
+        return bool(self._crop_undo_stack)
 
     def _save_image(self) -> None:
         if not self._hsi_data.is_loaded():
