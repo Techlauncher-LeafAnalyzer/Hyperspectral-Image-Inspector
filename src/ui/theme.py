@@ -891,6 +891,7 @@ QCheckBox#layerVisibilityToggle:focus {
 }
 
 QPushButton#layerToggleAllButton,
+QPushButton#layerExportButton,
 QPushButton#layerOutlineToggleButton {
     min-height: 18px;
     color: #254c46;
@@ -903,6 +904,7 @@ QPushButton#layerOutlineToggleButton {
 }
 
 QPushButton#layerToggleAllButton:hover,
+QPushButton#layerExportButton:hover,
 QPushButton#layerOutlineToggleButton:hover {
     color: #126f62;
     background: #f8fcfb;
@@ -910,6 +912,7 @@ QPushButton#layerOutlineToggleButton:hover {
 }
 
 QPushButton#layerToggleAllButton:pressed,
+QPushButton#layerExportButton:pressed,
 QPushButton#layerOutlineToggleButton:pressed {
     background: #dcefeb;
     border-color: #6ba99e;

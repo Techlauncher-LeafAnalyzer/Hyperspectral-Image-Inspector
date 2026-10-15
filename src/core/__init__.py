@@ -46,6 +46,7 @@ from .classification_layer_model import (
     ClassificationLayerComposite,
     ClassificationLayerModel,
 )
+from .classification_export_model import export_class_summary_csv
 from .hsi_data import Functionality, HSIData, ImageFormat
 from .hsi_reader import HSI_FILE_FILTER, HSIReader
 from .roi import Masked, polygon_mask
@@ -130,6 +131,7 @@ __all__ = [
     "UnsupervisedClassificationRequest",
     "UnsupervisedClassificationResult",
     "WavelengthError",
+    "export_class_summary_csv",
     "load_binary_training_mask",
     "order_calibration_frame_paths",
 ]
