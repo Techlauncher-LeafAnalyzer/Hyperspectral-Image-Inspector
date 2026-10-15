@@ -960,32 +960,232 @@ QToolButton#annotationToolButton {
     background: #ffffff;
     border: 1px solid #c7d8d4;
     border-radius: 6px;
-    font-size: 10px;
-    font-weight: 650;
-    padding: 5px 4px;
+    min-height: 22px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px;
 }
 
 QToolButton#annotationToolButton:hover {
     color: #126f62;
+    background: #f0f8f5;
     border-color: #8fbcb4;
 }
 
 QToolButton#annotationToolButton:checked {
-    color: #ffffff;
-    background: #168b7b;
+    color: #105f55;
+    background: #dcefeb;
+    border-color: #78afa5;
+}
+
+QToolButton#annotationToolButton:pressed,
+QToolButton#annotationToolButton:checked:hover {
+    background: #cfe7e0;
+    border-color: #4e9d8f;
+}
+
+QToolButton#annotationToolButton:focus {
+    border: 1px solid #168b7b;
+}
+
+QWidget#annotationContent,
+QScrollArea#annotationScrollArea,
+QScrollArea#annotationScrollArea > QWidget > QWidget {
+    background: transparent;
+    border: 0;
+}
+
+QScrollArea#annotationScrollArea QScrollBar:vertical,
+QListWidget#annotationLayerList QScrollBar:vertical {
+    width: 7px;
+    background: transparent;
+    margin: 2px 0;
+}
+
+QScrollArea#annotationScrollArea QScrollBar::handle:vertical,
+QListWidget#annotationLayerList QScrollBar::handle:vertical {
+    min-height: 26px;
+    background: #bfceca;
+    border-radius: 3px;
+}
+
+QScrollArea#annotationScrollArea QScrollBar::handle:vertical:hover,
+QListWidget#annotationLayerList QScrollBar::handle:vertical:hover {
+    background: #93aaa5;
+}
+
+QScrollArea#annotationScrollArea QScrollBar::add-line:vertical,
+QScrollArea#annotationScrollArea QScrollBar::sub-line:vertical,
+QScrollArea#annotationScrollArea QScrollBar::add-page:vertical,
+QScrollArea#annotationScrollArea QScrollBar::sub-page:vertical,
+QListWidget#annotationLayerList QScrollBar::add-line:vertical,
+QListWidget#annotationLayerList QScrollBar::sub-line:vertical,
+QListWidget#annotationLayerList QScrollBar::add-page:vertical,
+QListWidget#annotationLayerList QScrollBar::sub-page:vertical {
+    height: 0;
+    background: transparent;
+}
+
+QFrame#annotationAppearance {
+    background: #edf4f2;
+    border: 1px solid #d4e2df;
+    border-radius: 8px;
+}
+
+QLabel#annotationSectionLabel {
+    color: #294b44;
+    font-size: 12px;
+    font-weight: 650;
+    background: transparent;
+}
+
+QLabel#annotationFieldLabel {
+    color: #526863;
+    font-size: 11px;
+    background: transparent;
+}
+
+QLabel#annotationHint {
+    color: #6b7e78;
+    font-size: 11px;
+    background: transparent;
+}
+
+QPushButton#annotationColorButton {
+    min-height: 22px;
+    padding: 4px 5px;
+    font-size: 11px;
+    font-family: "Menlo", "Consolas", "DejaVu Sans Mono", monospace;
+    font-weight: 500;
+    text-align: left;
+}
+
+QCheckBox#annotationFillCheck {
+    color: #526863;
+    font-size: 11px;
+    spacing: 7px;
+    padding: 3px 0;
+}
+
+QCheckBox#annotationFillCheck::indicator,
+QListWidget#annotationLayerList::indicator {
+    width: 18px;
+    height: 18px;
+    border: 0;
+}
+
+QCheckBox#annotationFillCheck::indicator:unchecked,
+QListWidget#annotationLayerList::indicator:unchecked {
+    image: url(__CHECKBOX_UNCHECKED__);
+}
+
+QCheckBox#annotationFillCheck::indicator:checked,
+QListWidget#annotationLayerList::indicator:checked {
+    image: url(__CHECKBOX_CHECKED__);
+}
+
+QCheckBox#annotationFillCheck:focus {
+    color: #105f55;
+    background: #dcefeb;
+    border-radius: 4px;
+}
+
+QSpinBox#annotationSizeInput {
+    min-height: 22px;
+    color: #263735;
+    background: #ffffff;
+    border: 1px solid #c7d8d4;
+    border-radius: 6px;
+    padding: 3px 5px;
+    font-size: 12px;
+    selection-background-color: #cfe7e0;
+    selection-color: #105f55;
+}
+
+QSpinBox#annotationSizeInput:hover {
+    border-color: #8fbcb4;
+}
+
+QSpinBox#annotationSizeInput:focus,
+QPushButton#annotationColorButton:focus,
+QPushButton#annotationLayerAction:focus,
+QPushButton#annotationDeleteButton:focus {
     border-color: #168b7b;
+    background: #f0f8f5;
+}
+
+QLabel#annotationOpacityValue {
+    color: #126f62;
+    font-size: 11px;
+    font-weight: 600;
+    background: transparent;
+}
+
+QLabel#annotationLayerCount {
+    color: #526863;
+    background: #e5eeeb;
+    border-radius: 4px;
+    min-width: 14px;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#annotationEmptyState {
+    color: #6b7e78;
+    background: #edf4f2;
+    border: 1px dashed #cbdad6;
+    border-radius: 8px;
+    padding: 0 6px;
+    font-size: 11px;
 }
 
 QListWidget#annotationLayerList {
     background: #ffffff;
+    color: #3e5c57;
     border: 1px solid #c7d8d4;
     border-radius: 8px;
-    padding: 3px;
+    padding: 4px;
+    font-size: 12px;
+}
+
+QListWidget#annotationLayerList:focus {
+    border-color: #168b7b;
+}
+
+QListWidget#annotationLayerList::item {
+    min-height: 24px;
+    padding: 5px 4px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+}
+
+QListWidget#annotationLayerList::item:hover {
+    background: #f0f7f5;
 }
 
 QListWidget#annotationLayerList::item:selected {
-    color: #126f62;
+    color: #105f55;
     background: #dcefeb;
+    border-color: #afd2ca;
+}
+
+QPushButton#annotationLayerAction,
+QPushButton#annotationDeleteButton {
+    min-height: 22px;
+    padding: 5px 6px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QPushButton#annotationDeleteButton:hover {
+    color: #a4443b;
+    background: #fbefec;
+    border-color: #dcb4ac;
+}
+
+QPushButton#annotationDeleteButton:pressed {
+    background: #f4dfd9;
 }
 
 QPushButton#layerToggleAllButton:disabled,
@@ -1007,31 +1207,36 @@ QLabel#globalOpacityValueLabel {
 }
 
 QSlider#layerOpacitySlider,
-QSlider#globalOpacitySlider {
+QSlider#globalOpacitySlider,
+QSlider#annotationOpacitySlider {
     min-height: 14px;
 }
 
 QSlider#layerOpacitySlider::groove:horizontal,
-QSlider#globalOpacitySlider::groove:horizontal {
+QSlider#globalOpacitySlider::groove:horizontal,
+QSlider#annotationOpacitySlider::groove:horizontal {
     height: 4px;
     background: #d8e3e0;
     border-radius: 2px;
 }
 
 QSlider#layerOpacitySlider::sub-page:horizontal,
-QSlider#globalOpacitySlider::sub-page:horizontal {
+QSlider#globalOpacitySlider::sub-page:horizontal,
+QSlider#annotationOpacitySlider::sub-page:horizontal {
     background: #39a393;
     border-radius: 2px;
 }
 
 QSlider#layerOpacitySlider::add-page:horizontal,
-QSlider#globalOpacitySlider::add-page:horizontal {
+QSlider#globalOpacitySlider::add-page:horizontal,
+QSlider#annotationOpacitySlider::add-page:horizontal {
     background: #d8e3e0;
     border-radius: 2px;
 }
 
 QSlider#layerOpacitySlider::handle:horizontal,
-QSlider#globalOpacitySlider::handle:horizontal {
+QSlider#globalOpacitySlider::handle:horizontal,
+QSlider#annotationOpacitySlider::handle:horizontal {
     width: 13px;
     height: 13px;
     margin: -5px 0;
@@ -1041,7 +1246,9 @@ QSlider#globalOpacitySlider::handle:horizontal {
 }
 
 QSlider#layerOpacitySlider::handle:horizontal:hover,
-QSlider#globalOpacitySlider::handle:horizontal:hover {
+QSlider#globalOpacitySlider::handle:horizontal:hover,
+QSlider#annotationOpacitySlider::handle:horizontal:hover,
+QSlider#annotationOpacitySlider::handle:horizontal:focus {
     background: #dff1ed;
     border-color: #0d6a5f;
 }

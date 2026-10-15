@@ -1,16 +1,47 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import matplotlib
 import numpy as np
-from PyQt6 import QtCore
+import pytest
+from PyQt6 import QtCore, QtWidgets
 from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QFontDatabase, QPixmap
 
 from core import AnnotationKind, AnnotationLayerModel, AnnotationStyle
 from ui.annotation_panel import AnnotationToolsPage
 from ui.classification_layer_panel import ClassificationLayerPanel
+from ui.theme import apply_theme
 from ui.viewer import HSIViewer
 
 STYLE = AnnotationStyle()
+
+
+@pytest.fixture(params=["system", "DejaVu Sans"])
+def themed_app(qapp, request):
+    previous_style = qapp.style().objectName()
+    previous_font = qapp.font()
+    previous_stylesheet = qapp.styleSheet()
+    apply_theme(qapp)
+    font_ids = []
+    if request.param == "DejaVu Sans":
+        # Use Matplotlib's bundled fonts to reproduce Ubuntu's font metrics
+        # on macOS and Windows without adding a dependency or downloading fonts.
+        font_dir = Path(matplotlib.get_data_path()) / "fonts" / "ttf"
+        for filename in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"):
+            font_id = QFontDatabase.addApplicationFont(str(font_dir / filename))
+            assert font_id >= 0
+            font_ids.append(font_id)
+        font = qapp.font()
+        font.setFamily("DejaVu Sans")
+        qapp.setFont(font)
+    yield qapp
+    qapp.setStyleSheet(previous_stylesheet)
+    qapp.setStyle(previous_style)
+    qapp.setFont(previous_font)
+    for font_id in font_ids:
+        QFontDatabase.removeApplicationFont(font_id)
 
 
 def _viewer(qtbot) -> HSIViewer:
@@ -253,11 +284,16 @@ def test_arrow_endpoints_move_independently(qtbot):
     assert (round(x), round(y)) == (10, 10) and abs(w - 70) <= 2 and abs(h - 30) <= 2
 
 
-def test_tool_buttons_toggle_off_and_are_only_as_wide_as_their_text(qtbot):
-    page = AnnotationToolsPage()
-    qtbot.addWidget(page)
-    page.resize(236, 400)
-    page.show()
+@pytest.mark.parametrize("width,height", [(236, 450), (236, 750), (520, 850)])
+def test_tool_buttons_toggle_off_and_fit_the_inspector(qtbot, themed_app, width, height):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_expanded_width(width)
+    panel.resize(width, height)
+    panel.set_mode("annotations")
+    page = panel.annotation_page
+    page.set_layers(())
+    panel.show()
     tools = []
     page.toolChanged.connect(tools.append)
     rect = page._tool_buttons[AnnotationKind.RECTANGLE]
@@ -268,12 +304,21 @@ def test_tool_buttons_toggle_off_and_are_only_as_wide_as_their_text(qtbot):
     circle.click()
     assert tools == [AnnotationKind.RECTANGLE, AnnotationKind.ELLIPSE, None]
     assert not any(b.isChecked() for b in page._tool_buttons.values())
+    scroll = page.findChild(QtWidgets.QScrollArea)
+    qtbot.waitUntil(lambda: scroll.widget().width() <= scroll.viewport().width())
     for button in page._tool_buttons.values():
-        assert button.width() == button.sizeHint().width()
-    assert (
-        page._tool_buttons[AnnotationKind.RECTANGLE].width()
-        != page._tool_buttons[AnnotationKind.ELLIPSE].width()
-    )
+        assert not button.icon().isNull()
+        assert button.width() >= button.minimumSizeHint().width()
+    arrow = page._tool_buttons[AnnotationKind.ARROW]
+    text = page._tool_buttons[AnnotationKind.TEXT]
+    # Qt respects each label's minimum width before sharing remaining space;
+    # wider fonts may need unequal columns to keep both labels readable.
+    assert rect.x() == arrow.x()
+    assert circle.x() == text.x()
+    assert rect.y() == circle.y()
+    assert arrow.y() == text.y()
+    assert rect.geometry().right() < circle.x()
+    assert rect.geometry().bottom() < arrow.y()
 
 
 def _log_deselect(viewer, log):

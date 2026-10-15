@@ -447,6 +447,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._classes_mode_button.setChecked(not annotations)
         self._annotations_mode_button.setChecked(annotations)
         self._title.setText("Annotations" if annotations else "Class layers")
+        self._layer_count_label.setVisible(not annotations)
         self._stack.setCurrentWidget(self.annotation_page if annotations else self._body)
         if mode != getattr(self, "_announced_mode", "classes"):
             self._announced_mode = mode
