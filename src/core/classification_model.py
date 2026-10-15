@@ -182,12 +182,18 @@ class SupervisedClassificationRequest:
     samples the training wavelength range. This bounds memory and covariance
     requirements for the application's 480-band captures while recording the
     exact selected features in the result.
+
+    ``standardize_features`` z-scores each band: the training cube with the
+    mean/deviation of its labeled pixels, and the target with its own pixel
+    statistics. Use it when the two cubes cannot be put in the same physical
+    units (e.g. no calibration frames for the training capture).
     """
 
     classifier: SupervisedClassifierType | str
     band_indices: tuple[int, ...] | None = None
     max_features: int = 24
     wavelength_tolerance_nm: float = 0.5
+    standardize_features: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -625,6 +631,10 @@ class ClassificationService:
             raise ClassificationError(f"Could not read training cube: {exc}") from exc
         if not np.all(np.isfinite(training_cube[labels > 0])):
             raise ClassificationError("Labeled training pixels contain non-finite values.")
+        if request.standardize_features:
+            training_cube = self._standardize(
+                training_cube, *self._band_statistics(training_cube[labels > 0])
+            )
 
         self._check_cancelled(is_cancelled)
         self._emit(progress, 30, f"Training SPy {request.classifier.value}")
@@ -666,6 +676,15 @@ class ClassificationService:
         target_input = region.select()[:, None, :] if region.is_masked else target_cube
         if not np.all(np.isfinite(target_input)):
             raise ClassificationError("Selected target pixels contain non-finite values.")
+        if request.standardize_features:
+            target_input = self._standardize(
+                target_input,
+                *self._band_statistics(target_input.reshape(-1, target_input.shape[-1])),
+            )
+        else:
+            self._check_comparable_scale(
+                original_training=training_cube[labels > 0], target=target_input
+            )
 
         self._check_cancelled(is_cancelled)
         self._emit(progress, 65, f"Classifying with {request.classifier.value}")
@@ -731,6 +750,47 @@ class ClassificationService:
             training_mask_path=Path(training_mask_path).expanduser().resolve(),
             training_cube_path=training_data.source_path,
         )
+
+    @staticmethod
+    def _band_statistics(pixels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Per-band mean and deviation of an ``(N, bands)`` pixel list."""
+
+        mean = pixels.mean(axis=0, dtype=np.float64)
+        deviation = pixels.std(axis=0, dtype=np.float64)
+        # Constant bands would divide by zero; leave them centred but unscaled.
+        deviation = np.where(deviation > 1e-12, deviation, 1.0)
+        return mean, deviation
+
+    @staticmethod
+    def _standardize(
+        values: np.ndarray, mean: np.ndarray, deviation: np.ndarray
+    ) -> np.ndarray:
+        return ((values - mean) / deviation).astype(np.float32, copy=False)
+
+    @staticmethod
+    def _check_comparable_scale(
+        *, original_training: np.ndarray, target: np.ndarray
+    ) -> None:
+        """Reject training/target cubes in different units.
+
+        A raw-DN training cube against a reflectance target (or vice versa)
+        puts every target pixel far outside both class distributions, so one
+        class claims the whole image. Fail loudly instead.
+        """
+
+        bands = target.shape[-1]
+        flat = target.reshape(-1, bands)
+        step = max(1, flat.shape[0] // 100_000)
+        training_scale = float(np.median(np.abs(original_training)))
+        target_scale = float(np.median(np.abs(flat[::step])))
+        floor = 1e-12
+        ratio = max(training_scale, floor) / max(target_scale, floor)
+        if ratio > 50 or ratio < 1 / 50:
+            raise ClassificationError(
+                "The training and target images are on very different value "
+                f"scales (median {training_scale:.4g} vs {target_scale:.4g}); "
+                "calibrate both the same way or enable feature standardization."
+            )
 
     @staticmethod
     def _supervised_training_bands(
