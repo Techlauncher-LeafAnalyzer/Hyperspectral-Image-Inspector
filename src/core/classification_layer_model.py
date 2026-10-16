@@ -184,6 +184,10 @@ class ClassificationIndexAnalysis:
             ) from exc
 
 
+# Supervised ground-truth masks label the plant as 1 and background as 2.
+_SUPERVISED_DEFAULT_NAMES = {1: "Plant", 2: "Background"}
+
+
 class ClassificationLayerModel:
     """Mutable visibility/name state over an immutable classification result.
 
@@ -230,7 +234,13 @@ class ClassificationLayerModel:
         self._pixel_indices = tuple(
             np.flatnonzero(mask) for mask in self._one_hot_masks
         )
-        self._names = {class_id: f"Class {class_id}" for class_id in class_ids}
+        defaults = _SUPERVISED_DEFAULT_NAMES if isinstance(
+            result, SupervisedClassificationResult
+        ) else {}
+        self._names = {
+            class_id: defaults.get(class_id, f"Class {class_id}")
+            for class_id in class_ids
+        }
         self._visibility = {class_id: True for class_id in class_ids}
         self._opacity = {class_id: 1.0 for class_id in class_ids}
         self._global_opacity = 1.0
