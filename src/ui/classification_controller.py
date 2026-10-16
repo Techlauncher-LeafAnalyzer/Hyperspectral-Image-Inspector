@@ -1335,6 +1335,11 @@ class ClassificationController(QObject):
         if slot.means is not None:
             return slot.means
         means: dict[int, dict[str, PixelValueEntry]] = {}
+        if self._visualization_results:
+            # Every class gets a (possibly empty) entry so its row still shows
+            # the index means block, with dashes where a class has no pixels.
+            for layer in slot.layers.layers:
+                means[layer.class_id] = {}
         for mode, visualization in self._visualization_results.items():
             try:
                 class_means = slot.layers.visualization_means(visualization)
