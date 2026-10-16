@@ -265,3 +265,29 @@ def test_saving_a_polygon_crop_to_jpeg_is_refused(
     assert not target.exists()
     assert dialogs.critical
     assert "alpha" in dialogs.critical[-1][2].lower()
+
+
+@pytest.mark.parametrize("already_cropped", [False, True])
+def test_polygon_with_no_pixel_centres_preserves_the_current_crop(
+    loaded_window, already_cropped
+):
+    if already_cropped:
+        loaded_window.viewer.polygonCropRequested.emit(PENTAGON)
+    data = loaded_window._hsi_data
+    original_image = data.spectral_obj
+    original_roi = data.roi_mask
+    original_rgb = data.rgb_array.copy()
+    original_shape = data.shape
+    undo_count = len(loaded_window._crop_undo_stack)
+
+    # This thin triangle has a rectangular bounding box, but contains no
+    # pixel centres. Falling back to that box would classify unselected pixels.
+    loaded_window.viewer.polygonCropRequested.emit(
+        [(1.0, 1.0), (7.0, 1.0), (7.0, 1.1)]
+    )
+
+    assert data.shape == original_shape
+    assert data.spectral_obj is original_image
+    assert data.roi_mask is original_roi
+    np.testing.assert_array_equal(data.rgb_array, original_rgb)
+    assert len(loaded_window._crop_undo_stack) == undo_count

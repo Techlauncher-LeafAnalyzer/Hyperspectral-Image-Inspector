@@ -400,35 +400,36 @@ class HSIData:
         Model code honours that mask through :class:`core.roi.Masked`.
 
         Returns the new ``(width, height)``, or ``None`` when the selection
-        is degenerate or no display arrays are loaded.
+        is degenerate or no display arrays are loaded. A polygon containing
+        no pixel centres leaves the current crop unchanged.
         """
 
         points = np.asarray(vertices, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2 or len(points) < 3:
             return None
-
-        size = self.crop(
-            float(points[:, 0].min()),
-            float(points[:, 1].min()),
-            float(points[:, 0].max()),
-            float(points[:, 1].max()),
-        )
-        if size is None:
+        if self.rgb_array is None or self.mask_array is None:
             return None
 
-        width, height = size
-        origin_x = max(0.0, np.floor(points[:, 0].min()))
-        origin_y = max(0.0, np.floor(points[:, 1].min()))
-        local = points - np.array([origin_x, origin_y])
+        # Validate the polygon before changing the lazy cube or display arrays.
+        # An empty pixel selection must not turn into a rectangular selection.
+        height, width = self.rgb_array.shape[:2]
+        left = max(0, int(np.floor(points[:, 0].min())))
+        top = max(0, int(np.floor(points[:, 1].min())))
+        right = min(width, int(np.ceil(points[:, 0].max())))
+        bottom = min(height, int(np.ceil(points[:, 1].max())))
+        if right <= left or bottom <= top:
+            return None
+        local = points - np.array([left, top])
         try:
-            polygon = polygon_mask(local, (height, width))
+            polygon = polygon_mask(local, (bottom - top, right - left))
         except ValueError:
             return None
         if not polygon.any():
-            # A sliver thinner than one pixel centre selects nothing; keep the
-            # bounding-box crop rather than leaving an all-empty ROI behind.
-            return size
+            return None
 
+        size = self.crop(left, top, right, bottom)
+        if size is None:
+            return None
         self.roi_mask = combine(self.roi_mask, polygon)
         return size
 
