@@ -26,6 +26,8 @@ class AnnotationKind(Enum):
 
 
 ROTATABLE_KINDS = frozenset({AnnotationKind.RECTANGLE, AnnotationKind.TEXT})
+# Shapes that enclose an area of pixels, so can report index means inside it.
+MEASURABLE_KINDS = frozenset({AnnotationKind.RECTANGLE, AnnotationKind.ELLIPSE})
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,9 @@ class AnnotationLayer:
     ``rotation`` is in degrees, clockwise, about the centre of the unrotated
     box. Only rectangles and text rotate; ``x``/``y``/``width``/``height`` always
     describe the unrotated box.
+
+    ``measure_index`` asks for the mean of each visualization over the pixels
+    the shape encloses; only rectangles and ellipses support it.
     """
 
     layer_id: int
@@ -72,6 +77,7 @@ class AnnotationLayer:
     style: AnnotationStyle = field(default_factory=AnnotationStyle)
     visible: bool = True
     rotation: float = 0.0
+    measure_index: bool = False
 
 
 class AnnotationLayerModel:
@@ -264,6 +270,28 @@ class AnnotationLayerModel:
         if wrapped == layer.rotation:
             return
         self._update(layer_id, coalesce_key=("rotation", layer_id), rotation=wrapped)
+
+    def rename(self, layer_id: int, name: str) -> None:
+        """Give a layer a user-facing name; the layer id stays its identity."""
+
+        cleaned = str(name).strip()
+        if not cleaned:
+            raise AnnotationError("An annotation name cannot be empty.")
+        if cleaned == self.get(layer_id).name:
+            return
+        self._update(layer_id, name=cleaned)
+
+    def set_measure_index(self, layer_id: int, enabled: bool) -> None:
+        """Turn index-mean measurement of the pixels inside a shape on or off."""
+
+        layer = self.get(layer_id)
+        if enabled and layer.kind not in MEASURABLE_KINDS:
+            raise AnnotationError(
+                f"{layer.kind.value} annotations do not enclose an area to measure."
+            )
+        if bool(enabled) == layer.measure_index:
+            return
+        self._update(layer_id, measure_index=bool(enabled))
 
     def set_text(self, layer_id: int, text: str) -> None:
         if self.get(layer_id).kind is not AnnotationKind.TEXT:

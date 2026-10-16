@@ -1087,6 +1087,14 @@ QListWidget#annotationLayerList::indicator:checked {
     image: url(__CHECKBOX_CHECKED__);
 }
 
+QCheckBox#annotationFillCheck:disabled {
+    color: #9aa9a5;
+}
+
+QCheckBox#annotationFillCheck::indicator:disabled {
+    image: url(__CHECKBOX_DISABLED__);
+}
+
 QCheckBox#annotationFillCheck:focus {
     color: #105f55;
     background: #dcefeb;
@@ -1315,6 +1323,7 @@ def apply_theme(app: QApplication) -> None:
     radio_checked = assets_dir / "radio_checked.svg"
     checkbox_unchecked = assets_dir / "checkbox_unchecked.svg"
     checkbox_checked = assets_dir / "checkbox_checked.svg"
+    checkbox_disabled = assets_dir / "checkbox_disabled.svg"
     menu_check = assets_dir / "menu_check.svg"
     menu_chevron = assets_dir / "chevron_right.svg"
     app.setStyleSheet(
@@ -1323,6 +1332,7 @@ def apply_theme(app: QApplication) -> None:
         .replace("__RADIO_CHECKED__", radio_checked.as_posix())
         .replace("__CHECKBOX_UNCHECKED__", checkbox_unchecked.as_posix())
         .replace("__CHECKBOX_CHECKED__", checkbox_checked.as_posix())
+        .replace("__CHECKBOX_DISABLED__", checkbox_disabled.as_posix())
         .replace("__MENU_CHECK__", menu_check.as_posix())
         .replace("__MENU_CHEVRON__", menu_chevron.as_posix())
     )

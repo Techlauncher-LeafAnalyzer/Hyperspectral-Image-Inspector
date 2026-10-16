@@ -46,7 +46,8 @@ from .classification_layer_model import (
     ClassificationLayerComposite,
     ClassificationLayerModel,
 )
-from .classification_export_model import export_class_summary_csv
+from .classification_export_model import ExportRegion, export_class_summary_csv
+from .annotation_region import RegionMeasurement, measure_region, region_mask
 from .hsi_data import Functionality, HSIData, ImageFormat
 from .hsi_reader import HSI_FILE_FILTER, HSIReader
 from .roi import Masked, polygon_mask
@@ -95,6 +96,7 @@ __all__ = [
     "ClassIndexStatistics",
     "ClassVisualizationMean",
     "DisplayStretch",
+    "ExportRegion",
     "Functionality",
     "HSIData",
     "HSIError",
@@ -109,6 +111,7 @@ __all__ = [
     "Masked",
     "OPTIONAL_VISUALIZATION_MODES",
     "polygon_mask",
+    "RegionMeasurement",
     "SpectrumResult",
     "SuperResolutionError",
     "SuperResolutionRequest",
@@ -133,5 +136,7 @@ __all__ = [
     "WavelengthError",
     "export_class_summary_csv",
     "load_binary_training_mask",
+    "measure_region",
+    "region_mask",
     "order_calibration_frame_paths",
 ]

@@ -28,6 +28,7 @@ from core import (
     ClassificationLayerComposite,
     ClassificationLayerModel,
     ClassificationService,
+    ExportRegion,
     HSIData,
     HSIError,
     HSIReader,
@@ -42,6 +43,7 @@ from core import (
     VisualizationMode,
     VisualizationResult,
     export_class_summary_csv,
+    measure_region,
 )
 from ui.annotation_render import render_annotations
 from ui.classification_colors import classification_palette
@@ -55,6 +57,7 @@ _LAYER_COMPOSITE_BACKGROUND = (
     VIEWER_SCENE_BACKGROUND.blue(),
 )
 _OPACITY_REFRESH_INTERVAL_MS = 40
+_REGION_REFRESH_INTERVAL_MS = 30
 
 LOGGER = logging.getLogger(__name__)
 
@@ -324,6 +327,10 @@ class ClassificationController(QObject):
         self._opacity_refresh_timer.setSingleShot(True)
         self._opacity_refresh_timer.setInterval(_OPACITY_REFRESH_INTERVAL_MS)
         self._opacity_refresh_timer.timeout.connect(self._show_result)
+        self._region_refresh_timer = QtCore.QTimer(self)
+        self._region_refresh_timer.setSingleShot(True)
+        self._region_refresh_timer.setInterval(_REGION_REFRESH_INTERVAL_MS)
+        self._region_refresh_timer.timeout.connect(self._refresh_regions)
         self._thread: Optional[QtCore.QThread] = None
         self._worker: Optional[
             Union[_ClassificationWorker, _SupervisedClassificationWorker]
@@ -430,6 +437,7 @@ class ClassificationController(QObject):
         if slot.layers is not None:
             self._populate_layer_panel(slot)
             self._show_result()
+        self._refresh_regions()
 
     def clear_super_resolution_result(self) -> None:
         """Discard only the Super-Resolution slot, e.g. when its SR image is discarded.
@@ -499,6 +507,9 @@ class ClassificationController(QObject):
         self._layer_panel.visibilityChanged.connect(self._on_layer_visibility_changed)
         self._layer_panel.opacityChanged.connect(self._on_layer_opacity_changed)
         self._layer_panel.renameRequested.connect(self._on_layer_rename_requested)
+        self._layer_panel.regionRenameRequested.connect(
+            self._on_annotation_rename_requested
+        )
         self._layer_panel.setAllVisibleRequested.connect(self._on_set_all_visible_requested)
         self._layer_panel.globalOpacityChanged.connect(self._on_global_opacity_changed)
         self._layer_panel.outlineModeChanged.connect(self._on_outline_mode_changed)
@@ -511,6 +522,7 @@ class ClassificationController(QObject):
         page.visibilityChanged.connect(self._on_annotation_visibility_changed)
         page.moveRequested.connect(self._on_annotation_move_requested)
         page.deleteRequested.connect(self._on_annotation_delete_requested)
+        page.measureChanged.connect(self._on_annotation_measure_changed)
         self._viewer.annotationShapeDrawn.connect(self._on_annotation_shape_drawn)
         self._viewer.annotationTextRequested.connect(self._on_annotation_text_requested)
         self._viewer.annotationArrowDrawn.connect(self._on_annotation_arrow_drawn)
@@ -964,7 +976,8 @@ class ClassificationController(QObject):
         """Save per-class names, sizes, and visualization means as a CSV."""
 
         slot = self._current_slot
-        if slot.layers is None:
+        measured = self._measured_regions()
+        if slot.layers is None and not measured:
             return
         path, _ = QFileDialog.getSaveFileName(
             self._parent,
@@ -976,23 +989,43 @@ class ClassificationController(QObject):
             return
         if not Path(path).suffix:
             path += ".csv"
-        means = {
-            class_id: {name: entry.value for name, entry in entries.items()}
-            for class_id, entries in self._segment_means(slot).items()
-        }
+        means: dict[int, dict[str, object]] = {}
         statistics: dict[int, dict[str, ClassIndexStatistics]] = {}
-        for mode, visualization in self._visualization_results.items():
-            try:
-                per_class = slot.layers.visualization_statistics(visualization)
-            except ClassificationError as exc:
-                LOGGER.info("Skipping %s class statistics: %s", mode.value, exc)
-                continue
-            for class_id, stats in per_class.items():
-                statistics.setdefault(class_id, {})[mode.value] = stats
-        rows, columns = slot.layers.image_shape
+        class_layers = ()
+        total_pixels = 0
+        if slot.layers is not None:
+            class_layers = slot.layers.layers
+            means = {
+                class_id: {name: entry.value for name, entry in entries.items()}
+                for class_id, entries in self._segment_means(slot).items()
+            }
+            for mode, visualization in self._visualization_results.items():
+                try:
+                    per_class = slot.layers.visualization_statistics(visualization)
+                except ClassificationError as exc:
+                    LOGGER.info("Skipping %s class statistics: %s", mode.value, exc)
+                    continue
+                for class_id, stats in per_class.items():
+                    statistics.setdefault(class_id, {})[mode.value] = stats
+            rows, columns = slot.layers.image_shape
+            total_pixels = rows * columns
+        else:
+            shape = next(
+                (v.display_rgb.shape[:2] for v in self._visualization_results.values()),
+                (0, 0),
+            )
+            total_pixels = int(shape[0]) * int(shape[1])
+        regions = [
+            ExportRegion(
+                layer.name,
+                measurement.pixel_count,
+                {name: mean.value for name, mean in measurement.means.items()},
+            )
+            for layer, measurement in measured
+        ]
         try:
             export_class_summary_csv(
-                path, slot.layers.layers, means, rows * columns, statistics
+                path, class_layers, means, total_pixels, statistics, regions
             )
         except ClassificationError as exc:
             QMessageBox.critical(self._parent, "Export failed", str(exc))
@@ -1017,6 +1050,62 @@ class ClassificationController(QObject):
         self._layer_panel.annotation_page.set_layers(
             slot.layers.layers, slot.selected_id
         )
+        self._refresh_regions()
+
+    def _refresh_regions(self) -> None:
+        """Show each measured, visible annotation as a row on the Classes tab.
+
+        Means are recomputed from the annotation's current geometry every time,
+        so a region always reflects where its shape is now.
+        """
+
+        self._region_refresh_timer.stop()
+        regions = []
+        for layer, measurement in self._measured_regions():
+            means = {
+                name: PixelValueEntry(value=mean.value, color=mean.color)
+                for name, mean in measurement.means.items()
+            }
+            regions.append(
+                (layer.layer_id, layer.name, layer.style.stroke,
+                 measurement.pixel_count, means)
+            )
+        self._layer_panel.set_regions(tuple(regions))
+
+    def _measured_regions(self) -> list:
+        """Return ``(layer, measurement)`` for each visible, measured annotation."""
+
+        return [
+            (layer, measure_region(layer, self._visualization_results))
+            for layer in self._annotation_slot.layers.layers
+            if layer.measure_index and layer.visible
+        ]
+
+    def _schedule_region_refresh(self) -> None:
+        """Coalesce the many events of a drag into one recalculation."""
+
+        if any(layer.measure_index for layer in self._annotation_slot.layers.layers):
+            self._region_refresh_timer.start()
+
+    def _on_annotation_rename_requested(self, layer_id: int, name: str) -> None:
+        slot = self._annotation_slot
+        try:
+            slot.layers.rename(layer_id, name)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        # Rebuilds the annotation list and the region rows with the new name.
+        self._sync_annotations()
+
+    def _on_annotation_measure_changed(self, layer_id: int, enabled: bool) -> None:
+        slot = self._annotation_slot
+        try:
+            slot.layers.set_measure_index(layer_id, enabled)
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            self._sync_annotations()
+            return
+        self._refresh_regions()
 
     def _on_panel_mode_changed(self, mode: str) -> None:
         # Leaving the annotation view must not leave a drawing tool armed,
@@ -1061,6 +1150,7 @@ class ClassificationController(QObject):
             self._statusbar.showMessage(str(exc), 8000)
             return
         self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
+        self._refresh_regions()
 
     def _on_annotation_move_requested(self, layer_id: int, delta: int) -> None:
         slot = self._annotation_slot
@@ -1107,6 +1197,7 @@ class ClassificationController(QObject):
         # Only the canvas needs redrawing; rebuilding the list mid-drag would
         # steal its selection state for no visible change.
         self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
+        self._schedule_region_refresh()
 
     def _on_annotation_rotation_changed(self, layer_id: int, degrees: float) -> None:
         slot = self._annotation_slot
@@ -1116,6 +1207,7 @@ class ClassificationController(QObject):
             self._statusbar.showMessage(str(exc), 8000)
             return
         self._viewer.set_annotations(slot.layers.layers, slot.selected_id)
+        self._schedule_region_refresh()
 
     def _on_annotation_deselected(self) -> None:
         slot = self._annotation_slot

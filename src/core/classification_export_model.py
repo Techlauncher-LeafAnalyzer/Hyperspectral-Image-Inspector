@@ -8,6 +8,7 @@ No Qt types are used here.
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -19,6 +20,17 @@ from .errors import ClassificationError
 MeanValue = float | Sequence[float]
 
 _RGB_CHANNELS = ("R", "G", "B")
+
+
+@dataclass(frozen=True, slots=True)
+class ExportRegion:
+    """A measured annotation exported as a row alongside the classes."""
+
+    name: str
+    pixel_count: int
+    means: Mapping[str, MeanValue]
+
+
 _LEADING_COLUMNS = ("class_id", "class_name", "pixel_count", "image_fraction")
 
 
@@ -28,6 +40,7 @@ def export_class_summary_csv(
     means: Mapping[int, Mapping[str, MeanValue]],
     total_pixels: int,
     statistics: Mapping[int, Mapping[str, ClassIndexStatistics]] | None = None,
+    regions: Iterable[ExportRegion] = (),
 ) -> Path:
     """Write each class's name, size, and visualization statistics to ``path``.
 
@@ -39,6 +52,10 @@ def export_class_summary_csv(
     deviation), ``_min``, ``_max`` and ``_valid_pixels`` (pixels with a
     finite value, the sample size behind the other columns).
 
+    Each of ``regions`` (annotations with index means) follows the classes as
+    a row with an empty ``class_id`` and its mean columns; it has no median,
+    spread or range columns.
+
     Numbers are written unformatted at full precision; a class with no
     finite values for a visualization leaves those cells empty. The file is
     UTF-8 with a BOM so Excel reads non-ASCII class names correctly.
@@ -47,6 +64,7 @@ def export_class_summary_csv(
     """
 
     layers = tuple(layers)
+    regions = tuple(regions)
     statistics = statistics or {}
 
     # Visualizations in first-seen order, which follows the app's mode order.
@@ -56,6 +74,10 @@ def export_class_summary_csv(
             for name in per_class:
                 if name not in names:
                     names.append(name)
+    for region in regions:
+        for name in region.means:
+            if name not in names:
+                names.append(name)
 
     columns: list[str] = []
     rows = []
@@ -83,6 +105,22 @@ def export_class_summary_csv(
                 row[f"{name}_valid_pixels"] = stats.finite_pixel_count
         rows.append(row)
         # Keep each visualization's columns together, in insertion order.
+        columns.extend(column for column in row if column not in columns
+                       and column not in _LEADING_COLUMNS)
+    for region in regions:
+        row = {
+            "class_id": "",
+            "class_name": region.name,
+            "pixel_count": region.pixel_count,
+            "image_fraction": region.pixel_count / total_pixels if total_pixels else "",
+        }
+        for name, mean in region.means.items():
+            if isinstance(mean, (int, float)):
+                row[f"{name}_mean"] = float(mean)
+            else:
+                for channel, value in zip(_RGB_CHANNELS, mean):
+                    row[f"{name}_{channel}_mean"] = float(value)
+        rows.append(row)
         columns.extend(column for column in row if column not in columns
                        and column not in _LEADING_COLUMNS)
 
