@@ -307,7 +307,8 @@ class UnsupervisedClassificationRequest:
     ``n_classes`` and ``max_iterations`` map directly to SPy's ``nclusters``
     and ``max_iterations`` arguments. ``band_indices=None`` uses every band.
     A Controller may supply a reproducible subset for faster/lower-memory
-    exploratory classification of very large cubes.
+    exploratory classification of very large cubes. Starting centers use
+    reproducible K-means++ seeds drawn from the selected pixel spectra.
     """
 
     n_classes: int
@@ -423,9 +424,9 @@ class ClassificationService:
         converts SPy's class map to the requested class-first one-hot form.
 
         Run this method in a Controller worker. Progress callbacks execute on
-        that worker thread. Cancellation is checked before/after the cube read
-        and between K-means iterations; disk reads and individual SPy
-        iterations cannot be interrupted safely.
+        that worker thread. Cancellation is checked before/after the cube read,
+        during center initialization, and between K-means iterations. Disk
+        reads and individual SPy iterations cannot be interrupted safely.
 
         Raises:
             ClassificationError: Parameters, cube values, or SPy output are invalid.
@@ -475,7 +476,7 @@ class ClassificationService:
             )
 
         self._check_cancelled(is_cancelled)
-        self._emit(progress, 10, "Running SPy K-means")
+        self._emit(progress, 5, "Choosing K-means starting spectra")
         iteration_count = 0
 
         def compare_iterations(_previous: np.ndarray, _current: np.ndarray) -> bool:
@@ -494,11 +495,17 @@ class ClassificationService:
             return False
 
         try:
+            start_clusters = self._initial_kmeans_centers(
+                cluster_input, request.n_classes, is_cancelled=is_cancelled
+            )
+            self._check_cancelled(is_cancelled)
+            self._emit(progress, 10, "Running SPy K-means")
             class_map, centers = spy_kmeans(
                 cluster_input,
                 nclusters=request.n_classes,
                 max_iterations=request.max_iterations,
                 compare=compare_iterations,
+                start_clusters=start_clusters,
             )
         except (CancelledError, ClassificationError):
             raise
@@ -750,6 +757,44 @@ class ClassificationService:
             training_mask_path=Path(training_mask_path).expanduser().resolve(),
             training_cube_path=training_data.source_path,
         )
+
+    def _initial_kmeans_centers(
+        self,
+        cube: np.ndarray,
+        n_classes: int,
+        *,
+        is_cancelled: CancellationCheck | None,
+    ) -> np.ndarray:
+        """Choose reproducible K-means++ seeds from actual selected spectra.
+
+        SPy's default bounding-box diagonal can put the first and last centers
+        outside the spectral distribution, where they never attract a pixel.
+        Distance-weighted sampling instead starts each center on a real pixel.
+        Batches bound temporary memory and keep initialization cancellable.
+        """
+
+        samples = cube.reshape(-1, cube.shape[-1])
+        rng = np.random.default_rng(0)
+        centers = np.empty((n_classes, samples.shape[1]), dtype=np.float64)
+        centers[0] = samples[rng.integers(samples.shape[0])]
+        closest = np.full(samples.shape[0], np.inf, dtype=np.float64)
+        for class_id in range(1, n_classes):
+            for start in range(0, samples.shape[0], 4096):
+                self._check_cancelled(is_cancelled)
+                stop = min(start + 4096, samples.shape[0])
+                differences = np.subtract(
+                    samples[start:stop], centers[class_id - 1], dtype=np.float64
+                )
+                distances = np.einsum("ij,ij->i", differences, differences)
+                np.minimum(closest[start:stop], distances, out=closest[start:stop])
+            total = closest.sum()
+            if total == 0:
+                # Fewer distinct spectra than classes: retain the requested
+                # shape and allow unavoidable empty clusters in SPy's output.
+                centers[class_id:] = centers[0]
+                break
+            centers[class_id] = samples[rng.choice(samples.shape[0], p=closest / total)]
+        return centers
 
     @staticmethod
     def _band_statistics(pixels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

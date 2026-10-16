@@ -13,6 +13,7 @@ from core.classification_model import (
     SupervisedClassifierType,
     UnsupervisedClassificationRequest,
 )
+from core.roi import polygon_mask
 
 
 def _cube(tmp_path, name: str, values: np.ndarray):
@@ -141,3 +142,42 @@ def test_training_polygon_must_retain_both_classes(tmp_path):
                 SupervisedClassifierType.GAUSSIAN, band_indices=(0, 1, 2)
             ),
         )
+
+
+@pytest.mark.parametrize("outside_value", [1e6, -1e6, np.nan])
+def test_actual_polygon_crop_matches_fitting_only_selected_pixels(
+    tmp_path, outside_value
+):
+    shape = (8, 10)
+    vertices = [(2.0, 1.0), (9.0, 1.0), (7.0, 7.0), (2.0, 6.0)]
+    selected = polygon_mask(vertices, shape)
+    rows, columns = np.indices(shape)
+    levels = ((rows + columns) % 5).astype(np.float32) / 4
+    values = np.stack((levels, 1 - levels, np.full(shape, 0.5)), axis=-1)
+    reference = _cube(tmp_path, "selected-only", values[selected][:, None, :])
+    values[~selected] = outside_value
+    target = _cube(tmp_path, "polygon", values)
+    target.rgb_array = np.zeros((*shape, 3), dtype=np.uint8)
+    target.mask_array = np.ones(shape, dtype=np.uint8)
+    try:
+        assert target.crop_polygon(vertices) == (7, 6)
+        roi = target.roi_mask
+        assert roi is not None
+        assert roi.any() and not roi.all()
+        service = ClassificationService()
+        request = UnsupervisedClassificationRequest(n_classes=5)
+
+        expected = service.classify_unsupervised(reference, request)
+        actual = service.classify_unsupervised(target, request)
+
+        np.testing.assert_array_equal(actual.class_map[roi], expected.class_map.ravel())
+        np.testing.assert_array_equal(actual.cluster_centers, expected.cluster_centers)
+        np.testing.assert_array_equal(actual.class_pixel_counts, expected.class_pixel_counts)
+        assert actual.class_pixel_counts.sum() == int(selected.sum())
+        assert np.all(actual.class_pixel_counts > 0)
+        assert np.all(actual.class_map[~roi] == -1)
+        assert not actual.one_hot_masks[:, ~roi].any()
+        np.testing.assert_array_equal(actual.one_hot_masks[:, roi].sum(axis=0), 1)
+    finally:
+        target.close()
+        reference.close()
