@@ -63,7 +63,8 @@ class AnnotationLayer:
     describe the unrotated box.
 
     ``measure_index`` asks for the mean of each visualization over the pixels
-    the shape encloses; only rectangles and ellipses support it.
+    the shape encloses; only rectangles and ellipses support it. The Model
+    enables measurement by default when creating those shapes.
     """
 
     layer_id: int
@@ -319,7 +320,8 @@ class AnnotationLayerModel:
         style: AnnotationStyle,
     ) -> AnnotationLayer:
         layer = AnnotationLayer(
-            self._next_id, name, kind, x, y, width, height, text, style
+            self._next_id, name, kind, x, y, width, height, text, style,
+            measure_index=kind in MEASURABLE_KINDS,
         )
         self._record()
         self._next_id += 1

@@ -105,14 +105,16 @@ def test_measure_region_ignores_nan_and_omits_all_nan_region():
     assert measure_region(_layer(AnnotationKind.RECTANGLE, 3, 3, 3, 3), results).means == {}
 
 
-def test_measure_flag_is_undoable_and_defaults_off():
+@pytest.mark.parametrize("kind", [AnnotationKind.RECTANGLE, AnnotationKind.ELLIPSE])
+def test_measure_flag_defaults_on_and_disabling_is_undoable(kind):
     model = AnnotationLayerModel()
-    layer = model.add_shape(AnnotationKind.ELLIPSE, 0, 0, 5, 5, STYLE)
-    assert not layer.measure_index
-    model.set_measure_index(layer.layer_id, True)
-    assert model.get(layer.layer_id).measure_index
-    model.undo()
+    layer = model.add_shape(kind, 0, 0, 5, 5, STYLE)
+    assert layer.measure_index
+    model.set_measure_index(layer.layer_id, False)
     assert not model.get(layer.layer_id).measure_index
+    assert model.undo() and model.get(layer.layer_id).measure_index
+    assert model.redo() and not model.get(layer.layer_id).measure_index
+    assert model.undo() and model.undo() and not model.layers
 
 
 def test_csv_export_appends_region_rows_after_classes(tmp_path):

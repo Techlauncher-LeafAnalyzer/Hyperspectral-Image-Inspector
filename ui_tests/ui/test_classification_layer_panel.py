@@ -855,9 +855,7 @@ def test_measured_shape_appears_as_a_region_row_and_recalculates_on_move(qtbot):
 
     controller, panel = _region_setup(qtbot)
     layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
-    assert not panel._region_rows
-
-    controller._on_annotation_measure_changed(layer_id, True)
+    assert layer_id in panel._region_rows
     row = panel._region_rows[layer_id]
     assert "NDVI: 0.000" in row._means_label.text()
 
@@ -894,11 +892,13 @@ def test_measure_checkbox_tracks_selected_shape_kind(qtbot):
     controller, panel = _region_setup(qtbot)
     page = panel.annotation_page
     rect_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
-    assert page._measure_check.isEnabled() and not page._measure_check.isChecked()
+    assert page._measure_check.isEnabled() and page._measure_check.isChecked()
 
     with qtbot.waitSignal(page.measureChanged, timeout=1000) as blocker:
-        page._measure_check.setChecked(True)
-    assert blocker.args == [rect_id, True]
+        page._measure_check.setChecked(False)
+    assert blocker.args == [rect_id, False]
+    assert not controller._annotation_slot.layers.get(rect_id).measure_index
+    assert not panel._region_rows
 
     from PyQt6.QtCore import QPointF
 
@@ -925,7 +925,6 @@ def test_region_row_is_renamed_by_double_click_editor(qtbot):
     controller, panel = _region_setup(qtbot)
     panel.show()  # the inline editor only commits while it is visible
     layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
-    controller._on_annotation_measure_changed(layer_id, True)
     row = panel._region_rows[layer_id]
 
     row.begin_rename()
@@ -977,10 +976,7 @@ def test_export_button_enabled_by_measured_annotation_without_classification(qtb
     assert not panel._export_button.isEnabled()
 
     layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
-    assert not panel._export_button.isEnabled()  # drawn but not measured
-
-    controller._on_annotation_measure_changed(layer_id, True)
-    assert panel._export_button.isEnabled()
+    assert panel._export_button.isEnabled()  # new shapes are measured immediately
 
     controller._on_annotation_measure_changed(layer_id, False)
     assert not panel._export_button.isEnabled()
@@ -1010,3 +1006,27 @@ def test_export_writes_measured_annotations_with_and_without_classes(qtbot, tmp_
     assert rows[0]["class_id"] == ""
     assert rows[0]["pixel_count"] == "16"
     assert float(rows[0]["NDVI_mean"]) == 1.0
+
+
+
+def test_measure_defaults_on_at_startup_and_preserves_individual_opt_out(qtbot):
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    page = panel.annotation_page
+    assert page._measure_check.isChecked()
+    assert not page._measure_check.isEnabled()
+    page.set_layers(())
+    assert page._measure_check.isChecked()
+
+    rect = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
+    assert page._measure_check.isChecked() and rect in panel._region_rows
+    page._measure_check.setChecked(False)
+    assert rect not in panel._region_rows
+
+    ellipse = _draw(controller, AnnotationKind.ELLIPSE, 2, 2, 6, 6)
+    assert page._measure_check.isChecked() and ellipse in panel._region_rows
+    controller._on_annotation_picked(rect)
+    assert not page._measure_check.isChecked()
+    controller._on_annotation_deselected()
+    assert page._measure_check.isChecked() and not page._measure_check.isEnabled()

@@ -140,6 +140,9 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             "Click the active tool again to pan or select.", self
         )
         tool_hint.setObjectName("annotationHint")
+        tool_hint.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum
+        )
         tool_hint.setWordWrap(True)
 
         self._fill_button = _ColorButton(defaults.fill, "Fill colour (also text colour)")
@@ -217,6 +220,9 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         controls = QtWidgets.QFrame(self)
         controls.setObjectName("annotationAppearance")
         controls_layout = QtWidgets.QVBoxLayout(controls)
+        # Preserve every row's minimum height when the hint above wraps. The
+        # scroll area can grow its content instead of overlapping controls.
+        controls_layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         controls_layout.setContentsMargins(10, 10, 10, 10)
         controls_layout.setSpacing(10)
         controls_layout.addWidget(self._section_label("Appearance"))
@@ -230,6 +236,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             "Add the pixels inside the selected rectangle or circle to the Classes "
             "tab, with their index means kept up to date as it moves"
         )
+        self._measure_check.setChecked(True)
         self._measure_check.setEnabled(False)
 
         self._list = QtWidgets.QListWidget(self)
@@ -437,7 +444,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         measurable = layer is not None and layer.kind in MEASURABLE_KINDS
         self._measure_check.blockSignals(True)
         self._measure_check.setEnabled(measurable)
-        self._measure_check.setChecked(bool(measurable and layer.measure_index))
+        self._measure_check.setChecked(layer is None or bool(measurable and layer.measure_index))
         self._measure_check.blockSignals(False)
 
     def _on_measure_toggled(self, checked: bool) -> None:
