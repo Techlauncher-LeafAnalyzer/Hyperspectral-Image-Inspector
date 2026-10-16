@@ -36,6 +36,7 @@ _ANNOTATION_BASE_Z = 4
 _ANNOTATION_Z_STEP = 0.0005
 # Edge length, in screen pixels, of a resize handle.
 _HANDLE_PX = 8
+_SELECTION_PADDING = 3
 # Extra screen pixels, beyond the stroke, that still count as clicking an annotation.
 _HIT_SLACK_PX = 4
 # A press/release closer than this (screen px) is a click, not a drag.
@@ -230,7 +231,8 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._annotation_interaction: Optional[
             tuple[int, str, QPointF, AnnotationLayer, QtCore.QRectF]
         ] = None
-        self._annotation_hover_cursor = False
+        self._pointer_view_pos: Optional[QtCore.QPoint] = None
+        self._pointer_modifiers = Qt.KeyboardModifier.NoModifier
         self._press_view_pos: Optional[QtCore.QPoint] = None
 
         # --- image data ---
@@ -435,7 +437,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         if selected is not None:
             top_z = _ANNOTATION_BASE_Z + (len(layers) + 1) * _ANNOTATION_Z_STEP
             outline = self._scene.addPolygon(
-                QtGui.QPolygonF(self._layer_corners(selected, grow=3)),
+                QtGui.QPolygonF(self._layer_corners(selected, grow=_SELECTION_PADDING)),
                 QPen(QColor(0, 120, 215), 0, Qt.PenStyle.DashLine),
             )
             outline.setZValue(top_z)
@@ -457,6 +459,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._annotation_items.append(handle)
             if selected.kind in ROTATABLE_KINDS:
                 self._add_rotate_handle(selected, top_z)
+        self._apply_idle_cursor()
 
     def _add_rotate_handle(self, layer: AnnotationLayer, z: float) -> None:
         """Draw a knob on a stalk above the shape's top edge.
@@ -465,7 +468,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         keeps its length at any zoom; hit-testing derives the same position.
         """
 
-        rect = self._unrotated_rect(layer)
+        rect = self._selection_rect(layer)
         center = rect.center()
         anchor = _rotate_point(QPointF(center.x(), rect.top()), center, layer.rotation)
         stalk = _rotate_point(
@@ -514,8 +517,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self.fit_in_view()
             else:
                 self._zoom = 0
+            self._apply_idle_cursor()
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._remember_pointer(event)
         self._press_view_pos = event.position().toPoint()
         if (
             event.button() == Qt.MouseButton.LeftButton
@@ -533,6 +538,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._annotation_interaction = (
                     layer.layer_id, mode, point, layer, self._annotation_bounds(layer)
                 )
+                self._apply_idle_cursor()
                 return
         if self._annotation_tool is not None and self.has_photo():
             if event.button() == Qt.MouseButton.LeftButton:
@@ -563,12 +569,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._remember_pointer(event)
         if self._annotation_interaction is not None:
             self._drag_annotation(
                 self._clamped_scene_point(event),
                 self.mapToScene(event.position().toPoint()),
                 bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
             )
+            self._apply_idle_cursor()
             return
         if self._annotation_start is not None:
             self._update_annotation_preview(self._clamped_scene_point(event))
@@ -621,20 +629,30 @@ class HSIViewer(QtWidgets.QGraphicsView):
             else:
                 self._crop_rect_item.setRect(selection)
             return
-        self._update_annotation_hover_cursor(event)
         super().mouseMoveEvent(event)
+        if event.buttons() == Qt.MouseButton.NoButton:
+            self._apply_idle_cursor()
         self._update_pixel_overlay(event.position().toPoint())
+
+    def enterEvent(self, event: QtGui.QEnterEvent) -> None:
+        super().enterEvent(event)
+        self._pointer_view_pos = self.viewport().mapFromGlobal(QtGui.QCursor.pos())
+        self._pointer_modifiers = QtWidgets.QApplication.keyboardModifiers()
+        self._apply_idle_cursor()
 
     def leaveEvent(self, event: QtCore.QEvent) -> None:
         super().leaveEvent(event)
         self._pixel_overlay.hide()
+        self._pointer_view_pos = None
+        self._apply_idle_cursor()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._remember_pointer(event)
         if self._annotation_interaction is not None:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._annotation_interaction = None
                 self.annotationInteractionFinished.emit()
-                self._update_annotation_hover_cursor(event)
+                self._apply_idle_cursor()
             return
         if self._annotation_tool is not None:
             start, kind = self._annotation_start, self._annotation_tool
@@ -647,8 +665,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
                     <= _CLICK_SLOP_PX
                 )
                 if is_click:
-                    if self._annotation_at(start) is None:
+                    picked = self._annotation_at(start)
+                    if picked is None:
                         self.annotationDeselected.emit()
+                    else:
+                        self.annotationPicked.emit(picked)
+                    self._apply_idle_cursor()
                     return
                 if kind is AnnotationKind.ARROW:
                     if QtCore.QLineF(start, end).length() >= 1:
@@ -657,6 +679,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
                     rect = QtCore.QRectF(start, end).normalized()
                     if rect.width() >= 1 and rect.height() >= 1:
                         self.annotationShapeDrawn.emit(kind, rect)
+                self._apply_idle_cursor()
             return
         if self._cropping:
             if event.button() != Qt.MouseButton.LeftButton:
@@ -736,11 +759,13 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._end_crop_mode()
             return
         if event.key() == Qt.Key.Key_Control:
+            self._pointer_modifiers |= Qt.KeyboardModifier.ControlModifier
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
-            self.setCursor(Qt.CursorShape.CrossCursor)
+            self._apply_idle_cursor()
 
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Control:
+            self._pointer_modifiers &= ~Qt.KeyboardModifier.ControlModifier
             self._apply_drag_mode()
             self._apply_idle_cursor()
         if event.key() == Qt.Key.Key_Shift:
@@ -837,13 +862,19 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
         return QtGui.QPolygonF(self._layer_corners(layer)).boundingRect()
 
+    def _selection_rect(self, layer: AnnotationLayer) -> QtCore.QRectF:
+        """The same padded box used by the outline and its handles."""
+
+        pad = _SELECTION_PADDING
+        return self._unrotated_rect(layer).adjusted(-pad, -pad, pad, pad)
+
     def _annotation_handles(self, layer: AnnotationLayer) -> dict[str, QPointF]:
         if layer.kind is AnnotationKind.ARROW:
             return {
                 "tail": QPointF(layer.x, layer.y),
                 "head": QPointF(layer.x + layer.width, layer.y + layer.height),
             }
-        rect = self._unrotated_rect(layer)
+        rect = self._selection_rect(layer)
         center = rect.center()
         handles: dict[str, QPointF] = {}
         if layer.kind is not AnnotationKind.TEXT:
@@ -956,17 +987,32 @@ class HSIViewer(QtWidgets.QGraphicsView):
             # cursor, then re-centre so the opposite edge stays put on screen.
             base = self._unrotated_rect(layer)
             center = base.center()
-            local = _rotate_point(point, center, -layer.rotation)
+            # Handles sit on the padded selection border. Use displacement
+            # from the actual press so grabbing one never jumps the shape.
+            delta = (
+                _rotate_point(raw_point, center, -layer.rotation)
+                - _rotate_point(press, center, -layer.rotation)
+            )
             left, top, right, bottom = base.left(), base.top(), base.right(), base.bottom()
             edges = _HANDLE_EDGES[mode]
+            grip = QPointF(
+                left if "l" in edges else right if "r" in edges else center.x(),
+                top if "t" in edges else bottom if "b" in edges else center.y(),
+            )
+            target = _rotate_point(grip + delta, center, layer.rotation)
+            target = QPointF(
+                min(max(target.x(), image.left()), image.right()),
+                min(max(target.y(), image.top()), image.bottom()),
+            )
+            delta = _rotate_point(target, center, -layer.rotation) - grip
             if "l" in edges:
-                left = local.x()
+                left += delta.x()
             if "r" in edges:
-                right = local.x()
+                right += delta.x()
             if "t" in edges:
-                top = local.y()
+                top += delta.y()
             if "b" in edges:
-                bottom = local.y()
+                bottom += delta.y()
             rect = QtCore.QRectF(QPointF(left, top), QPointF(right, bottom)).normalized()
             if rect.width() < 1 or rect.height() < 1:
                 return
@@ -989,18 +1035,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         rotation = self._selected_layer.rotation if self._selected_layer else 0.0
         return _resize_cursor(mode, rotation)
 
-    def _update_annotation_hover_cursor(self, event: QtGui.QMouseEvent) -> None:
-        if event.buttons() != Qt.MouseButton.NoButton or self._cropping or self._polygon_cropping:
-            return
-        mode = None
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier == 0:
-            mode = self._selected_annotation_hit(self.mapToScene(event.position().toPoint()))
-        if mode is not None:
-            self.viewport().setCursor(self._cursor_for_hit(mode))
-            self._annotation_hover_cursor = True
-        elif self._annotation_hover_cursor:
-            self._annotation_hover_cursor = False
-            self._apply_idle_cursor()
+    def _remember_pointer(self, event: QtGui.QMouseEvent) -> None:
+        self._pointer_view_pos = event.position().toPoint()
+        self._pointer_modifiers = event.modifiers()
 
     def _clamped_scene_point(self, event: QtGui.QMouseEvent) -> QPointF:
         point = self.mapToScene(event.position().toPoint())
@@ -1057,14 +1094,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._cropping = True
         self._crop_start = None
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
-        self.setCursor(Qt.CursorShape.CrossCursor)
+        self._apply_idle_cursor()
 
     def _begin_polygon_crop_mode(self) -> None:
         """Start collecting polygon vertices for an irregular crop."""
         self._polygon_cropping = True
         self._polygon_points = []
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
-        self.setCursor(Qt.CursorShape.CrossCursor)
+        self._apply_idle_cursor()
         self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _add_polygon_vertex(self, point: QPointF) -> None:
@@ -1157,27 +1194,40 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._apply_idle_cursor()
 
     def _apply_idle_cursor(self) -> None:
-        """Set the viewport cursor for the current (non-dragging) state.
+        """Refresh the viewport cursor after pointer, tool or selection changes.
 
-        Left untouched while cropping or while Ctrl-crosshair mode is active,
-        since those manage their own cursor. Otherwise shows a pointer while
-        pixel-value inspection is on, or the usual pan/grab cursor.
-
-        Targets the viewport specifically, not the view itself: ScrollHandDrag
-        sets an explicit cursor on the viewport widget, which takes priority
-        over whatever cursor the enclosing view has while the mouse is over
-        it, so overriding self.setCursor() here would have no visible effect.
+        QGraphicsView's pan handling sets an explicit viewport cursor. Apply
+        ours after that handling, and keep the active drag cursor even when
+        the controller rebuilds the selected annotation during a drag.
         """
-        if self._cropping or self._polygon_cropping:
-            return
-        if self._annotation_tool is not None and self.has_photo():
-            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
-        elif self._pixel_overlay_enabled:
-            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
-        elif self.has_photo():
-            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+        if self._annotation_interaction is not None:
+            mode = self._annotation_interaction[1]
+            cursor = (
+                Qt.CursorShape.ClosedHandCursor if mode == "move"
+                else self._cursor_for_hit(mode)
+            )
+        elif (self._cropping or self._polygon_cropping
+              or self._pointer_modifiers & Qt.KeyboardModifier.ControlModifier):
+            cursor = Qt.CursorShape.CrossCursor
         else:
-            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            point = None
+            if (self.has_photo() and self._pointer_view_pos is not None
+                    and self.viewport().rect().contains(self._pointer_view_pos)):
+                point = self.mapToScene(self._pointer_view_pos)
+            mode = self._selected_annotation_hit(point) if point is not None else None
+            if mode is not None:
+                cursor = self._cursor_for_hit(mode)
+            elif self._annotation_tool is not None and self.has_photo():
+                cursor = Qt.CursorShape.CrossCursor
+            elif point is not None and self._annotation_at(point) is not None:
+                cursor = Qt.CursorShape.PointingHandCursor
+            elif self._pixel_overlay_enabled:
+                cursor = Qt.CursorShape.PointingHandCursor
+            elif self.has_photo():
+                cursor = Qt.CursorShape.OpenHandCursor
+            else:
+                cursor = Qt.CursorShape.ArrowCursor
+        self.viewport().setCursor(cursor)
 
     def _update_pixel_overlay(self, view_pos: QtCore.QPoint) -> None:
         if not self._pixel_overlay_enabled or not self.has_photo():

@@ -241,7 +241,7 @@ def test_selected_annotation_moves_with_no_tool_instead_of_panning(qtbot):
 
 def test_resize_handles_change_size_and_corner_anchors_opposite(qtbot):
     viewer, rect, log = _selected_rect_viewer(qtbot, AnnotationKind.RECTANGLE)
-    _press_move_release(qtbot, viewer, (60, 50), (80, 70))  # bottom-right handle
+    _drag_handle(qtbot, viewer, "br", 20, 20)
     _, x, y, w, h = log["geom"][-1]
     assert (round(x), round(y)) == (20, 20)
     assert abs(w - 60) <= 2 and abs(h - 50) <= 2
@@ -250,7 +250,7 @@ def test_resize_handles_change_size_and_corner_anchors_opposite(qtbot):
 
 def test_dragging_past_the_opposite_edge_flips_instead_of_collapsing(qtbot):
     viewer, rect, log = _selected_rect_viewer(qtbot)
-    _press_move_release(qtbot, viewer, (60, 50), (10, 10))
+    _drag_handle(qtbot, viewer, "br", -50, -40)
     _, x, y, w, h = log["geom"][-1]
     assert w > 0 and h > 0 and x < 20 and y < 20
 
@@ -398,7 +398,8 @@ def _rotated_viewer(qtbot, rotation, kind=AnnotationKind.RECTANGLE):
     viewer = _viewer(qtbot)
     model = AnnotationLayerModel()
     layer = model.add_shape(kind, 30, 40, 40, 10, FILLED)  # wide, short box
-    model.set_rotation(layer.layer_id, rotation)
+    if rotation:
+        model.set_rotation(layer.layer_id, rotation)
     viewer.set_annotations(model.layers, layer.layer_id)
     return viewer, model, layer, _record(viewer)
 
@@ -457,11 +458,11 @@ def test_shift_snaps_rotation_to_fifteen_degrees(qtbot):
 def test_resizing_a_rotated_rectangle_follows_its_own_edges(qtbot):
     viewer, model, layer, log = _rotated_viewer(qtbot, 90)
     # Centre (50, 45). Rotated 90 degrees clockwise, the box's right edge ("r",
-    # originally at x=70) now sits at the bottom, at (50, 65).
+    # originally at x=70) now sits below the selection border, at (50, 68).
     handles = viewer._annotation_handles(viewer._selected_layer)
     r = handles["r"]
-    assert abs(r.x() - 50) < 0.5 and abs(r.y() - 65) < 0.5
-    _press_move_release(qtbot, viewer, (r.x(), r.y()), (50, 75))  # drag it 10px further out
+    assert abs(r.x() - 50) < 0.5 and abs(r.y() - 68) < 0.5
+    _drag_handle(qtbot, viewer, "r", 0, 10)  # drag it 10px further out
     _, x, y, w, h = log["geom"][-1]
     assert abs(w - 50) <= 2 and abs(h - 10) <= 0.5  # grew along its own width only
     # the opposite (left) edge stayed put on screen: it is at the top, (50, 25)
@@ -480,3 +481,165 @@ def test_rotated_text_is_hit_and_has_a_rotate_handle(qtbot):
     c = rect.center()
     assert viewer._annotation_at(QPointF(c.x(), c.y() - rect.width() / 2 + 2)) == text.layer_id
     assert viewer._annotation_at(QPointF(c.x() - rect.width() / 2 + 2, c.y())) is None
+
+
+
+def _drag_handle(qtbot, viewer, name, dx, dy):
+    handle = viewer._annotation_handles(viewer._selected_layer)[name]
+    _press_move_release(qtbot, viewer, (handle.x(), handle.y()),
+                        (handle.x() + dx, handle.y() + dy))
+
+
+def _hover(qtbot, viewer, x, y):
+    qtbot.mouseMove(viewer.viewport(), viewer.mapFromScene(x, y))
+
+
+@pytest.mark.parametrize("kind,rotation", [
+    (AnnotationKind.RECTANGLE, 0), (AnnotationKind.RECTANGLE, 35),
+    (AnnotationKind.ELLIPSE, 0),
+])
+@pytest.mark.parametrize("scale", [1, 4])
+def test_resize_handles_are_on_the_drawn_selection_border(qtbot, kind, rotation, scale):
+    viewer, model, layer, _ = _rotated_viewer(qtbot, rotation, kind)
+    viewer.resetTransform()
+    viewer.scale(scale, scale)
+    handles = viewer._annotation_handles(viewer._selected_layer)
+    outline = next(item for item in viewer._annotation_items
+                   if isinstance(item, QtWidgets.QGraphicsPolygonItem)).polygon()
+    corners = [outline[i] for i in range(4)]
+    for name, expected in zip(("tl", "tr", "br", "bl"), corners):
+        assert QtCore.QLineF(handles[name], expected).length() < 1e-6
+    for name, a, b in (("t", 0, 1), ("r", 1, 2), ("b", 2, 3), ("l", 3, 0)):
+        assert QtCore.QLineF(handles[name], (corners[a] + corners[b]) / 2).length() < 1e-6
+    drawn_handles = [item for item in viewer._annotation_items
+                     if isinstance(item, QtWidgets.QGraphicsRectItem)
+                     and item.flags() & item.GraphicsItemFlag.ItemIgnoresTransformations
+                     and item.rect().width() == 8]
+    assert len(drawn_handles) == 8
+    for item in drawn_handles:
+        assert item.pos() in handles.values()
+        assert viewer._selected_annotation_hit(item.pos()) in handles
+        assert item.rect().size() == QtCore.QSizeF(8, 8)
+
+
+def test_pressing_a_border_handle_does_not_change_geometry_until_dragged(qtbot):
+    viewer, rect, log = _selected_rect_viewer(qtbot)
+    handle = viewer._annotation_handles(rect)["br"]
+    # An off-centre press still preserves the grab offset.
+    press = handle + QPointF(1 / viewer._view_scale(), 0)
+    bounds = viewer._annotation_bounds(rect)
+    viewer._annotation_interaction = (rect.layer_id, "br", press, rect, bounds)
+    viewer._drag_annotation(press, press)
+    assert log["geom"][-1][1:] == (rect.x, rect.y, rect.width, rect.height)
+    viewer._drag_annotation(press + QPointF(10, 5), press + QPointF(10, 5))
+    assert log["geom"][-1][1:] == (rect.x, rect.y, rect.width + 10, rect.height + 5)
+
+
+def test_border_handle_resizing_stays_within_the_image(qtbot):
+    viewer, rect, log = _selected_rect_viewer(qtbot)
+    _drag_handle(qtbot, viewer, "br", 150, 150)
+    _, x, y, w, h = log["geom"][-1]
+    assert x + w == 100 and y + h == 100
+
+
+def test_cursor_updates_immediately_when_selecting_deselecting_and_reselecting(qtbot):
+    viewer, rect, log = _selected_rect_viewer(qtbot)
+    viewer.set_annotations((rect,), None)
+    viewer.annotationPicked.connect(lambda selected: viewer.set_annotations((rect,), selected))
+    viewer.annotationDeselected.connect(lambda: viewer.set_annotations((rect,), None))
+    cursor = QtCore.Qt.CursorShape
+    _hover(qtbot, viewer, 40, 35)
+    assert viewer.viewport().cursor().shape() == cursor.PointingHandCursor
+    qtbot.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                     pos=viewer.mapFromScene(40, 35))
+    assert viewer.viewport().cursor().shape() == cursor.SizeAllCursor
+    # Panel deselection/reselection also refreshes a stationary pointer.
+    viewer.set_annotations((rect,), None)
+    assert viewer.viewport().cursor().shape() == cursor.PointingHandCursor
+    viewer.set_annotations((rect,), rect.layer_id)
+    assert viewer.viewport().cursor().shape() == cursor.SizeAllCursor
+    qtbot.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                     pos=viewer.mapFromScene(90, 90))
+    assert viewer.viewport().cursor().shape() == cursor.OpenHandCursor
+
+
+@pytest.mark.parametrize("tool", [None, AnnotationKind.ELLIPSE])
+def test_move_cursor_is_locked_during_drag_and_restored_on_release(qtbot, tool):
+    viewer, rect, log = _selected_rect_viewer(qtbot, tool)
+    model = AnnotationLayerModel()
+    layer = model.add_shape(AnnotationKind.RECTANGLE, 20, 20, 40, 30, FILLED)
+    def update_geometry(layer_id, *geometry):
+        model.set_geometry(layer_id, *geometry)
+        viewer.set_annotations(model.layers, layer_id)
+
+    viewer.annotationGeometryChanged.connect(update_geometry)
+    cursor = QtCore.Qt.CursorShape
+    _hover(qtbot, viewer, 40, 35)
+    assert viewer.viewport().cursor().shape() == cursor.SizeAllCursor
+    qtbot.mousePress(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                     pos=viewer.mapFromScene(40, 35))
+    assert viewer.viewport().cursor().shape() == cursor.ClosedHandCursor
+    _hover(qtbot, viewer, 45, 40)
+    assert viewer.viewport().cursor().shape() == cursor.ClosedHandCursor
+    qtbot.mouseRelease(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                       pos=viewer.mapFromScene(45, 40))
+    assert viewer.viewport().cursor().shape() == cursor.SizeAllCursor
+
+
+@pytest.mark.parametrize("rotation,handle,expected", [
+    (0, "r", QtCore.Qt.CursorShape.SizeHorCursor),
+    (0, "t", QtCore.Qt.CursorShape.SizeVerCursor),
+    (0, "br", QtCore.Qt.CursorShape.SizeFDiagCursor),
+    (0, "tr", QtCore.Qt.CursorShape.SizeBDiagCursor),
+    (90, "r", QtCore.Qt.CursorShape.SizeVerCursor),
+    (45, "r", QtCore.Qt.CursorShape.SizeFDiagCursor),
+    (45, "br", QtCore.Qt.CursorShape.SizeVerCursor),
+])
+def test_resize_cursor_matches_rotated_handle_and_persists_during_drag(
+    qtbot, rotation, handle, expected
+):
+    viewer, model, layer, log = _rotated_viewer(qtbot, rotation)
+    p = viewer._annotation_handles(viewer._selected_layer)[handle]
+    _hover(qtbot, viewer, p.x(), p.y())
+    assert viewer.viewport().cursor().shape() == expected
+    qtbot.mousePress(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                     pos=viewer.mapFromScene(p))
+    assert viewer.viewport().cursor().shape() == expected
+    _hover(qtbot, viewer, 90, 90)
+    assert viewer.viewport().cursor().shape() == expected
+    qtbot.mouseRelease(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                       pos=viewer.mapFromScene(90, 90))
+    assert viewer.viewport().cursor().shape() == QtCore.Qt.CursorShape.OpenHandCursor
+
+
+def test_tool_and_ctrl_cursor_restore_the_hover_action(qtbot):
+    viewer, rect, log = _selected_rect_viewer(qtbot)
+    cursor = QtCore.Qt.CursorShape
+    _hover(qtbot, viewer, 40, 35)
+    qtbot.keyPress(viewer, QtCore.Qt.Key.Key_Control)
+    assert viewer.viewport().cursor().shape() == cursor.CrossCursor
+    qtbot.keyRelease(viewer, QtCore.Qt.Key.Key_Control)
+    assert viewer.viewport().cursor().shape() == cursor.SizeAllCursor
+    viewer.set_annotation_tool(AnnotationKind.ELLIPSE)
+    assert viewer.viewport().cursor().shape() == cursor.SizeAllCursor
+    _hover(qtbot, viewer, 90, 90)
+    assert viewer.viewport().cursor().shape() == cursor.CrossCursor
+    viewer.set_annotation_tool(None)
+    assert viewer.viewport().cursor().shape() == cursor.OpenHandCursor
+    viewer._begin_crop_mode()
+    assert viewer.viewport().cursor().shape() == cursor.CrossCursor
+    viewer._end_crop_mode()
+    assert viewer.viewport().cursor().shape() == cursor.OpenHandCursor
+
+
+def test_clicking_another_annotation_reselects_it_with_a_drawing_tool(qtbot):
+    viewer, rect, log = _selected_rect_viewer(qtbot, AnnotationKind.ELLIPSE)
+    model = AnnotationLayerModel()
+    first = model.add_shape(AnnotationKind.RECTANGLE, 10, 10, 20, 20, FILLED)
+    second = model.add_shape(AnnotationKind.RECTANGLE, 60, 60, 20, 20, FILLED)
+    viewer.set_annotations(model.layers, first.layer_id)
+    viewer.annotationPicked.connect(lambda selected: viewer.set_annotations(model.layers, selected))
+    qtbot.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                     pos=viewer.mapFromScene(70, 70))
+    assert log["picked"] == [second.layer_id] and not log["drawn"]
+    assert viewer.viewport().cursor().shape() == QtCore.Qt.CursorShape.SizeAllCursor
