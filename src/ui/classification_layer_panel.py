@@ -184,7 +184,7 @@ class _LayerRowWidget(QtWidgets.QWidget):
         # Per-class means of each cached visualization, drawn with the same
         # swatch-and-value markup as the viewer's hover pixel-value overlay.
         self._means_label: Optional[QtWidgets.QLabel] = None
-        if means:
+        if means is not None:
             means_caption = QtWidgets.QLabel("Index means", self)
             means_caption.setObjectName("layerIndexMeansCaption")
             self._means_label = QtWidgets.QLabel(self)
