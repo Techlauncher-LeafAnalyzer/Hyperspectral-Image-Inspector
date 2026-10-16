@@ -140,6 +140,9 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             "Click the active tool again to pan or select.", self
         )
         tool_hint.setObjectName("annotationHint")
+        tool_hint.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum
+        )
         tool_hint.setWordWrap(True)
 
         self._fill_button = _ColorButton(defaults.fill, "Fill colour (also text colour)")
@@ -217,6 +220,9 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         controls = QtWidgets.QFrame(self)
         controls.setObjectName("annotationAppearance")
         controls_layout = QtWidgets.QVBoxLayout(controls)
+        # Preserve every row's minimum height when the hint above wraps. The
+        # scroll area can grow its content instead of overlapping controls.
+        controls_layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         controls_layout.setContentsMargins(10, 10, 10, 10)
         controls_layout.setSpacing(10)
         controls_layout.addWidget(self._section_label("Appearance"))

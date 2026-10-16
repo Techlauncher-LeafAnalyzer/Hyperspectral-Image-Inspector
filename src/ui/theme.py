@@ -1113,8 +1113,56 @@ QSpinBox#annotationSizeInput {
     selection-color: #105f55;
 }
 
+QSpinBox#annotationSizeInput QLineEdit {
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: transparent;
+}
+
 QSpinBox#annotationSizeInput:hover {
     border-color: #8fbcb4;
+}
+
+QSpinBox#annotationSizeInput::up-button,
+QSpinBox#annotationSizeInput::down-button {
+    subcontrol-origin: border;
+    width: 18px;
+    border: 1px solid #c7d8d4;
+    background: #edf4f2;
+}
+
+QSpinBox#annotationSizeInput::up-button {
+    subcontrol-position: top right;
+    border-bottom: 0;
+    border-top-right-radius: 5px;
+}
+
+QSpinBox#annotationSizeInput::down-button {
+    subcontrol-position: bottom right;
+    border-bottom-right-radius: 5px;
+}
+
+QSpinBox#annotationSizeInput::up-button:hover,
+QSpinBox#annotationSizeInput::down-button:hover {
+    background: #dcefeb;
+}
+
+QSpinBox#annotationSizeInput::up-button:pressed,
+QSpinBox#annotationSizeInput::down-button:pressed {
+    background: #cfe7e0;
+}
+
+QSpinBox#annotationSizeInput::up-arrow {
+    image: url(__SPINBOX_UP_ARROW__);
+    width: 9px;
+    height: 5px;
+}
+
+QSpinBox#annotationSizeInput::down-arrow {
+    image: url(__COMBOBOX_ARROW__);
+    width: 9px;
+    height: 5px;
 }
 
 QSpinBox#annotationSizeInput:focus,
@@ -1319,6 +1367,7 @@ def apply_theme(app: QApplication) -> None:
     app.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
     assets_dir = Path(__file__).parent / "assets"
     combo_box_arrow = assets_dir / "chevron_down.svg"
+    spin_box_up_arrow = assets_dir / "chevron_up.svg"
     radio_unchecked = assets_dir / "radio_unchecked.svg"
     radio_checked = assets_dir / "radio_checked.svg"
     checkbox_unchecked = assets_dir / "checkbox_unchecked.svg"
@@ -1328,6 +1377,7 @@ def apply_theme(app: QApplication) -> None:
     menu_chevron = assets_dir / "chevron_right.svg"
     app.setStyleSheet(
         APP_QSS.replace("__COMBOBOX_ARROW__", combo_box_arrow.as_posix())
+        .replace("__SPINBOX_UP_ARROW__", spin_box_up_arrow.as_posix())
         .replace("__RADIO_UNCHECKED__", radio_unchecked.as_posix())
         .replace("__RADIO_CHECKED__", radio_checked.as_posix())
         .replace("__CHECKBOX_UNCHECKED__", checkbox_unchecked.as_posix())

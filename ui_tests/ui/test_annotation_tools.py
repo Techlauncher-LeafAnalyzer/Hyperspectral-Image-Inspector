@@ -320,6 +320,16 @@ def test_tool_buttons_toggle_off_and_fit_the_inspector(qtbot, themed_app, width,
     assert rect.geometry().right() < circle.x()
     assert rect.geometry().bottom() < arrow.y()
 
+    hint = next(label for label in page.findChildren(QtWidgets.QLabel)
+                if label.text().startswith("Click the active tool"))
+    appearance = page.findChild(QtWidgets.QFrame, "annotationAppearance")
+    assert hint.height() >= hint.heightForWidth(hint.width())
+    assert hint.geometry().bottom() < appearance.y()
+    assert appearance.height() >= appearance.minimumSizeHint().height()
+    assert page._fill_button.geometry().bottom() < page._fill_check.y()
+    assert page._fill_check.height() >= page._fill_check.minimumSizeHint().height()
+    assert page._fill_check.geometry().bottom() < page._stroke_width.y()
+
 
 def _log_deselect(viewer, log):
     log["deselected"] = 0
@@ -480,7 +490,9 @@ def test_rotated_text_is_hit_and_has_a_rotate_handle(qtbot):
     assert rect.width() > rect.height()
     c = rect.center()
     assert viewer._annotation_at(QPointF(c.x(), c.y() - rect.width() / 2 + 2)) == text.layer_id
-    assert viewer._annotation_at(QPointF(c.x() - rect.width() / 2 + 2, c.y())) is None
+    # Stay outside the rotated text plus its hit margin for every font.
+    outside_x = c.x() - rect.height() / 2 - 4 / viewer._view_scale() - 2
+    assert viewer._annotation_at(QPointF(outside_x, c.y())) is None
 
 
 
@@ -643,3 +655,45 @@ def test_clicking_another_annotation_reselects_it_with_a_drawing_tool(qtbot):
                      pos=viewer.mapFromScene(70, 70))
     assert log["picked"] == [second.layer_id] and not log["drawn"]
     assert viewer.viewport().cursor().shape() == QtCore.Qt.CursorShape.SizeAllCursor
+
+
+
+def test_annotation_spin_box_arrows_are_visible_and_change_values(qtbot, themed_app):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_expanded_width(236)
+    panel.resize(236, 620)
+    panel.set_mode("annotations")
+    panel.show()
+    qtbot.wait(10)
+    page = panel.annotation_page
+    for spin in (page._stroke_width, page._font_size):
+        option = QtWidgets.QStyleOptionSpinBox()
+        spin.initStyleOption(option)
+        for control, change in (
+            (QtWidgets.QStyle.SubControl.SC_SpinBoxUp, 1),
+            (QtWidgets.QStyle.SubControl.SC_SpinBoxDown, -1),
+        ):
+            rect = spin.style().subControlRect(
+                QtWidgets.QStyle.ComplexControl.CC_SpinBox, option, control, spin
+            )
+            assert not rect.isEmpty() and spin.rect().contains(rect)
+            # Check the rendered glyph, excluding button borders/background.
+            image = spin.grab().toImage()
+            ratio = image.devicePixelRatio()
+            center = rect.center()
+            pixels = [image.pixelColor(round(x * ratio), round(y * ratio))
+                      for x in range(center.x() - 4, center.x() + 5)
+                      for y in range(center.y() - 2, center.y() + 3)]
+            assert sum(c.red() < 140 and c.green() < 160 and c.blue() < 160
+                       for c in pixels) >= 3
+            previous = spin.value()
+            with qtbot.waitSignal(page.styleChanged) as changed:
+                qtbot.mouseClick(spin, QtCore.Qt.MouseButton.LeftButton, pos=center)
+            assert spin.value() == previous + change
+            style = changed.args[0]
+            assert style.stroke_width == page._stroke_width.value()
+            assert style.font_size == page._font_size.value()
+        spin.setValue(spin.maximum())
+        editor = spin.lineEdit()
+        assert editor.contentsRect().width() >= editor.fontMetrics().horizontalAdvance(spin.text())
