@@ -236,6 +236,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             "Add the pixels inside the selected rectangle or circle to the Classes "
             "tab, with their index means kept up to date as it moves"
         )
+        self._measure_check.setChecked(True)
         self._measure_check.setEnabled(False)
 
         self._list = QtWidgets.QListWidget(self)
@@ -443,7 +444,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         measurable = layer is not None and layer.kind in MEASURABLE_KINDS
         self._measure_check.blockSignals(True)
         self._measure_check.setEnabled(measurable)
-        self._measure_check.setChecked(bool(measurable and layer.measure_index))
+        self._measure_check.setChecked(layer is None or bool(measurable and layer.measure_index))
         self._measure_check.blockSignals(False)
 
     def _on_measure_toggled(self, checked: bool) -> None:

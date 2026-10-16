@@ -697,3 +697,19 @@ def test_annotation_spin_box_arrows_are_visible_and_change_values(qtbot, themed_
         spin.setValue(spin.maximum())
         editor = spin.lineEdit()
         assert editor.contentsRect().width() >= editor.fontMetrics().horizontalAdvance(spin.text())
+
+
+
+def test_measure_default_checkmark_is_visible_while_disabled(qtbot, themed_app):
+    page = AnnotationToolsPage()
+    qtbot.addWidget(page)
+    page.show()
+    check = page._measure_check
+    assert check.isChecked() and not check.isEnabled()
+    checked = check.grab().toImage()
+    check.setChecked(False)
+    unchecked = check.grab().toImage()
+    check.setChecked(True)
+    assert checked != unchecked
+    page.set_layers(())
+    assert check.isChecked()
