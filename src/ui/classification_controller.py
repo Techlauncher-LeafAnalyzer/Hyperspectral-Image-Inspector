@@ -498,6 +498,7 @@ class ClassificationController(QObject):
         self._unsupervised_button.clicked.connect(self._on_unsupervised_classify_clicked)
         self._layer_panel.visibilityChanged.connect(self._on_layer_visibility_changed)
         self._layer_panel.opacityChanged.connect(self._on_layer_opacity_changed)
+        self._layer_panel.renameRequested.connect(self._on_layer_rename_requested)
         self._layer_panel.setAllVisibleRequested.connect(self._on_set_all_visible_requested)
         self._layer_panel.globalOpacityChanged.connect(self._on_global_opacity_changed)
         self._layer_panel.outlineModeChanged.connect(self._on_outline_mode_changed)
@@ -912,6 +913,18 @@ class ClassificationController(QObject):
             self._statusbar.showMessage(str(exc), 8000)
             return
         self._show_result()
+
+    @QtCore.pyqtSlot(int, str)
+    def _on_layer_rename_requested(self, class_id: int, name: str) -> None:
+        layers = self._current_slot.layers
+        if layers is None:
+            return
+        try:
+            layers.rename_class(class_id, name)
+        except ClassificationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        self._populate_layer_panel(self._current_slot)
 
     @QtCore.pyqtSlot(int, float)
     def _on_layer_opacity_changed(self, class_id: int, opacity: float) -> None:
