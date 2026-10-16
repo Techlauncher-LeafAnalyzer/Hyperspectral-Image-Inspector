@@ -90,6 +90,7 @@ class _LayerRowWidget(QtWidgets.QWidget):
 
     visibilityChanged = pyqtSignal(int, bool)
     opacityChanged = pyqtSignal(int, float)
+    renameRequested = pyqtSignal(int, str)
 
     def __init__(
         self,
@@ -110,9 +111,18 @@ class _LayerRowWidget(QtWidgets.QWidget):
         self._toggle.setAccessibleName(f"Show {layer.name}")
         self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
 
+        self._name = layer.name
         self._name_label = QtWidgets.QLabel(layer.name, self)
         self._name_label.setObjectName("layerNameLabel")
         self._name_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self._name_label.setToolTip("Double-click to rename")
+        self._name_label.installEventFilter(self)
+
+        self._name_edit = QtWidgets.QLineEdit(self)
+        self._name_edit.setObjectName("layerNameEdit")
+        self._name_edit.setAccessibleName(f"Rename {layer.name}")
+        self._name_edit.hide()
+        self._name_edit.editingFinished.connect(self._finish_rename)
 
         self._color_swatch = _ColorSwatch(color, self)
 
@@ -142,6 +152,7 @@ class _LayerRowWidget(QtWidgets.QWidget):
         name_row.setContentsMargins(0, 0, 0, 0)
         name_row.setSpacing(8)
         name_row.addWidget(self._name_label, 1)
+        name_row.addWidget(self._name_edit, 1)
         name_row.addWidget(self._color_swatch, 0, Qt.AlignmentFlag.AlignVCenter)
 
         name_column = QtWidgets.QVBoxLayout()
@@ -187,6 +198,35 @@ class _LayerRowWidget(QtWidgets.QWidget):
         self._opacity_slider.valueChanged.connect(self._on_slider_changed)
         self._set_visible_property(layer.visible)
 
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if (
+            watched is self._name_label
+            and event.type() == QtCore.QEvent.Type.MouseButtonDblClick
+        ):
+            self.begin_rename()
+            return True
+        return super().eventFilter(watched, event)
+
+    def begin_rename(self) -> None:
+        """Swap the name label for an inline editor."""
+
+        self._name_edit.setText(self._name)
+        self._name_label.hide()
+        self._name_edit.show()
+        self._name_edit.setFocus()
+        self._name_edit.selectAll()
+
+    def _finish_rename(self) -> None:
+        # editingFinished fires on Enter and again on focus loss; only act
+        # while the editor is still showing.
+        if not self._name_edit.isVisible():
+            return
+        new_name = self._name_edit.text().strip()
+        self._name_edit.hide()
+        self._name_label.show()
+        if new_name and new_name != self._name:
+            self.renameRequested.emit(self.class_id, new_name)
+
     def _set_visible_property(self, visible: bool) -> None:
         self.setProperty("layerVisible", visible)
         self.style().unpolish(self)
@@ -206,6 +246,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
 
     visibilityChanged = pyqtSignal(int, bool)
     opacityChanged = pyqtSignal(int, float)
+    renameRequested = pyqtSignal(int, str)
     setAllVisibleRequested = pyqtSignal(bool)
     globalOpacityChanged = pyqtSignal(float)
     outlineModeChanged = pyqtSignal(bool)
@@ -523,6 +564,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             )
             row.visibilityChanged.connect(self.visibilityChanged)
             row.opacityChanged.connect(self.opacityChanged)
+            row.renameRequested.connect(self.renameRequested)
             self._rows[layer.class_id] = row
             self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
         self._apply_global_controls(global_opacity, outline_mode)
