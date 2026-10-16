@@ -13,7 +13,7 @@ from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import QRectF, QSize, Qt, pyqtSignal
 
 from core import AnnotationKind, AnnotationLayer, AnnotationStyle
-from core.annotation_model import RGB
+from core.annotation_model import MEASURABLE_KINDS, RGB
 
 _LAYER_ID_ROLE = Qt.ItemDataRole.UserRole
 _TOOL_LABELS: tuple[tuple[AnnotationKind, str, str], ...] = (
@@ -97,6 +97,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
     visibilityChanged = pyqtSignal(int, bool)
     moveRequested = pyqtSignal(int, int)
     deleteRequested = pyqtSignal(int)
+    measureChanged = pyqtSignal(int, bool)
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -223,6 +224,14 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         controls_layout.addLayout(sizes_grid)
         controls_layout.addLayout(opacity_layout)
 
+        self._measure_check = QtWidgets.QCheckBox("Measure index means", self)
+        self._measure_check.setObjectName("annotationFillCheck")
+        self._measure_check.setToolTip(
+            "Add the pixels inside the selected rectangle or circle to the Classes "
+            "tab, with their index means kept up to date as it moves"
+        )
+        self._measure_check.setEnabled(False)
+
         self._list = QtWidgets.QListWidget(self)
         self._list.setObjectName("annotationLayerList")
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
@@ -283,6 +292,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         layout.addLayout(tool_grid)
         layout.addWidget(tool_hint)
         layout.addWidget(controls)
+        layout.addWidget(self._measure_check)
         layout.addLayout(layers_heading)
         layout.addWidget(self._empty_label, 1)
         layout.addWidget(self._list, 1)
@@ -309,12 +319,14 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             lambda value: self._opacity_value.setText(f"{value}%")
         )
         self._opacity.valueChanged.connect(self._emit_style)
+        self._measure_check.toggled.connect(self._on_measure_toggled)
         self._list.currentItemChanged.connect(self._on_current_changed)
         self._list.itemChanged.connect(self._on_item_changed)
         self._up_button.clicked.connect(lambda: self._request_move(1))
         self._down_button.clicked.connect(lambda: self._request_move(-1))
         self._delete_button.clicked.connect(self._request_delete)
         self._refreshing = False
+        self._layers_by_id: dict[int, AnnotationLayer] = {}
         self._update_buttons()
 
     # ------------------------------------------------------------------ #
@@ -367,6 +379,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         """Rebuild the list top layer first, keeping ``selected_id`` selected."""
 
         self._refreshing = True
+        self._layers_by_id = {layer.layer_id: layer for layer in layers}
         self._list.clear()
         for layer in reversed(layers):
             item = QtWidgets.QListWidgetItem(layer.name)
@@ -385,6 +398,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             if layer.layer_id == selected_id:
                 self._list.setCurrentItem(item)
         self._refreshing = False
+        self._update_measure_check()
         has_layers = bool(layers)
         self._layer_count.setText(str(len(layers)))
         self._layer_count.setAccessibleName(f"{len(layers)} annotation layers")
@@ -415,8 +429,26 @@ class AnnotationToolsPage(QtWidgets.QWidget):
     def _emit_style(self, *_args: object) -> None:
         self.styleChanged.emit(self.current_style())
 
+    def _update_measure_check(self) -> None:
+        """Enable the measure box for a selected rectangle/circle, showing its state."""
+
+        selected_id = self.selected_layer_id()
+        layer = self._layers_by_id.get(selected_id) if selected_id is not None else None
+        measurable = layer is not None and layer.kind in MEASURABLE_KINDS
+        self._measure_check.blockSignals(True)
+        self._measure_check.setEnabled(measurable)
+        self._measure_check.setChecked(bool(measurable and layer.measure_index))
+        self._measure_check.blockSignals(False)
+
+    def _on_measure_toggled(self, checked: bool) -> None:
+        layer_id = self.selected_layer_id()
+        if layer_id is not None:
+            self.measureChanged.emit(layer_id, checked)
+
     def _on_current_changed(self, current, _previous) -> None:
         self._update_buttons()
+        if not self._refreshing:
+            self._update_measure_check()
         if not self._refreshing and current is not None:
             self.layerSelected.emit(int(current.data(_LAYER_ID_ROLE)))
 

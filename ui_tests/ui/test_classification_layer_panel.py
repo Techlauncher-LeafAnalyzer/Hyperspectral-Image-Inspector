@@ -825,3 +825,188 @@ def test_dragging_the_grip_widens_the_panel_and_collapse_remembers_it(qtbot):
     assert panel.maximumWidth() == 48 and not grip.isVisible()
     panel.set_collapsed(False, animate=False)
     assert panel.maximumWidth() == widened and grip.isVisible()
+
+
+# ---------------------------------------------------------------------- #
+# Measured annotation regions                                              #
+# ---------------------------------------------------------------------- #
+
+
+def _region_setup(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    values = np.zeros((20, 20), dtype=np.float32)
+    values[:, 10:] = 1.0
+    ndvi = _make_visualization(
+        VisualizationMode.NDVI, np.zeros((20, 20, 3), dtype=np.uint8), values
+    )
+    controller.set_visualization_results({VisualizationMode.NDVI: ndvi})
+    return controller, layer_panel
+
+
+def _draw(controller, kind, x, y, w, h):
+    from PyQt6.QtCore import QRectF
+
+    controller._on_annotation_shape_drawn(kind, QRectF(x, y, w, h))
+    return controller._annotation_slot.selected_id
+
+
+def test_measured_shape_appears_as_a_region_row_and_recalculates_on_move(qtbot):
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
+    assert not panel._region_rows
+
+    controller._on_annotation_measure_changed(layer_id, True)
+    row = panel._region_rows[layer_id]
+    assert "NDVI: 0.000" in row._means_label.text()
+
+    controller._on_annotation_geometry_changed(layer_id, 12, 0, 5, 5)
+    qtbot.waitUntil(
+        lambda: "NDVI: 1.000" in panel._region_rows[layer_id]._means_label.text(),
+        timeout=1000,
+    )
+
+
+def test_region_rows_follow_measure_toggle_visibility_and_delete(qtbot):
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    layer_id = _draw(controller, AnnotationKind.ELLIPSE, 2, 2, 6, 6)
+    controller._on_annotation_measure_changed(layer_id, True)
+    assert layer_id in panel._region_rows
+
+    controller._on_annotation_visibility_changed(layer_id, False)
+    assert not panel._region_rows
+    controller._on_annotation_visibility_changed(layer_id, True)
+    assert layer_id in panel._region_rows
+
+    controller._on_annotation_measure_changed(layer_id, False)
+    assert not panel._region_rows
+    controller._on_annotation_measure_changed(layer_id, True)
+    controller._on_annotation_delete_requested(layer_id)
+    assert not panel._region_rows
+
+
+def test_measure_checkbox_tracks_selected_shape_kind(qtbot):
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    page = panel.annotation_page
+    rect_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
+    assert page._measure_check.isEnabled() and not page._measure_check.isChecked()
+
+    with qtbot.waitSignal(page.measureChanged, timeout=1000) as blocker:
+        page._measure_check.setChecked(True)
+    assert blocker.args == [rect_id, True]
+
+    from PyQt6.QtCore import QPointF
+
+    controller._on_annotation_arrow_drawn(QPointF(0, 0), QPointF(8, 8))
+    assert not page._measure_check.isEnabled()
+
+
+def test_region_rows_do_not_change_class_rows(qtbot):
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    panel.set_layers(_make_layers(count=2))
+    layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
+    controller._on_annotation_measure_changed(layer_id, True)
+    assert len(panel._rows) == 2
+    assert len(panel._region_rows) == 1
+    panel.set_layers(_make_layers(count=2))  # class refresh keeps region rows
+    assert len(panel._region_rows) == 1
+
+
+def test_region_row_is_renamed_by_double_click_editor(qtbot):
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    panel.show()  # the inline editor only commits while it is visible
+    layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
+    controller._on_annotation_measure_changed(layer_id, True)
+    row = panel._region_rows[layer_id]
+
+    row.begin_rename()
+    row._name_edit.setText("Leaf patch")
+    row._name_edit.editingFinished.emit()
+
+    assert controller._annotation_slot.layers.get(layer_id).name == "Leaf patch"
+    assert panel._region_rows[layer_id]._name_label.text() == "Leaf patch"
+    names = [panel.annotation_page._list.item(i).text() for i in range(panel.annotation_page._list.count())]
+    assert "Leaf patch" in names
+    # Renaming is one undoable step.
+    controller.undo_annotation()
+    assert controller._annotation_slot.layers.get(layer_id).name == "Rectangle 1"
+
+
+def test_blank_annotation_name_is_rejected(qtbot):
+    import pytest as _pytest
+
+    from core import AnnotationError, AnnotationKind, AnnotationLayerModel, AnnotationStyle
+
+    model = AnnotationLayerModel()
+    layer = model.add_shape(AnnotationKind.RECTANGLE, 0, 0, 5, 5, AnnotationStyle())
+    with _pytest.raises(AnnotationError):
+        model.rename(layer.layer_id, "   ")
+
+
+def test_measure_checkbox_is_disabled_for_text_and_arrow(qtbot):
+    from PyQt6.QtCore import QPointF
+
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    page = panel.annotation_page
+    _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
+    assert page._measure_check.isEnabled()
+
+    controller._on_annotation_arrow_drawn(QPointF(0, 0), QPointF(8, 8))
+    assert not page._measure_check.isEnabled()
+    assert not page._measure_check.isChecked()
+
+    _draw(controller, AnnotationKind.ELLIPSE, 1, 1, 4, 4)
+    assert page._measure_check.isEnabled()
+
+
+def test_export_button_enabled_by_measured_annotation_without_classification(qtbot):
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    assert not panel._export_button.isEnabled()
+
+    layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
+    assert not panel._export_button.isEnabled()  # drawn but not measured
+
+    controller._on_annotation_measure_changed(layer_id, True)
+    assert panel._export_button.isEnabled()
+
+    controller._on_annotation_measure_changed(layer_id, False)
+    assert not panel._export_button.isEnabled()
+
+
+def test_export_writes_measured_annotations_with_and_without_classes(qtbot, tmp_path, monkeypatch):
+    import csv
+
+    from PyQt6.QtWidgets import QFileDialog
+
+    from core import AnnotationKind
+
+    controller, panel = _region_setup(qtbot)
+    layer_id = _draw(controller, AnnotationKind.RECTANGLE, 12, 0, 4, 4)
+    controller._on_annotation_rename_requested(layer_id, "Leaf patch")
+    controller._on_annotation_measure_changed(layer_id, True)
+
+    path = tmp_path / "out.csv"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(path), ""))
+    )
+    controller._on_export_requested()
+
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [r["class_name"] for r in rows] == ["Leaf patch"]
+    assert rows[0]["class_id"] == ""
+    assert rows[0]["pixel_count"] == "16"
+    assert float(rows[0]["NDVI_mean"]) == 1.0

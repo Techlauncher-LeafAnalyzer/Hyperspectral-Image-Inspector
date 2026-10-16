@@ -241,6 +241,100 @@ class _LayerRowWidget(QtWidgets.QWidget):
         self.opacityChanged.emit(self.class_id, value / 100.0)
 
 
+class _RegionRowWidget(QtWidgets.QWidget):
+    """Read-only row for an annotation region: name, pixel count, index means.
+
+    Styled like a class row so the measured region reads as one more class.
+    Double-click the name to rename the annotation.
+    """
+
+    renameRequested = pyqtSignal(int, str)
+
+    def __init__(
+        self,
+        annotation_id: int,
+        name: str,
+        color: RGBColor,
+        pixel_count: int,
+        means: Optional[Mapping[str, PixelValueEntry]],
+        parent: Optional[QtWidgets.QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("classificationLayerRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("layerVisible", True)
+        self.annotation_id = annotation_id
+        self._name = name
+        self.setToolTip(f"{name}: measured from the annotation drawn on the image")
+
+        self._name_label = QtWidgets.QLabel(name, self)
+        self._name_label.setObjectName("layerNameLabel")
+        self._name_label.setToolTip("Double-click to rename")
+        self._name_label.installEventFilter(self)
+        self._name_edit = QtWidgets.QLineEdit(self)
+        self._name_edit.setObjectName("layerNameEdit")
+        self._name_edit.setAccessibleName(f"Rename {name}")
+        self._name_edit.hide()
+        self._name_edit.editingFinished.connect(self._finish_rename)
+        swatch = _ColorSwatch(color, self)
+        self._count_label = QtWidgets.QLabel(f"{pixel_count:,} pixels · annotation", self)
+        self._count_label.setObjectName("layerPixelCountLabel")
+
+        name_row = QtWidgets.QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(8)
+        name_row.addWidget(self._name_label, 1)
+        name_row.addWidget(self._name_edit, 1)
+        name_row.addWidget(swatch, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(11, 10, 11, 10)
+        layout.setSpacing(5)
+        layout.addLayout(name_row)
+        layout.addWidget(self._count_label)
+
+        self._means_label: Optional[QtWidgets.QLabel] = None
+        if means:
+            caption = QtWidgets.QLabel("Index means", self)
+            caption.setObjectName("layerIndexMeansCaption")
+            self._means_label = QtWidgets.QLabel(self)
+            self._means_label.setObjectName("layerIndexMeansLabel")
+            self._means_label.setTextFormat(Qt.TextFormat.RichText)
+            self._means_label.setText(format_pixel_values_html(means))
+            layout.addWidget(caption)
+            layout.addWidget(self._means_label)
+        elif pixel_count == 0:
+            self._count_label.setText("Outside the image")
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if (
+            watched is self._name_label
+            and event.type() == QtCore.QEvent.Type.MouseButtonDblClick
+        ):
+            self.begin_rename()
+            return True
+        return super().eventFilter(watched, event)
+
+    def begin_rename(self) -> None:
+        """Swap the name label for an inline editor."""
+
+        self._name_edit.setText(self._name)
+        self._name_label.hide()
+        self._name_edit.show()
+        self._name_edit.setFocus()
+        self._name_edit.selectAll()
+
+    def _finish_rename(self) -> None:
+        # editingFinished fires on Enter and again on focus loss.
+        if not self._name_edit.isVisible():
+            return
+        new_name = self._name_edit.text().strip()
+        self._name_edit.hide()
+        self._name_label.show()
+        if new_name and new_name != self._name:
+            self.renameRequested.emit(self.annotation_id, new_name)
+
+
 class ClassificationLayerPanel(QtWidgets.QWidget):
     """Collapsible side inspector listing each classification layer."""
 
@@ -252,6 +346,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
     outlineModeChanged = pyqtSignal(bool)
     backgroundChanged = pyqtSignal(str)
     exportRequested = pyqtSignal()
+    regionRenameRequested = pyqtSignal(int, str)
     # "classes" or "annotations"
     modeChanged = pyqtSignal(str)
 
@@ -475,6 +570,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._width_animation.finished.connect(self._finish_width_animation)
 
         self._rows: dict[int, _LayerRowWidget] = {}
+        self._region_rows: dict[int, _RegionRowWidget] = {}
         self._update_empty_state()
 
     def _make_mode_button(self, text: str, tip: str) -> QtWidgets.QPushButton:
@@ -565,9 +661,31 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             row.visibilityChanged.connect(self.visibilityChanged)
             row.opacityChanged.connect(self.opacityChanged)
             row.renameRequested.connect(self.renameRequested)
+            # Class rows stay above any measured-region rows.
+            self._rows_layout.insertWidget(len(self._rows), row)
             self._rows[layer.class_id] = row
-            self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
         self._apply_global_controls(global_opacity, outline_mode)
+        self._update_empty_state()
+
+    def set_regions(
+        self,
+        regions: tuple[tuple[int, str, RGBColor, int, Optional[Mapping[str, PixelValueEntry]]], ...],
+    ) -> None:
+        """Show measured annotation regions after the class rows.
+
+        Each entry is ``(annotation_id, name, colour, pixel_count, means)``.
+        Class rows are left untouched, so this is cheap to call while a shape
+        is being dragged.
+        """
+
+        self._clear_region_rows()
+        for annotation_id, name, color, pixel_count, means in regions:
+            row = _RegionRowWidget(
+                annotation_id, name, color, pixel_count, means, self._rows_container
+            )
+            row.renameRequested.connect(self.regionRenameRequested)
+            self._region_rows[annotation_id] = row
+            self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
         self._update_empty_state()
 
     def set_backgrounds(self, names: tuple[str, ...], selected: str) -> None:
@@ -588,6 +706,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         """Remove all rows, reset global controls, and show the empty state."""
 
         self._clear_rows()
+        self._clear_region_rows()
         self.set_backgrounds((), "")
         self._reset_global_controls()
         self._update_empty_state()
@@ -647,6 +766,12 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             row.deleteLater()
         self._rows.clear()
 
+    def _clear_region_rows(self) -> None:
+        for row in self._region_rows.values():
+            self._rows_layout.removeWidget(row)
+            row.deleteLater()
+        self._region_rows.clear()
+
     def _on_toggle_all_clicked(self) -> None:
         any_visible = any(row._toggle.isChecked() for row in self._rows.values())
         self.setAllVisibleRequested.emit(not any_visible)
@@ -680,11 +805,12 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
 
     def _update_empty_state(self) -> None:
         has_rows = bool(self._rows)
-        self._empty_label.setVisible(not has_rows)
-        self._scroll_area.setVisible(has_rows)
+        has_content = has_rows or bool(self._region_rows)
+        self._empty_label.setVisible(not has_content)
+        self._scroll_area.setVisible(has_content)
         self._toggle_all_button.setEnabled(has_rows)
         self._outline_toggle_button.setEnabled(has_rows)
-        self._export_button.setEnabled(has_rows)
+        self._export_button.setEnabled(has_content)
         self._global_opacity_slider.setEnabled(has_rows)
         self._layer_count_label.setText(str(len(self._rows)))
         self._update_layer_summary()
