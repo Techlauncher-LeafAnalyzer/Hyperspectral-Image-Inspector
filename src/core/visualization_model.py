@@ -18,6 +18,7 @@ from spectral import get_rgb
 
 from .errors import CancelledError, VisualizationError, WavelengthError
 from .hsi_data import HSIData
+from .roi import roi_boundary
 
 
 # These callbacks execute on the same thread that invokes the Model method.
@@ -144,6 +145,12 @@ class HypercubeViewData:
     interior is zero and must not be used for scientific analysis. Index arrays
     map every sample back to the original :class:`HSIData`. Construct OpenGL/Qt
     widgets from this result only after returning to the GUI thread.
+
+    After a polygon crop, ``roi_mask`` is the region of interest sampled on the
+    same ``(row_indices, column_indices)`` grid. The cube is then a prism
+    extruded from that mask: ``surface_cube`` holds real spectra at every
+    selected sample with an unselected (or out-of-frame) 4-neighbour, which is
+    exactly where the prism's side walls are.
     """
 
     top_rgb: np.ndarray
@@ -152,6 +159,7 @@ class HypercubeViewData:
     row_indices: np.ndarray
     column_indices: np.ndarray
     band_indices: np.ndarray
+    roi_mask: np.ndarray | None = None
 
 
 class VisualizationService:
@@ -339,6 +347,29 @@ class VisualizationService:
         top = np.ascontiguousarray(rgb[np.ix_(rows, columns)])
         surface = np.zeros((len(rows), len(columns), len(bands)), dtype=np.float32)
 
+        if data.roi_mask is not None:
+            roi = np.ascontiguousarray(data.roi_mask[np.ix_(rows, columns)])
+            if not roi.any():
+                raise VisualizationError(
+                    "The polygon crop is too small to display as a hypercube."
+                )
+            self._read_roi_walls(
+                data, roi, rows, column_list, band_list, surface,
+                progress, is_cancelled,
+            )
+            wavelengths = np.ascontiguousarray(data.wavelengths_nm[bands])
+            self._check_cancelled(is_cancelled)
+            self._emit(progress, 100, "Hypercube ready")
+            return HypercubeViewData(
+                top_rgb=top,
+                surface_cube=surface,
+                wavelengths_nm=wavelengths,
+                row_indices=rows,
+                column_indices=columns,
+                band_indices=bands,
+                roi_mask=roi,
+            )
+
         self._check_cancelled(is_cancelled)
         self._emit(progress, 25, "Reading front cube surface")
         surface[-1, :, :] = np.asarray(
@@ -376,6 +407,41 @@ class VisualizationService:
             column_indices=columns,
             band_indices=bands,
         )
+
+    def _read_roi_walls(
+        self,
+        data: HSIData,
+        roi: np.ndarray,
+        rows: np.ndarray,
+        column_list: list[int],
+        band_list: list[int],
+        surface: np.ndarray,
+        progress: ProgressCallback | None,
+        is_cancelled: CancellationCheck | None,
+    ) -> None:
+        """Fill ``surface`` with spectra at the sampled ROI's boundary cells.
+
+        A polygon's walls follow its outline rather than the bounding box, so
+        the four rectangular face reads are replaced by one read per sampled
+        row covering only that row's boundary samples.
+        """
+        boundary = roi_boundary(roi)
+        boundary_rows = np.flatnonzero(boundary.any(axis=1))
+        for done, row in enumerate(boundary_rows):
+            self._check_cancelled(is_cancelled)
+            self._emit(
+                progress,
+                25 + round(70 * done / len(boundary_rows)),
+                "Reading polygon cube surface",
+            )
+            cells = np.flatnonzero(boundary[row])
+            values = np.asarray(
+                data.image.read_subimage(
+                    [int(rows[row])], [column_list[cell] for cell in cells], band_list
+                ),
+                dtype=np.float32,
+            )[0]
+            surface[row, cells, :] = values
 
     def _render_rgb(self, data: HSIData, stretch: DisplayStretch) -> VisualizationResult:
         false_colour = False

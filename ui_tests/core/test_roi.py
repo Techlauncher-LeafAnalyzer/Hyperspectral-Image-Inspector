@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.roi import Masked, combine, polygon_mask
+from core.roi import Masked, combine, polygon_mask, roi_boundary
 
 
 def test_polygon_mask_selects_pixels_by_centre():
@@ -127,3 +127,19 @@ def test_unmasked_container_is_a_passthrough():
     assert container.count == 4
     assert np.array_equal(container.fill(), VALUES)
     assert np.array_equal(container.select(), VALUES.reshape(-1))
+
+
+def test_roi_boundary_marks_selected_pixels_on_the_outline():
+    mask = np.zeros((5, 5), dtype=bool)
+    mask[1:4, 1:4] = True
+    mask[0, 0] = True  # isolated, so on the outline from every side
+
+    boundary = roi_boundary(mask)
+
+    expected = mask.copy()
+    expected[2, 2] = False  # the only pixel with four selected neighbours
+    np.testing.assert_array_equal(boundary, expected)
+
+
+def test_roi_boundary_treats_the_frame_edge_as_outside():
+    assert roi_boundary(np.ones((3, 3), dtype=bool)).sum() == 8
