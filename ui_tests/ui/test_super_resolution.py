@@ -70,22 +70,22 @@ def test_processed_selection_without_result_does_not_show_original(loaded_window
 def test_canvas_resolution_switches_follow_the_toggle(loaded_window, stub_sr, qtbot):
     window = loaded_window
     switches = window._resolution_switches.switches
-    assert len(switches) == 4
-    assert all(switch.isHidden() for switch in switches)
+    assert len(switches) == 1  # one Super-Resolution toggle in the stripe
+    assert all(not switch.isEnabled() for switch in switches)
 
     # Checking high-res before a result exists changes nothing: there is
     # still no Super-Resolution data to view.
     window.highResButton.setChecked(True)
-    assert all(switch.isHidden() for switch in switches)
+    assert all(not switch.isEnabled() for switch in switches)
     window.lowResButton.setChecked(True)
 
     stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
     assert window.highResButton.isChecked()
-    assert all(not switch.isHidden() and switch.isChecked() for switch in switches)
+    assert all(switch.isEnabled() and switch.isChecked() for switch in switches)
 
-    switches[2].click()
+    switches[0].click()
     assert window.lowResButton.isChecked()
     assert all(not switch.isChecked() for switch in switches)
     switches[0].click()
@@ -104,7 +104,7 @@ def test_super_resolution_on_calibrated_image_warns_and_reverts_calibration(
     window.calibrateButton.click()
     qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
     assert window._calibration_controller.result is not None
-    assert all(not badge.isHidden() for badge in badges)
+    assert all(badge.isEnabled() for badge in badges)
     ok, cancel = QtWidgets.QMessageBox.StandardButton.Ok, QtWidgets.QMessageBox.StandardButton.Cancel
     answers, prompts = [cancel, ok], []
 
@@ -118,7 +118,7 @@ def test_super_resolution_on_calibrated_image_warns_and_reverts_calibration(
     window.runSuperResButton.click()
     assert window._super_res_worker is None and window._super_res_result is None
     assert window._calibration_controller.result_for_resolution(False) is not None
-    assert all(not badge.isHidden() for badge in badges)
+    assert all(badge.isEnabled() for badge in badges)
 
     # Accepting reverts calibration and runs SR on the raw (uncalibrated) cube.
     stub_sr.release.set()
@@ -126,7 +126,7 @@ def test_super_resolution_on_calibrated_image_warns_and_reverts_calibration(
     finish(qtbot, window)
     assert len(prompts) == 2 and "uncalibrated" in prompts[0][0] + prompts[0][1]
     assert window._calibration_controller.result_for_resolution(False) is None
-    assert all(badge.isHidden() for badge in badges)
+    assert all(not badge.isEnabled() for badge in badges)
     assert window._display_data() is window._super_res_result.data
     np.testing.assert_allclose(
         window._super_res_result.data.read_bands(range(source.bands)),
@@ -158,7 +158,7 @@ def test_calibrating_with_raw_sr_calibrates_both_resolutions_without_prompt(
     finish(qtbot, window)
     previous_sr = window._super_res_result
     badges = window._resolution_switches.calibration_switches
-    assert all(badge.isHidden() for badge in badges)
+    assert all(not badge.isEnabled() for badge in badges)
     monkeypatch.setattr(
         QtWidgets.QMessageBox, "question",
         staticmethod(lambda *a: pytest.fail("calibration must not ask to discard SR")),
@@ -171,7 +171,7 @@ def test_calibrating_with_raw_sr_calibrates_both_resolutions_without_prompt(
         controller = window._calibration_controller
         low, high = controller.result_for_resolution(False), controller.result_for_resolution(True)
         assert low is not None and high is not None
-        assert all(not badge.isHidden() for badge in badges)
+        assert all(badge.isEnabled() for badge in badges)
         assert window._super_res_result is previous_sr
         bands = range(source.bands)
         np.testing.assert_allclose(low.data.read_bands(bands), source.read_bands(bands) / 2)
@@ -338,19 +338,12 @@ def test_close_cancels_without_destroying_running_thread(loaded_window, stub_sr,
     qtbot.waitUntil(lambda: not loaded_window.isVisible())
 
 
-def test_sr_spectrum_uses_hr_coordinates(loaded_window, stub_sr, qtbot, monkeypatch):
-    import ui.main_window as controller
+def test_sr_spectrum_uses_hr_coordinates(loaded_window, stub_sr, qtbot):
     stub_sr.release.set()
     loaded_window.runSuperResButton.click()
     finish(qtbot, loaded_window)
-    received = []
-
-    def dialog(result, parent):
-        received.append(result)
-        return SimpleNamespace(exec=lambda: None)
-
-    monkeypatch.setattr(controller, "SpectrumDialog", dialog)
     loaded_window.superResViewer.spectrumPlotRequested.emit(QtCore.QPointF(15, 14))
+    received = loaded_window._spectrum_controller.inspector.pinned_spectra()
     assert len(received) == 1
     np.testing.assert_array_equal(received[0].values, loaded_window._super_res_result.data.read_pixel(14, 15))
 
@@ -455,7 +448,7 @@ def test_visualization_view_maps_framing_between_resolutions(
     assert window.viewer.get_view_state()[0] == pytest.approx(4.0)
 
 
-def test_image_switches_stay_in_left_rail_without_covering_any_canvas(
+def test_view_toggles_live_in_the_left_stripe_beside_every_tab(
     loaded_window, stub_sr, qtbot
 ):
     window = loaded_window
@@ -464,31 +457,20 @@ def test_image_switches_stay_in_left_rail_without_covering_any_canvas(
     finish(qtbot, window)
     window.show()
     qtbot.waitExposed(window)
-    cases = (
-        (window.Visualization, window.visualizationStack, 0),
-        (window.Calibration, window.calibrationViewer, 1),
-        (window.Classification, window.classificationViewer, 2),
-        (window.SuperResolution, window.superResViewer, 3),
-    )
-    for width in (924, 1100):
-        window.resize(width, 820)
-        for page, canvas, index in cases:
-            window.tabWidget.setCurrentWidget(page)
-            qtbot.wait(30)
-            panel = window._resolution_switches.panels[index]
-            switch = window._resolution_switches.switches[index]
-            assert panel.parentWidget() is canvas.parentWidget()
-            assert switch.isVisible()
-            assert panel.geometry().right() < canvas.geometry().left()
-            assert not panel.geometry().intersects(canvas.geometry())
-            assert switch.mapTo(panel, QtCore.QPoint()).x() == panel.contentsRect().left() + 12
-            assert panel.width() == window.classificationLayerPanel.width() == 236
-    window.tabWidget.setCurrentWidget(window.Visualization)
-    window.modeHyperCube.setChecked(True)
-    qtbot.wait(30)
-    panel = window._resolution_switches.panels[0]
-    assert panel.geometry().right() < window.visualizationStack.geometry().left()
-    assert window._resolution_switches.switches[0].isVisible()
+    stripe = window.toolWindowStripe
+    resolution = window.superResolutionSwitch
+    calibration = window.calibrationSwitch
+    assert resolution.isEnabled() and resolution.isChecked()
+    for page in (window.Visualization, window.Calibration,
+                 window.Classification, window.SuperResolution):
+        window.tabWidget.setCurrentWidget(page)
+        qtbot.wait(30)
+        # One stripe on the window edge serves every tab, never over the image.
+        for switch in (resolution, calibration):
+            assert switch.isVisible() and stripe.isAncestorOf(switch)
+        assert stripe.mapTo(window, QtCore.QPoint()).x() == 0
+        stripe_right = stripe.mapTo(window, QtCore.QPoint(stripe.width(), 0)).x()
+        assert stripe_right <= window.tabWidget.mapTo(window, QtCore.QPoint()).x()
 
 
 def test_high_res_switch_shown_without_notice_when_switching_to_visualization(loaded_window, stub_sr, qtbot, dialogs):
@@ -502,7 +484,7 @@ def test_high_res_switch_shown_without_notice_when_switching_to_visualization(lo
 
     window.tabWidget.setCurrentWidget(window.Visualization)
     assert not dialogs.information
-    assert not window._resolution_switches.switches[0].isHidden()
+    assert window._resolution_switches.switches[0].isEnabled()
 
     window.tabWidget.setCurrentWidget(window.SuperResolution)
     window.tabWidget.setCurrentWidget(window.Visualization)
@@ -724,10 +706,7 @@ def test_resolution_and_calibration_comparisons_cover_four_cached_states(
     low, high = controller.result_for_resolution(False), controller.result_for_resolution(True)
     cases = ((False, False, source), (True, False, raw_high),
              (True, True, high.data), (False, True, low.data))
-    received = []
-    import ui.main_window as main_window
-    monkeypatch.setattr(main_window, "SpectrumDialog", lambda spectrum, parent:
-                        SimpleNamespace(exec=lambda: received.append(spectrum)))
+    inspector = window._spectrum_controller.inspector
     for resolution, calibrated, data in cases * 2:
         window._select_canvas_resolution(resolution)
         window._select_canvas_calibration(calibrated)
@@ -738,7 +717,7 @@ def test_resolution_and_calibration_comparisons_cover_four_cached_states(
             np.testing.assert_array_equal(viewer.rgb, data.rgb_array)
         row, column = (14, 15) if resolution else (6, 7)
         window.calibrationViewer.spectrumPlotRequested.emit(QtCore.QPointF(column, row))
-        np.testing.assert_allclose(received[-1].values, data.read_pixel(row, column))
+        np.testing.assert_allclose(inspector.pinned_spectra()[-1].values, data.read_pixel(row, column))
         window.tabWidget.setCurrentWidget(window.Calibration)
         output = tmp_path / f"comparison-{resolution}-{calibrated}.png"
         file_dialog.save_return = (str(output), "")
@@ -781,7 +760,7 @@ def test_partial_calibration_result_does_not_show_after_for_missing_resolution(
     window._select_canvas_resolution(False)
     assert window._display_data() is window._calibration_controller.result.data
     assert all(switch.isChecked() and switch.isEnabled() for switch in switches)
-    switches[1].click()
+    switches[0].click()
     window._select_canvas_resolution(True)
     window._select_canvas_resolution(False)
     assert window._display_data() is source

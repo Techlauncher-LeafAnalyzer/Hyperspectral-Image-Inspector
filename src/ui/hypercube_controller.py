@@ -104,6 +104,10 @@ class HypercubeController(QObject):
             self._refresh_display()
         worker.start()
 
+    def is_building(self) -> bool:
+        """Whether a worker is still reading the source for a fresh cube."""
+        return self._worker is not None and self._view_data is None and self._error is None
+
     def stop_and_wait(self) -> None:
         """Cancel and block until any in-flight worker's thread has stopped.
 

@@ -29,6 +29,7 @@ from core import (
     ClassificationLayerModel,
     ClassificationService,
     ExportRegion,
+    LeafLabel,
     HSIData,
     HSIError,
     HSIReader,
@@ -43,7 +44,10 @@ from core import (
     VisualizationMode,
     VisualizationResult,
     export_class_summary_csv,
+    draw_leaf_labels,
     measure_region,
+    region_mask,
+    place_leaf_labels,
     separate_leaves,
 )
 from ui.annotation_render import render_annotations
@@ -65,6 +69,16 @@ LOGGER = logging.getLogger(__name__)
 _ClassificationResult = Union[UnsupervisedClassificationResult, SupervisedClassificationResult]
 
 
+@dataclass(frozen=True)
+class AnalysisRegion:
+    """A class or annotation region offered to full-spectrum analysis."""
+
+    label: str
+    mask: np.ndarray
+    color: tuple[int, int, int]
+    selected: bool
+
+
 @dataclass
 class _ClassificationSlot:
     """One resolution level's independent classification state.
@@ -84,6 +98,9 @@ class _ClassificationSlot:
     means: Optional[dict[int, dict[str, PixelValueEntry]]] = None
     leaves_separated: bool = False
     fixed_colors: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+    # Each separated leaf's number, drawn beneath it on the canvas and in
+    # saved images; empty until leaves are separated.
+    leaf_labels: tuple[LeafLabel, ...] = ()
 
 
 @dataclass
@@ -386,7 +403,14 @@ class ClassificationController(QObject):
         """
 
         composite = self._composite()
-        return composite.display_rgb if composite is not None else None
+        if composite is None:
+            return None
+        slot = self._current_slot
+        if not slot.leaf_labels or slot.layers is None:
+            return composite.display_rgb
+        return draw_leaf_labels(
+            composite.display_rgb, slot.leaf_labels, slot.layers.visible_class_ids
+        )
 
     def with_annotations(self, rgb: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Draw the displayed image's visible annotations onto ``rgb`` for export.
@@ -409,6 +433,42 @@ class ClassificationController(QObject):
             return None
         class_id = int(result.class_map[row, column])
         return class_id if class_id >= 0 else None
+
+    def analysis_regions(self) -> Optional[tuple[HSIData, dict[str, "AnalysisRegion"]]]:
+        """Every class and measured annotation region, for spectral analysis.
+
+        Returns ``(data, {key: AnalysisRegion})``; keys are ``"class:<id>"``
+        for classification classes and ``"annotation:<id>"`` for measured,
+        visible rectangle/ellipse annotations, so both are analysed as
+        classes. ``selected`` mirrors each row's checkbox in the layer panel.
+        ``None`` when there is neither a classification nor a region.
+        """
+
+        regions: dict[str, AnalysisRegion] = {}
+        slot = self._current_slot
+        data: Optional[HSIData] = None
+        if slot.result is not None and slot.layers is not None and slot.active_data is not None:
+            data = slot.active_data
+            colors = classification_palette(slot.layers.class_ids, slot.fixed_colors)
+            class_map = slot.result.class_map
+            for layer in slot.layers.layers:
+                regions[f"class:{layer.class_id}"] = AnalysisRegion(
+                    layer.name, class_map == layer.class_id,
+                    colors[layer.class_id], layer.visible,
+                )
+        if data is None:
+            data = self._display_data_provider()
+            if not data.is_loaded():
+                return None
+        shape = (data.rows, data.columns)
+        for layer, measurement in self._measured_regions():
+            if measurement.pixel_count == 0:
+                continue
+            regions[f"annotation:{layer.layer_id}"] = AnalysisRegion(
+                layer.name, region_mask(layer, shape), tuple(layer.style.stroke[:3]),
+                self._layer_panel.is_region_selected(layer.layer_id),
+            )
+        return (data, regions) if regions else None
 
     def is_running(self) -> bool:
         return self._thread is not None
@@ -884,6 +944,7 @@ class ClassificationController(QObject):
         slot.means = None
         slot.leaves_separated = False
         slot.fixed_colors = {}
+        slot.leaf_labels = ()
         if slot_key == self._is_super_resolution_active():
             self._populate_layer_panel(slot)
             self._show_result()
@@ -964,6 +1025,7 @@ class ClassificationController(QObject):
         slot.layers = ClassificationLayerModel(result, names=names)
         slot.means = None
         slot.leaves_separated = True
+        slot.leaf_labels = place_leaf_labels(result.class_map, separation.leaf_numbers)
         self._populate_layer_panel(slot)
         self._show_result()
         self._update_separate_leaves_button()

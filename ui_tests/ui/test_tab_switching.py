@@ -124,7 +124,6 @@ def test_close_stops_active_transitions_and_resolution_animations(window):
     )
     window.tabWidget.setCurrentIndex(1)
     window.classificationModeTabs.setCurrentIndex(1)
-    window._resolution_switches.schedule_raise()
     animations = window.findChildren(QtCore.QAbstractAnimation)
     assert any(a.state() == a.State.Running for a in animations)
 
@@ -132,7 +131,6 @@ def test_close_stops_active_transitions_and_resolution_animations(window):
 
     assert all(a.state() == a.State.Stopped for a in animations)
     assert all(not t._sync_timer.isActive() for t in window._tab_transitions)
-    assert not window._resolution_switches._raise_timer.isActive()
 
 
 @pytest.mark.parametrize("remove_page", [False, True], ids=["replace-effect", "delete-page"])

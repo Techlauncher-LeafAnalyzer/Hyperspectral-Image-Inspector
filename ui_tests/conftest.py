@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Force, not setdefault: a desktop session exports QT_QPA_PLATFORM (e.g.
+# "wayland;xcb"), which would otherwise open a real window for every show().
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from pathlib import Path
 from types import SimpleNamespace

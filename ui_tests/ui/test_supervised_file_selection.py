@@ -200,3 +200,15 @@ def test_separate_leaves_splits_plant_class_into_leaf_layers(
     assert rgb[0, 0].any() and rgb[7, 7].any()
     assert not button.isEnabled()
     assert not dialogs.critical
+
+    # Each leaf's number is burned in beneath it, and follows visibility.
+    slot = controller._current_slot
+    assert [label.text for label in slot.leaf_labels] == ["1", "2"]
+    composited = controller.composited_rgb()
+    flat = controller._composite().display_rgb
+    assert not np.array_equal(composited, flat)
+    for layer in slot.layers.layers:
+        slot.layers.set_class_visible(layer.class_id, layer.name == "Soil")
+    np.testing.assert_array_equal(
+        controller.composited_rgb(), controller._composite().display_rgb
+    )

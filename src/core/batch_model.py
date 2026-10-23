@@ -35,6 +35,7 @@ from .classification_model import (
 )
 from .classification_export_model import ExportRegion, export_class_summary_csv
 from .classification_layer_model import ClassificationLayerModel, ClassIndexStatistics
+from .leaf_labels import draw_leaf_labels, place_leaf_labels
 from .leaf_separation import separate_leaves
 from .errors import (
     BatchError,
@@ -382,6 +383,7 @@ class BatchService:
         classified = False
         classification_result = None
         leaf_names: dict[int, str] | None = None
+        leaf_numbers: dict[int, int] = {}
         fixed_colors: dict[int, tuple[int, int, int]] = {}
         csv_saved: Path | None = None
         extension =_EXPORT_EXTENSIONS[request.export_format]
@@ -487,11 +489,17 @@ class BatchService:
                         separation = separate_leaves(classification_result)
                         classification_result = separation.result
                         leaf_names = separation.leaf_names
+                        leaf_numbers = separation.leaf_numbers
                         fixed_colors = separation.fixed_colors
                     class_ids = classification_result.class_ids
                 display_rgb = _colorize_class_map(
                     classification_result.class_map, class_ids, fixed_colors
                 )
+                if leaf_numbers:
+                    display_rgb = draw_leaf_labels(
+                        display_rgb,
+                        place_leaf_labels(classification_result.class_map, leaf_numbers),
+                    )
                 classified = True
 
             if request.export_csv:

@@ -34,6 +34,9 @@ For each input file, in this fixed order:
    file's plant class is split into one `Leaf N` class per clearly separate
    cluster (`core.leaf_separation.separate_leaves`) and the background class
    is drawn black, matching the Classification tab's Separate Leaves button.
+   Each leaf's number (the `N` in `Leaf N`) is burned in just beneath it by
+   `core.leaf_labels` — the same renderer the Classification canvas and its
+   Save Image use.
 7. Export the resulting RGB (or colorized class map) as PNG/TIFF/JPEG/BMP,
    named after the input file's stem, into the selected output directory. The
    auto-crop polygon is preserved as alpha for PNG/TIFF; JPEG/BMP have no

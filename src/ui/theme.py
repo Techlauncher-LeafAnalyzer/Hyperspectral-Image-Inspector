@@ -442,24 +442,56 @@ QGraphicsView#classificationViewer {
     border-radius: 8px;
 }
 
-QFrame#imageStatePanel {
-    background: #f8fbf9;
-    border: 1px solid #dce5df;
-    border-radius: 10px;
+/* Same ground as the tab row (the window background), with no edge line,
+   so the stripe reads as part of the window chrome beside the tabs. */
+QToolBar#toolWindowStripe,
+QFrame#toolWindowStripeBody {
+    background: #edf2f1;
+    border: none;
+    padding: 0;
+    spacing: 0;
 }
 
-QLabel#imageStateTitle {
+QFrame#toolWindowStripeDivider {
+    background: #d1dcd7;
+    border: none;
+}
+
+QLabel#toolWindowStripeLogo {
+    background: transparent;
+}
+
+QFrame#toolWindowTitleBar {
+    background: #f3f6f4;
+    border-bottom: 1px solid #dce5df;
+}
+
+QLabel#toolWindowTitle {
     color: #2d4437;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     background: transparent;
 }
 
-QLabel#imageStateLabel {
-    color: #788a7e;
-    font-size: 12px;
-    font-weight: 500;
+QToolButton#toolWindowFloatButton,
+QToolButton#toolWindowHideButton {
+    color: #4f6359;
     background: transparent;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+QToolButton#toolWindowFloatButton:hover,
+QToolButton#toolWindowHideButton:hover {
+    background: #e2ebe7;
+    color: #126f62;
+}
+
+QMainWindow::separator {
+    background: #dce5df;
+    width: 1px;
+    height: 1px;
 }
 
 QLabel#pixelValueOverlay {
@@ -720,8 +752,7 @@ QLabel#classificationLayerCount {
     font-weight: 700;
 }
 
-QToolButton#classificationLayerCollapseButton,
-QToolButton#imageStateCollapseButton {
+QToolButton#classificationLayerCollapseButton {
     min-width: 22px;
     max-width: 22px;
     min-height: 22px;
@@ -735,21 +766,18 @@ QToolButton#imageStateCollapseButton {
     padding: 0 0 2px 0;
 }
 
-QToolButton#classificationLayerCollapseButton:hover,
-QToolButton#imageStateCollapseButton:hover {
+QToolButton#classificationLayerCollapseButton:hover {
     color: #126f62;
     background: #e5f3f0;
     border-color: #9fcac1;
 }
 
-QToolButton#classificationLayerCollapseButton:pressed,
-QToolButton#imageStateCollapseButton:pressed {
+QToolButton#classificationLayerCollapseButton:pressed {
     background: #d5ebe6;
     border-color: #78afa5;
 }
 
-QToolButton#classificationLayerCollapseButton:focus,
-QToolButton#imageStateCollapseButton:focus {
+QToolButton#classificationLayerCollapseButton:focus {
     border-color: #168b7b;
 }
 
@@ -893,6 +921,8 @@ QCheckBox#layerVisibilityToggle:focus {
 
 QPushButton#layerToggleAllButton,
 QPushButton#layerExportButton,
+QPushButton#layerSpectraButton,
+QPushButton#layerInspectButton,
 QPushButton#layerOutlineToggleButton {
     min-height: 18px;
     color: #254c46;
@@ -906,6 +936,8 @@ QPushButton#layerOutlineToggleButton {
 
 QPushButton#layerToggleAllButton:hover,
 QPushButton#layerExportButton:hover,
+QPushButton#layerSpectraButton:hover,
+QPushButton#layerInspectButton:hover,
 QPushButton#layerOutlineToggleButton:hover {
     color: #126f62;
     background: #f8fcfb;
@@ -914,9 +946,21 @@ QPushButton#layerOutlineToggleButton:hover {
 
 QPushButton#layerToggleAllButton:pressed,
 QPushButton#layerExportButton:pressed,
+QPushButton#layerSpectraButton:pressed,
+QPushButton#layerInspectButton:pressed,
 QPushButton#layerOutlineToggleButton:pressed {
     background: #dcefeb;
     border-color: #6ba99e;
+}
+
+QPushButton#layerInspectButton {
+    min-height: 14px;
+    padding: 3px 8px;
+}
+
+QPushButton#layerInspectButton:disabled {
+    color: #a9b8b3;
+    border-color: #dfe7e4;
 }
 
 QPushButton#layerOutlineToggleButton:checked {
@@ -1409,6 +1453,14 @@ PROMPT_NEGATIVE_COLOR     = Qt.GlobalColor.red
 PROMPT_POINT_RADIUS       = 5.0
 CROP_OVERLAY_COLOR        = QColor(0, 0, 0, 140)
 CROP_SELECTION_COLOR      = Qt.GlobalColor.yellow
+
+# --- Tool-window stripe (ui/tool_windows.py) ---------------------------- #
+# Stripe buttons paint their own icons, so their state colours live here.
+TOOL_STRIPE_ICON_COLOR           = "#4f6359"
+TOOL_STRIPE_SELECTED_ICON_COLOR  = "#126f62"
+TOOL_STRIPE_SELECTED_COLOR       = "#d3ebe5"
+TOOL_STRIPE_HOVER_COLOR          = "#e8efec"
+TOOL_STRIPE_DISABLED_COLOR       = "#b8c2bd"
 
 
 def apply_theme(app: QApplication) -> None:
