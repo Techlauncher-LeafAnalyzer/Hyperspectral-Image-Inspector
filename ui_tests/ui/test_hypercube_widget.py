@@ -235,3 +235,81 @@ def test_widget_shows_and_repaints_without_raising(qtbot, hypercube_view_data):
     # without libGLU installed, and only surfaced via an actual show().
     widget.show()
     widget.repaint()
+
+
+def _l_shaped_view_data(band_count=4):
+    # Three of a 2x2 grid's samples; the front-right one is excluded.
+    mask = np.array([[True, True], [True, False]])
+    surface = np.zeros((2, 2, band_count), dtype=np.float32)
+    surface[mask] = np.arange(3 * band_count, dtype=np.float32).reshape(3, band_count)
+    return type("ViewData", (), {
+        "top_rgb": np.full((2, 2, 3), 200, dtype=np.uint8),
+        "surface_cube": surface,
+        "row_indices": np.array([0, 1]),
+        "column_indices": np.array([0, 1]),
+        "roi_mask": mask,
+    })()
+
+
+def test_roi_prism_cuts_excluded_samples_out_of_the_top():
+    top, *_ = HypercubeWidget._build_roi_prism(_l_shaped_view_data())
+
+    assert top.shape == (2, 2, 4)
+    np.testing.assert_array_equal(top[..., 3], [[255, 255], [255, 0]])
+
+
+def test_roi_prism_walls_follow_the_outline_not_the_bounding_box():
+    _, atlas, vertices, tex_coords = HypercubeWidget._build_roi_prism(
+        _l_shaped_view_data()
+    )
+
+    # An L of three unit cells has an outline of eight unit edges.
+    assert vertices.shape == (8 * 4, 3)
+    assert tex_coords.shape == (8 * 4, 2)
+    quads = vertices.reshape(-1, 4, 3)
+    # Each wall spans the full spectral depth...
+    assert np.allclose(quads[:, :2, 2], -0.6) and np.allclose(quads[:, 2:, 2], 0.6)
+    # ...and stands on the L's outline: the excluded front-right quadrant
+    # (x, y > 0) gets the re-entrant walls at x = 0 and y = 0 instead of the
+    # bounding box's outer edges.
+    footprints = {
+        tuple(sorted(map(tuple, np.round(quad[:2, :2]).astype(int).tolist())))
+        for quad in quads
+    }
+    assert footprints == {
+        ((-1, -1), (0, -1)), ((0, -1), (1, -1)),  # back
+        ((1, -1), (1, 0)), ((0, 0), (1, 0)),      # right, then re-entrant
+        ((0, 0), (0, 1)), ((-1, 1), (0, 1)),      # re-entrant, then front
+        ((-1, -1), (-1, 0)), ((-1, 0), (-1, 1)),  # left
+    }
+    # One spectrum column per boundary sample, one texel row per band.
+    assert atlas.shape == (4, 3, 3)
+
+
+def test_roi_prism_wraps_long_outlines_across_atlas_rows(monkeypatch):
+    monkeypatch.setattr(HypercubeWidget, "WALL_ATLAS_WIDTH", 2)
+
+    _, atlas, _, tex_coords = HypercubeWidget._build_roi_prism(
+        _l_shaped_view_data(band_count=4)
+    )
+
+    assert atlas.shape == (8, 2, 3)
+    assert tex_coords[:, 1].min() > 0.0 and tex_coords[:, 1].max() < 1.0
+
+
+def test_widget_paints_a_polygon_cropped_hypercube(qtbot, loaded_window):
+    loaded_window.viewer.polygonCropRequested.emit(
+        [(0.0, 0.0), (8.0, 0.0), (8.0, 5.0), (4.0, 8.0), (0.0, 5.0)]
+    )
+    view = VisualizationService().prepare_hypercube_view(loaded_window._hsi_data)
+    widget = HypercubeWidget()
+    qtbot.addWidget(widget)
+    widget.resize(200, 200)
+    widget.set_data(view)
+
+    # The offscreen test platform has no GL context, so this only guards the
+    # paint path against raising; the geometry is covered above.
+    widget.show()
+    widget.repaint()
+
+    assert view.roi_mask is not None

@@ -291,3 +291,22 @@ def test_polygon_with_no_pixel_centres_preserves_the_current_crop(
     assert data.roi_mask is original_roi
     np.testing.assert_array_equal(data.rgb_array, original_rgb)
     assert len(loaded_window._crop_undo_stack) == undo_count
+
+
+def test_hypercube_after_polygon_crop_follows_the_polygon(loaded_window):
+    from core import VisualizationService
+    from core.roi import roi_boundary
+
+    loaded_window.viewer.polygonCropRequested.emit(PENTAGON)
+    data = loaded_window._hsi_data
+
+    view = VisualizationService().prepare_hypercube_view(data)
+
+    np.testing.assert_array_equal(view.roi_mask, data.roi_mask)
+    boundary = roi_boundary(view.roi_mask)
+    expected = data.read_bands(list(range(data.bands)))
+    np.testing.assert_allclose(
+        view.surface_cube[boundary], expected[boundary], rtol=1e-6
+    )
+    # Excluded samples (e.g. the chamfered corners) carry no wall spectra.
+    assert not view.surface_cube[~view.roi_mask].any()

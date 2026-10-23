@@ -21,6 +21,7 @@ from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QPushButton, QWidget
 
 from core import HypercubeViewData
+from core.roi import roi_boundary
 
 
 _BRIGHT_SPECTRAL_COLORS = np.array(
@@ -95,6 +96,8 @@ class HypercubeWidget(QOpenGLWidget):
 
         self._view_data: Optional[HypercubeViewData] = None
         self._textures: Optional[list[int]] = None
+        # Vertex and texture-coordinate arrays for a polygon crop's walls.
+        self._wall_arrays: Optional[tuple[np.ndarray, np.ndarray]] = None
         self._textures_dirty = False
 
         self._camera_distance, self._camera_theta, self._camera_phi = self.DEFAULT_CAMERA
@@ -263,10 +266,21 @@ class HypercubeWidget(QOpenGLWidget):
         if self._textures is not None:
             gl.glDeleteTextures(self._textures)
             self._textures = None
+        self._wall_arrays = None
         if self._view_data is None:
             return
 
-        images = self._build_face_images(self._view_data)
+        if getattr(self._view_data, "roi_mask", None) is None:
+            images = self._build_face_images(self._view_data)
+            texture_filter = gl.GL_LINEAR
+        else:
+            top, atlas, vertices, tex_coords = self._build_roi_prism(self._view_data)
+            images = [top, atlas]
+            self._wall_arrays = (vertices, tex_coords)
+            # Nearest sampling keeps the top cutout's alpha edges on the
+            # sample-cell edges the walls stand on, and stops neighbouring
+            # spectra in the wall atlas from bleeding into one another.
+            texture_filter = gl.GL_NEAREST
         texture_ids = [int(value) for value in gl.glGenTextures(len(images))]
         # NumPy RGB rows are tightly packed (three bytes per pixel), whereas
         # OpenGL defaults to four-byte row alignment.  Without this, images
@@ -274,14 +288,15 @@ class HypercubeWidget(QOpenGLWidget):
         gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
         for texture_id, image in zip(texture_ids, images):
             gl.glBindTexture(gl.GL_TEXTURE_2D, texture_id)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, texture_filter)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, texture_filter)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-            height, width = image.shape[:2]
+            height, width, channels = image.shape
+            pixel_format = gl.GL_RGBA if channels == 4 else gl.GL_RGB
             gl.glTexImage2D(
-                gl.GL_TEXTURE_2D, 0, gl.GL_RGB, width, height, 0,
-                gl.GL_RGB, gl.GL_UNSIGNED_BYTE, np.ascontiguousarray(image),
+                gl.GL_TEXTURE_2D, 0, pixel_format, width, height, 0,
+                pixel_format, gl.GL_UNSIGNED_BYTE, np.ascontiguousarray(image),
             )
         # Restore the default alignment immediately: it is global context
         # state, and Qt's own text/glyph texture uploads (used to paint the
@@ -318,11 +333,139 @@ class HypercubeWidget(QOpenGLWidget):
         ]
         return [top, *side_images, top]
 
+    # Widest wall atlas row; longer outlines wrap onto further rows of bands
+    # so the texture stays inside every OpenGL implementation's size limit.
+    WALL_ATLAS_WIDTH = 2048
+
+    @classmethod
+    def _build_roi_prism(
+        cls, view_data: HypercubeViewData
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Build a polygon-cropped cube as a prism extruded from its ROI.
+
+        Returns ``(top_rgba, wall_atlas, wall_vertices, wall_tex_coords)``.
+        The top texture's alpha is the sampled ROI, so excluded pixels are
+        cut away. Each boundary sample's spectrum is one column of the wall
+        atlas, and every outline edge of that sample becomes a wall quad
+        textured with that column, spanning the first to final band in depth.
+        """
+        mask = np.asarray(view_data.roi_mask, dtype=bool)
+        surface = view_data.surface_cube
+        band_count = surface.shape[2]
+        top = np.dstack(
+            (view_data.top_rgb, np.where(mask, 255, 0).astype(np.uint8))
+        )
+
+        boundary = roi_boundary(mask)
+        cell_rows, cell_columns = np.nonzero(boundary)
+        (colored,) = _colorize_slices([surface[cell_rows, cell_columns, :]])
+        cell_count = len(cell_rows)
+        atlas_width = min(cell_count, cls.WALL_ATLAS_WIDTH)
+        atlas_rows = -(-cell_count // atlas_width)
+        atlas = np.zeros((atlas_rows * band_count, atlas_width, 3), dtype=np.uint8)
+        cells = np.arange(cell_count)
+        atlas_row, atlas_column = np.divmod(cells, atlas_width)
+        for band in range(band_count):
+            atlas[atlas_row * band_count + band, atlas_column] = colored[:, band]
+
+        # Every outline edge: a boundary sample's side whose neighbour is
+        # unselected or outside the frame.
+        padded = np.pad(mask, 1, constant_values=False)
+        rows, columns = mask.shape
+        hw, hh, hz = cls._cube_half_extents(view_data)
+        x_edges = np.linspace(-hw, hw, columns + 1)
+        y_edges = np.linspace(-hh, hh, rows + 1)
+        r, c = cell_rows, cell_columns
+        x0, x1, y0, y1 = x_edges[c], x_edges[c + 1], y_edges[r], y_edges[r + 1]
+        sides = (
+            (~padded[r, c + 1], (x0, y0), (x1, y0)),          # previous row (back)
+            (~padded[r + 2, c + 1], (x0, y1), (x1, y1)),      # next row (front)
+            (~padded[r + 1, c], (x0, y0), (x0, y1)),          # previous column (left)
+            (~padded[r + 1, c + 2], (x1, y0), (x1, y1)),      # next column (right)
+        )
+        starts, ends, owners = [], [], []
+        for open_side, (sx, sy), (ex, ey) in sides:
+            starts.append(np.column_stack((sx, sy))[open_side])
+            ends.append(np.column_stack((ex, ey))[open_side])
+            owners.append(cells[open_side])
+        start = np.concatenate(starts)
+        end = np.concatenate(ends)
+        owner = np.concatenate(owners)
+
+        low = np.full(len(owner), -hz)
+        high = np.full(len(owner), hz)
+        vertices = np.stack(
+            (
+                np.column_stack((start, low)),
+                np.column_stack((end, low)),
+                np.column_stack((end, high)),
+                np.column_stack((start, high)),
+            ),
+            axis=1,
+        ).reshape(-1, 3).astype(np.float32)
+
+        # Sample each spectrum column at its texel centre, and stay half a
+        # texel inside its band range so nearest sampling never reaches the
+        # next atlas row.
+        atlas_height = atlas.shape[0]
+        u = (atlas_column[owner] + 0.5) / atlas_width
+        v0 = (atlas_row[owner] * band_count + 0.5) / atlas_height
+        v1 = ((atlas_row[owner] + 1) * band_count - 0.5) / atlas_height
+        tex_coords = np.stack(
+            (
+                np.column_stack((u, v0)),
+                np.column_stack((u, v0)),
+                np.column_stack((u, v1)),
+                np.column_stack((u, v1)),
+            ),
+            axis=1,
+        ).reshape(-1, 2).astype(np.float32)
+        return np.ascontiguousarray(top), atlas, vertices, tex_coords
+
+    def _draw_roi_prism(self) -> None:
+        import OpenGL.GL as gl
+
+        assert self._textures is not None
+        assert self._view_data is not None
+        assert self._wall_arrays is not None
+        top_texture, wall_texture = self._textures
+        gl.glColor4f(1.0, 1.0, 1.0, 1.0)
+
+        # The top and bottom are the bounding box with excluded samples
+        # discarded, so they match the walls' outline exactly.
+        faces = dict(self._cube_faces(self._view_data))
+        tex_coords = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+        gl.glEnable(gl.GL_ALPHA_TEST)
+        gl.glAlphaFunc(gl.GL_GREATER, 0.5)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, top_texture)
+        for name in ("top", "bottom"):
+            gl.glBegin(gl.GL_QUADS)
+            for (tx, ty), (vx, vy, vz) in zip(tex_coords, faces[name]):
+                gl.glTexCoord2f(tx, ty)
+                gl.glVertex3f(vx, vy, vz)
+            gl.glEnd()
+        gl.glDisable(gl.GL_ALPHA_TEST)
+
+        vertices, wall_tex_coords = self._wall_arrays
+        gl.glBindTexture(gl.GL_TEXTURE_2D, wall_texture)
+        gl.glEnableClientState(gl.GL_VERTEX_ARRAY)
+        gl.glEnableClientState(gl.GL_TEXTURE_COORD_ARRAY)
+        try:
+            gl.glVertexPointer(3, gl.GL_FLOAT, 0, vertices)
+            gl.glTexCoordPointer(2, gl.GL_FLOAT, 0, wall_tex_coords)
+            gl.glDrawArrays(gl.GL_QUADS, 0, len(vertices))
+        finally:
+            gl.glDisableClientState(gl.GL_TEXTURE_COORD_ARRAY)
+            gl.glDisableClientState(gl.GL_VERTEX_ARRAY)
+
     def _draw_cube(self) -> None:
         import OpenGL.GL as gl
 
         assert self._textures is not None
         assert self._view_data is not None
+        if self._wall_arrays is not None:
+            self._draw_roi_prism()
+            return
         faces = self._cube_faces(self._view_data)
         tex_coords = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
         for texture_id, (_, vertices) in zip(self._textures, faces):

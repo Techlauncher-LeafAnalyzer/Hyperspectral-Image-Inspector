@@ -84,6 +84,20 @@ def combine(existing: Optional[BoolMask], addition: Optional[BoolMask]) -> Optio
     return np.logical_and(existing, addition)
 
 
+def roi_boundary(mask: BoolMask) -> BoolMask:
+    """Mark selected pixels that have an unselected or out-of-frame 4-neighbour.
+
+    These are the pixels whose outer edges form the region's outline, e.g.
+    the side walls of a polygon-cropped hypercube.
+    """
+
+    padded = np.pad(np.asarray(mask, dtype=bool), 1, constant_values=False)
+    interior = (
+        padded[:-2, 1:-1] & padded[2:, 1:-1] & padded[1:-1, :-2] & padded[1:-1, 2:]
+    )
+    return padded[1:-1, 1:-1] & ~interior
+
+
 @dataclass(frozen=True)
 class Masked(Generic[T]):
     """An array paired with the region of interest that selects its pixels.
