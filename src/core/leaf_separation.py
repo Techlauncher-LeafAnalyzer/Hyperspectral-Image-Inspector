@@ -51,6 +51,15 @@ class LeafSeparationResult:
     def leaf_count(self) -> int:
         return len(self.leaf_names)
 
+    @property
+    def leaf_numbers(self) -> dict[int, int]:
+        """Each leaf class ID mapped to the number in its "Leaf N" name."""
+
+        return {
+            class_id: index
+            for index, class_id in enumerate(self.leaf_names, start=1)
+        }
+
 
 def separate_leaves(
     result: SupervisedClassificationResult,

@@ -290,6 +290,8 @@ def test_batch_supervised_separate_leaves_writes_one_row_per_leaf(tmp_path):
         preview = np.asarray(image.convert("RGB"))
     assert preview[0, 0].tolist() == [0, 0, 0]
     assert preview[5, 5].any() and preview[20, 20].any()
+    # Leaf numbers are burned in beneath each leaf (on the black background).
+    assert (preview[13:17, 3:13].min(axis=2) > 150).any()
 
 
 def test_batch_separate_leaves_checkbox_reaches_request(window, tmp_path, monkeypatch):

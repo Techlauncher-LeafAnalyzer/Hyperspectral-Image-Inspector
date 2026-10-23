@@ -55,12 +55,19 @@ from .classification_layer_model import (
     ClassificationLayerComposite,
     ClassificationLayerModel,
 )
+from .leaf_labels import LeafLabel, draw_leaf_labels, place_leaf_labels
 from .leaf_separation import LeafSeparationResult, separate_leaves
 from .classification_export_model import ExportRegion, export_class_summary_csv
 from .annotation_region import RegionMeasurement, measure_region, region_mask
 from .hsi_data import Functionality, HSIData, ImageFormat
 from .hsi_reader import HSI_FILE_FILTER, HSIReader
 from .roi import Masked, polygon_mask
+from .spectral_analysis import (
+    RegionSpectrum,
+    SimilarityResult,
+    SpectralAnalysisService,
+    SpectrumTransform,
+)
 from .super_resolution_model import (
     SuperResolutionRequest,
     SuperResolutionResult,
@@ -109,7 +116,10 @@ __all__ = [
     "ClassificationLayer",
     "ClassificationLayerComposite",
     "ClassificationLayerModel",
+    "LeafLabel",
     "LeafSeparationResult",
+    "draw_leaf_labels",
+    "place_leaf_labels",
     "separate_leaves",
     "ClassificationService",
     "ClassIndexStatistics",
@@ -131,6 +141,10 @@ __all__ = [
     "OPTIONAL_VISUALIZATION_MODES",
     "polygon_mask",
     "RegionMeasurement",
+    "RegionSpectrum",
+    "SimilarityResult",
+    "SpectralAnalysisService",
+    "SpectrumTransform",
     "SpectrumResult",
     "SuperResolutionError",
     "SuperResolutionRequest",

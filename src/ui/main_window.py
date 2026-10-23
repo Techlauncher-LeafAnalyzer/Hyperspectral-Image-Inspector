@@ -22,6 +22,7 @@ from core import (
     HSIReader,
     HSI_FILE_FILTER,
     OPTIONAL_VISUALIZATION_MODES,
+    SpectralAnalysisService,
     SuperResolutionRequest,
     SuperResolutionResult,
     SuperResolutionService,
@@ -43,12 +44,20 @@ from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.index_mean_dialog import IndexMeanDialog
 from ui.image_capabilities import ImageCapabilityController
-from ui.resolution_toggle import ImageStatePanel, ResolutionSwitchGroup
+from ui.resolution_toggle import ResolutionSwitchGroup
 from ui.resource_usage import ResourceUsageWidget
 from ui.hypercube_controller import HypercubeController
-from ui.spectrum_dialog import SpectrumDialog
+from ui.spectrum_controller import SpectrumController
 from ui.super_resolution_worker import SuperResolutionWorker
 from ui.tab_transition.handler import TabTransitionHandler
+from ui.tool_windows import (
+    ToolWindow,
+    ToolWindowStripe,
+    ViewToggleButton,
+    paint_calibration_icon,
+    paint_spectrum_icon,
+    paint_super_resolution_icon,
+)
 from ui.theme import CLASSIFIER_BORDER_QSS, CLASSIFIER_POPUP_QSS
 from ui.viewer import HSIViewer, PixelValueEntry
 
@@ -119,6 +128,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._viz_view_scale = 1
         self._close_after_sr = False
         self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
+        # True while the Visualization tab shows the spectral-similarity map
+        # instead of a VisualizationMode render.
+        self._similarity_view = False
         self._visualization_results: dict[VisualizationMode, VisualizationResult] = {}
         self._visualization_cache: dict[
             tuple[bool, bool], tuple[HSIData, dict[VisualizationMode, VisualizationResult]]
@@ -223,6 +235,34 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             parent_widget=self,
         )
         self._batch_controller.readyToClose.connect(self.close)
+        self._spectrum_controller = SpectrumController(
+            visualization_service=self._visualization_service,
+            analysis_service=SpectralAnalysisService(),
+            data_for_viewer=self._spectrum_data_for_viewer,
+            display_data=self._display_data,
+            blocked_reason=self._spectrum_blocked_reason,
+            hypercube_busy=lambda: self._hypercube_controller.is_building(),
+            stop_hypercube=lambda: self._hypercube_controller.stop_and_wait(),
+            resume_hypercube=lambda: self._hypercube_controller.resume(
+                self._display_data()
+            ),
+            analysis_regions=self._classification_controller.analysis_regions,
+            viewer_names={
+                self.viewer: "Visualization",
+                self.superResViewer: "Super-Resolution",
+                self.calibrationViewer: "Calibration",
+                self.classificationViewer: "Classification",
+            },
+            statusbar=self.statusbar,
+            parent_widget=self,
+        )
+        self._spectrum_controller.similarityReady.connect(self._on_similarity_ready)
+        self.classificationLayerPanel.classSpectraRequested.connect(
+            self._spectrum_controller.show_class_spectra
+        )
+        self.classificationLayerPanel.inspectRequested.connect(
+            self._spectrum_controller.inspect_region
+        )
         self._configure_tabs()
         self._configure_file_menu()
         self._resource_usage = ResourceUsageWidget(self.tabWidget)
@@ -230,7 +270,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._resource_usage, QtCore.Qt.Corner.TopRightCorner
         )
         # Keep the Designer radio buttons as the shared state source; the visible
-        # SR comparison uses the same segmented control as all image-view rails.
+        # choice is the Super-Resolution toggle in the left tool-window stripe.
         self.lowResButton.hide()
         self.highResButton.hide()
         self.superResFlowArrow.hide()
@@ -238,42 +278,111 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.superResGrid.addWidget(
             self.runSuperResButton, 0, 1, 1, 3, QtCore.Qt.AlignmentFlag.AlignLeft
         )
+        self._configure_tool_windows()
         self._resolution_switches = ResolutionSwitchGroup(
-            self._configure_image_state_panels(),
+            self.superResolutionSwitch,
+            self.calibrationSwitch,
             self._select_canvas_resolution,
             self,
             on_calibration_clicked=self._select_canvas_calibration,
         )
-        self.superResolutionSwitch = self._resolution_switches.switches[3]
-        self.visualizationStack.currentChanged.connect(
-            lambda _index: self._resolution_switches.schedule_raise()
-        )
         self._connect_signals()
         self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
+        self._stripe_geometry_timer = QtCore.QTimer(self)
+        self._stripe_geometry_timer.setSingleShot(True)
+        self._stripe_geometry_timer.timeout.connect(self._sync_stripe_geometry)
+        self.tabWidget.installEventFilter(self)
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if watched is self.tabWidget and event.type() in (
+            QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Move,
+            QtCore.QEvent.Type.Show, QtCore.QEvent.Type.LayoutRequest,
+        ):
+            self._stripe_geometry_timer.start(0)
+        return super().eventFilter(watched, event)
+
+    def _sync_stripe_geometry(self) -> None:
+        """Fill the space left of the image area with buttons, and align the logo.
+
+        Buttons span from the window edge to the image viewer with an even
+        :data:`STRIPE_GAP` on both sides: the left gap is inside the stripe,
+        and the right gap is measured to the image area itself, so the tab
+        pane's border/padding count toward it rather than adding to it. The
+        logo centres on the main tab bar's midpoint.
+        """
+        stripe = self.toolWindowStripe
+        tab_bar = self.tabWidget.tabBar()
+        page = self.tabWidget.currentWidget()
+        if not tab_bar.count() or page is None:
+            return
+        # Distance from the stripe's right edge to where page content starts
+        # (just the pane border: pages have no left margin).
+        content_left = page.mapTo(self, QtCore.QPoint()).x()
+        stripe_left = stripe.mapTo(self, QtCore.QPoint()).x()
+        pane_inset = content_left - (stripe_left + stripe.stripe_width())
+        stripe.set_right_inset(max(pane_inset, 0))
+        # Siblings, not ancestors: map through global coordinates.
+        mid = stripe.mapFromGlobal(tab_bar.mapToGlobal(tab_bar.tabRect(0).center())).y()
+        stripe.align_logo_to(mid)
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
     # ------------------------------------------------------------------ #
 
-    def _configure_image_state_panels(self) -> tuple[ImageStatePanel, ...]:
-        panels = []
-        for canvas, layout, name in (
-            (self.visualizationStack, self.verticalLayout, "visualizationResolutionSwitch"),
-            (self.calibrationViewer, self.calibrationLayout, "calibrationResolutionSwitch"),
-            (self.classificationViewer, self.classificationViewerRow, "classificationResolutionSwitch"),
-            (self.superResViewer, self.verticalLayout_2, "superResolutionSwitch"),
-        ):
-            row = QtWidgets.QWidget(canvas.parentWidget())
-            row.setObjectName(f"{name}Row")
-            layout.replaceWidget(canvas, row)
-            row_layout = QtWidgets.QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(12)
-            panel = ImageStatePanel(row, name)
-            row_layout.addWidget(panel)
-            row_layout.addWidget(canvas, 1)
-            panels.append(panel)
-        return tuple(panels)
+    def _configure_tool_windows(self) -> None:
+        """Build the JetBrains-style left stripe.
+
+        Top: the Super-Resolution and Calibration view toggles, which switch
+        every tab between image versions (highlighted = High Res / After,
+        gray = nothing to compare yet). Below a divider: the Spectrum tool
+        window, highlighted while open (docked or popped out).
+        """
+        self.toolWindowStripe = ToolWindowStripe(self)
+        self.toolWindowStripe.set_logo(str(ICON_PATH))
+        self.addToolBar(QtCore.Qt.ToolBarArea.LeftToolBarArea, self.toolWindowStripe)
+        # The stripe now spans the old left margin up to the image area, and
+        # each page's image starts at the pane's left edge, so the gap between
+        # the stripe's buttons and the image is the same on every tab.
+        for layout in (self.horizontalLayout, *(
+            page.layout() for page in (
+                self.Visualization, self.SuperResolution, self.Calibration,
+                self.Classification, self.Batch,
+            ) if page.layout() is not None
+        )):
+            margins = layout.contentsMargins()
+            layout.setContentsMargins(0, margins.top(), margins.right(), margins.bottom())
+        self.superResolutionSwitch = ViewToggleButton(
+            paint_super_resolution_icon, "superResolutionSwitch",
+            off_label="Low Res", on_label="High Res (Super-Resolution 2×)",
+            unavailable_hint="Super-Resolution: run Super-Resolution to compare resolutions",
+            parent=self.toolWindowStripe,
+        )
+        self.calibrationSwitch = ViewToggleButton(
+            paint_calibration_icon, "calibrationSwitch",
+            off_label="Before Calibration", on_label="After Calibration",
+            unavailable_hint="Calibration: run Calibration to compare before and after",
+            parent=self.toolWindowStripe,
+        )
+        for switch in (self.superResolutionSwitch, self.calibrationSwitch):
+            switch.set_state(checked=False, available=False)
+            self.toolWindowStripe.add_button(switch)
+        self.toolWindowStripe.add_divider()
+        self.spectrumTool = ToolWindow(
+            self, self.toolWindowStripe,
+            object_name="spectrum", title="Spectrum",
+            icon_painter=paint_spectrum_icon,
+            content=self._spectrum_controller.inspector,
+            tooltip="Spectrum Inspector: live spectrum under the cursor "
+                    "(Ctrl+Click a pixel to pin it)",
+        )
+        self._spectrum_controller.set_tool_window(self.spectrumTool)
+        self.spectrumTool.floatingChanged.connect(
+            lambda floating: self._spectrum_controller.inspector.set_compact(not floating)
+        )
+        self._spectrum_controller.inspector.set_compact(True)
+        self.spectrumTool.set_available(
+            False, "Spectrum Inspector: load an image first"
+        )
 
     def _configure_tabs(self) -> None:
         tab_settings = (
@@ -382,6 +491,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             viewer.cropRequested.connect(self._on_crop_requested)
             viewer.polygonCropRequested.connect(self._on_polygon_crop_requested)
             viewer.spectrumPlotRequested.connect(self._on_spectrum_plot)
+            viewer.spectrumInspectorRequested.connect(self._spectrum_controller.show)
+            viewer.imageMeanSpectrumRequested.connect(
+                self._spectrum_controller.show_image_mean
+            )
+            viewer.classSpectraRequested.connect(
+                self._spectrum_controller.show_class_spectra
+            )
             viewer.meanIndexRequested.connect(self._on_mean_index)
             viewer.pixel_value_provider = self._pixel_values_at
         self.superResViewer.pixel_value_provider = self._sr_pixel_values_at
@@ -391,6 +507,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.classificationViewer.pixel_value_provider = (
             self._classification_pixel_values_at
         )
+        self.classificationViewer.class_spectra_available = True
 
         # SWIR water indices live outside the generated form: they are the
         # applicable modes for cameras whose range excludes the visible bands.
@@ -401,6 +518,27 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         for column, button in enumerate((self.modeNDWI, self.modeNDMI)):
             self.modeButtons.addButton(button)
             self.gridLayout.addWidget(button, 2, column, 1, 1)
+        # Full-spectrum tools: a Spectral Angle Mapper view, and the live
+        # Spectrum Inspector that drives it.
+        self.modeSimilarity = QtWidgets.QRadioButton("Similarity", self.modeSelect)
+        self.modeSimilarity.setObjectName("modeSimilarity")
+        self.modeSimilarity.setToolTip(
+            "Spectral angle to a reference spectrum across every band "
+            "(bright = similar). Choose the reference in the Spectrum Inspector."
+        )
+        self.modeButtons.addButton(self.modeSimilarity)
+        self.gridLayout.addWidget(self.modeSimilarity, 2, 2, 1, 1)
+        self.modeSimilarity.toggled.connect(self._on_similarity_mode_toggled)
+        self.spectrumInspectorButton = QtWidgets.QPushButton(
+            "Spectrum Inspector", self.modeSelect
+        )
+        self.spectrumInspectorButton.setObjectName("spectrumInspectorButton")
+        self.spectrumInspectorButton.setToolTip(
+            "Open a live spectrum plot that follows the cursor over any image.\n"
+            "Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it."
+        )
+        self.spectrumInspectorButton.clicked.connect(self._spectrum_controller.show)
+        self.gridLayout.addWidget(self.spectrumInspectorButton, 2, 3, 1, 1)
         self.modeSelect.setMaximumHeight(170)
 
         mode_buttons = (
@@ -755,8 +893,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         # runningChanged(True) precedes creation of the first calibration worker.
         self._sync_image_switches()
         if running:
-            for switch in self._resolution_switches.switches + self._resolution_switches.calibration_switches:
-                switch.setEnabled(False)
+            self._resolution_switches.set_enabled(False)
 
     @QtCore.pyqtSlot(bool)
     def _on_calibration_result_ready(self, high: bool) -> None:
@@ -798,6 +935,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         self._visualization_cache.clear()
         self._super_res_result = None
+        self._spectrum_controller.shutdown()
         for transition in self._tab_transitions:
             transition.stop()
         self._resolution_switches.stop()
@@ -863,6 +1001,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         candidate.mask_array = np.zeros(rgb_array.shape[:2], dtype=np.uint8)
         self._hsi_data.update_from(candidate)
         self._classification_controller.clear_result()
+        self._spectrum_controller.image_changed()
+        self.spectrumTool.set_available(True)
         calibration_status = self._calibration_controller.source_loaded(
             self._hsi_data.source_path
         )
@@ -879,6 +1019,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
         self._active_visualization_mode = VisualizationMode.RGB
+        self._similarity_view = False
         self.modeRGB.setChecked(True)
         auto_cropped = self._auto_crop_marker_pattern()
         self._push_image_to_viewers()
@@ -909,9 +1050,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         display_rgb = self._display_data().rgb_array
         if self.tabWidget.currentWidget() is self.Visualization:
-            result = self._visualization_results.get(self._active_visualization_mode)
-            if result is not None:
-                display_rgb = result.display_rgb
+            visualization_rgb = self._visualization_display_rgb()
+            if visualization_rgb is not None:
+                display_rgb = visualization_rgb
         classification_rgb = (
             self._classification_controller.composited_rgb()
             if self._active_viewer is self.classificationViewer
@@ -968,8 +1109,40 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         self.visualizationStack.setCurrentWidget(self.viewer)
         self._active_visualization_mode = mode
+        self._similarity_view = False
+        self._spectrum_controller.set_visualization(self._visualization_results.get(mode))
         if self._hsi_data.is_loaded():
             self._refresh_viewers_display()
+
+    def _on_similarity_mode_toggled(self, checked: bool) -> None:
+        self._similarity_view = checked
+        if not checked:
+            return
+        self.visualizationStack.setCurrentWidget(self.viewer)
+        self._spectrum_controller.set_visualization(None)
+        if self._spectrum_controller.similarity_for(self._display_data()) is None:
+            self._spectrum_controller.show()
+            self.statusbar.showMessage(
+                "Pin a spectrum or plot class spectra, then choose Map similarity", 8000
+            )
+        if self._hsi_data.is_loaded():
+            self._refresh_viewers_display()
+
+    def _on_similarity_ready(self) -> None:
+        if self.modeSimilarity.isChecked():
+            self._refresh_viewers_display()
+        else:
+            self.modeSimilarity.setChecked(True)
+        self.tabWidget.setCurrentWidget(self.Visualization)
+
+    def _visualization_display_rgb(self) -> Optional[NDArray[np.uint8]]:
+        """Return what the Visualization viewer shows, if not the plain RGB."""
+
+        if self._similarity_view:
+            similarity = self._spectrum_controller.similarity_for(self._display_data())
+            return similarity.display_rgb if similarity is not None else None
+        result = self._visualization_results.get(self._active_visualization_mode)
+        return result.display_rgb if result is not None else None
 
     def _recompute_visualizations(self) -> None:
         self._hypercube_controller.stop_and_wait()
@@ -1008,12 +1181,17 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._classification_controller.set_visualization_results(
             self._visualization_results
         )
+        if not self._similarity_view:
+            self._spectrum_controller.set_visualization(
+                self._visualization_results.get(self._active_visualization_mode)
+            )
 
     def _refresh_viewers_display(self) -> None:
         data = self._display_data()
         self._sync_image_switches()
-        result = self._visualization_results.get(self._active_visualization_mode)
-        display_rgb = result.display_rgb if result is not None else data.rgb_array
+        display_rgb = self._visualization_display_rgb()
+        if display_rgb is None:
+            display_rgb = data.rgb_array
         rgb_display = data.rgb_array
         new_scale = 2 if self._is_super_resolution_active() else 1
         factor = new_scale / self._viz_view_scale
@@ -1069,6 +1247,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._viz_view_scale = new_scale
         self._classification_controller.sync_annotations()
         self._refresh_super_resolution_display()
+        self._spectrum_controller.refresh_markers()
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
         values: dict[str, PixelValueEntry] = {}
@@ -1100,49 +1279,34 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     # Private: viewer signal handlers                                      #
     # ------------------------------------------------------------------ #
 
-    def _on_spectrum_plot(self, pos: QPointF) -> None:
-        if not self._hsi_data.is_loaded():
-            return
+    def _spectrum_blocked_reason(self) -> Optional[str]:
+        """Why the cube can't be read for a spectrum right now, if it can't."""
+
         if self._calibration_controller.is_running():
-            self.statusbar.showMessage(
-                "Spectrum reads are unavailable while calibration is running",
-                5000,
-            )
-            return
+            return "Spectrum reads are unavailable while calibration is running"
         if self._classification_controller.is_running():
-            self.statusbar.showMessage(
-                "Spectrum reads are unavailable while classification is running",
-                5000,
-            )
-            return
-
+            return "Spectrum reads are unavailable while classification is running"
         if self._super_res_worker is not None:
-            self.statusbar.showMessage("Spectrum reads are paused during SR")
-            return
+            return "Spectrum reads are paused during SR"
+        return None
+
+    def _spectrum_data_for_viewer(self, viewer: HSIViewer) -> Optional[HSIData]:
+        """Return the cube whose pixels ``viewer`` currently shows."""
+
+        if not self._hsi_data.is_loaded():
+            return None
+        if viewer is self.superResViewer and not viewer.has_photo():
+            return None
         calibration_result = self._calibration_controller.display_result
-        data = (
-            calibration_result.data
-            if self.sender() is self.calibrationViewer and calibration_result
-            else self._display_data()
-        )
-        if self.sender() is self.superResViewer and not self.superResViewer.has_photo():
-            return
-        row, column = int(pos.y()), int(pos.x())
-        if not (0 <= row < data.rows and 0 <= column < data.columns):
-            return
+        if viewer is self.calibrationViewer and calibration_result:
+            return calibration_result.data
+        return self._display_data()
 
-        # A hypercube worker still in flight reads the same underlying
-        # SpyFile handle; serialize this read behind it rather than risking
-        # a concurrent read of a non-thread-safe file object.
-        self._hypercube_controller.stop_and_wait()
-        try:
-            result = self._visualization_service.spectrum(data, row, column)
-        except HSIError as exc:
-            QMessageBox.critical(self, "Unable to plot spectrum", str(exc))
+    def _on_spectrum_plot(self, pos: QPointF) -> None:
+        viewer = self.sender()
+        if not isinstance(viewer, HSIViewer):
             return
-
-        dialog = SpectrumDialog(result, parent=self)
-        dialog.exec()
+        self._spectrum_controller.pin(viewer, int(pos.y()), int(pos.x()))
 
     def _on_mean_index(self, index_name: str) -> None:
         if self.sender() is self.superResViewer and self.highResButton.isChecked():
@@ -1226,6 +1390,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         """
         self._classification_controller.clear_result()
         self._calibration_controller.source_geometry_changed()
+        self._spectrum_controller.geometry_changed()
 
     def _apply_crop(self, crop: Callable[[], tuple[int, int] | None], label: str) -> None:
         """Snapshot, apply a crop operation, and refresh, or roll back."""
@@ -1299,7 +1464,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         return self._viz_view_scale
 
     def _on_tab_changed(self, index: int) -> None:
-        self._resolution_switches.schedule_raise()
         new_viewer = self._viewer_for_tab(index)
         if new_viewer is None:
             return

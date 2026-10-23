@@ -218,7 +218,8 @@ def draw_circle(self, point: NDArray[uint32], label: int) -> None:
 | Ctrl + release (no Shift) | Re-render the mask overlay |
 | Shift held during Ctrl+release | Batch mode — defer mask re-render |
 | Shift release | Flush batch, re-render mask overlay |
-| Right-click | Context menu (Spectrum Plot, Index Mean, Show Pixel Values, Crop) |
+| Hover (no buttons) | Emits `pixelHovered(row, column)` once per new pixel; drives the Spectrum Inspector's live trace |
+| Right-click | Context menu (Spectrum Plot, Index Mean, Show Pixel Values, Crop) — Spectrum Plot pins that pixel in the Spectrum Inspector |
 | Right-click menu → Crop, then drag | Crop-selection mode; release emits `cropRequested` |
 
 Point clicks accumulate into `input_points`/`input_labels` and draw markers via `draw_circle`, but nothing in the current codebase runs a segmentation model against them — `mask_array` is only ever set directly by the controller (on image load, on crop, etc.), never produced from these prompts. The click-collection UI is scaffolding for a future model-driven segmentation flow; build that wiring (and any undo/redo or box-prompt support it needs) when the feature actually lands rather than trusting the pre-`LEAF-156` version of this doc.
@@ -289,6 +290,45 @@ New private helper class (not present in the previous design). Gives a `QTabWidg
 ## Removed: `ui/panels/` (historical)
 
 The original design swapped a single `FeaturePanel` subclass (`base_panel.py`, plus `calibration_panel.py`/`classification_panel.py`/`super_resolution_panel.py`/`visualization_panel.py`) in and out of a named `panelContainer`, selected via a sidebar + `Functionality` dispatch. After the pivot to the static `QTabWidget` layout (PRs #5–#11), none of these classes were instantiated anywhere — `main_window.py` kept only their imports. That dead code, along with the four per-panel `.ui` files (`src/qt/Visualization.ui`, `Calibration.ui`, `Classification.ui`, `Super-resolution.ui`), has since been deleted; `src/qt/` now contains only `MainWindow.ui`.
+
+---
+
+## `ui/tool_windows.py` — left tool-window stripe
+
+JetBrains-style tool windows. `ToolWindowStripe` is a fixed vertical
+`QToolBar` in the left toolbar area (outside the dock area, so it stays on the
+window edge). Each `ToolWindow` binds a `ToolStripeButton` to a panel (compact
+title bar with ⧉ pop out / ⇤ dock and – hide, plus the content) that lives in
+exactly one container: a fixed left `QDockWidget`, or a normal top-level
+`_PoppedOutWindow` with a system title bar.
+
+**Why not Qt floating docks:** a floating/dragged `QDockWidget` is moved by a
+client-side mouse grab, which Wayland refuses ("This plugin supports grabbing
+the mouse only for popup windows"), leaving the window stuck and drag-redock
+broken. The docks are therefore neither movable nor floatable, and pop-out
+reparents the panel into a compositor-managed window instead. Closing that
+window (system ✕) hides the tool; it reopens popped out, at its last size.
+
+| Button state | Meaning | Look |
+|---|---|---|
+| Selected | window open — docked **or** popped out | tinted highlight, accent icon |
+| Not selected | window hidden | no background (faint tint on hover) |
+| Disabled | nothing to show (`ToolWindow.set_available(False, reason)`) | gray icon; tooltip gives the reason |
+
+The stripe has two parts:
+
+- **View toggles** (top) — `ViewToggleButton`s for **Super-Resolution** and
+  **Calibration**, driven by `resolution_toggle.ResolutionSwitchGroup`. Each
+  switches *every* tab between two image versions: highlighted while the
+  second version (High Res / After Calibration) is shown, plain for the first,
+  gray while there is nothing to compare (tooltip says what to run).
+  Clicks go through `MainWindowController._select_canvas_resolution` /
+  `_select_canvas_calibration`, so busy-pipeline guards still apply. These
+  replaced the per-tab pill rails and the later "Image view" tool window. The stripe also shows the app logo, centred on the tab row; buttons sit an even `STRIPE_GAP` from the window edge and from the image area (pages have no left margin, so this holds on every tab).
+- **Tool windows** (below a divider) — currently **Spectrum**, the Spectrum
+  Inspector (see `docs/model_spectral_analysis_api.md`). Gray until an image
+  is loaded; the Spectra list stacks under the plot while docked and sits
+  beside it when popped out.
 
 ---
 

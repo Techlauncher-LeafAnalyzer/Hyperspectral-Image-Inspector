@@ -290,20 +290,11 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
         "Calibrated RGB": PixelValueEntry(value=rgb, color=rgb)
     }
 
-    received = []
-    import ui.main_window as controller
-
-    monkeypatch.setattr(
-        controller,
-        "SpectrumDialog",
-        lambda spectrum, parent: SimpleNamespace(
-            exec=lambda: received.append(spectrum)
-        ),
-    )
+    inspector = window._spectrum_controller.inspector
     window.calibrationViewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
-    assert len(received) == 1
+    assert len(inspector.pinned_spectra()) == 1
     np.testing.assert_allclose(
-        received[0].values, result.data.read_pixel(1, 2), atol=1e-6
+        inspector.pinned_spectra()[0].values, result.data.read_pixel(1, 2), atol=1e-6
     )
 
     output = tmp_path / "calibrated.png"
@@ -315,10 +306,10 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
 
     window.tabWidget.setCurrentWidget(window.Visualization)
     assert window._display_data() is result.data
-    assert window.Visualization.findChild(QtCore.QObject, "visualizationCalibrationSwitch") is not None
+    assert window.findChild(QtCore.QObject, "calibrationSwitch") is window.calibrationSwitch
     window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
     np.testing.assert_allclose(
-        received[-1].values, result.data.read_pixel(1, 2), atol=1e-6
+        inspector.pinned_spectra()[-1].values, result.data.read_pixel(1, 2), atol=1e-6
     )
     file_dialog.save_return = (str(tmp_path / "visualized_calibrated.png"), "")
     window.actionSaveImage.trigger()
@@ -451,12 +442,12 @@ def test_calibration_comparison_reuses_results_and_keeps_view_state(
     monkeypatch.setattr(window._super_resolution_service, "run", unexpected_processing)
     monkeypatch.setattr(window._visualization_service, "render", unexpected_processing)
     for _ in range(5):
-        switches[3].click()
+        switches[0].click()
         assert window._display_data() is calibrated.data
         assert window._visualization_results is after_previews
         assert all(switch.isChecked() for switch in switches)
         assert "Calibrated:" in window.superResStatusText.text()
-        switches[1].click()
+        switches[0].click()
         assert window._display_data() is raw
         assert window._visualization_results is before_previews
     np.testing.assert_array_equal(raw.read_bands(range(raw.bands)), original)
@@ -474,15 +465,12 @@ def test_before_calibration_spectrum_export_and_reset_follow_selection(
     _select_references(window, file_dialog, dark, bright)
     window.calibrateButton.click()
     _wait_for_calibration(qtbot, window)
-    switch = window._resolution_switches.calibration_switches[1]
+    switch = window._resolution_switches.calibration_switches[0]
     switch.click()
-    received = []
-    import ui.main_window as controller
-    monkeypatch.setattr(controller, "SpectrumDialog", lambda spectrum, parent:
-                        SimpleNamespace(exec=lambda: received.append(spectrum)))
+    inspector = window._spectrum_controller.inspector
     for viewer in (window.viewer, window.calibrationViewer, window.superResViewer):
         viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
-        np.testing.assert_allclose(received[-1].values, raw.read_pixel(1, 2))
+        np.testing.assert_allclose(inspector.pinned_spectra()[-1].values, raw.read_pixel(1, 2))
     output = tmp_path / "before.png"
     file_dialog.save_return = (str(output), "")
     window.tabWidget.setCurrentWidget(window.Calibration)
@@ -493,14 +481,14 @@ def test_before_calibration_spectrum_export_and_reset_follow_selection(
     # is selected, then a new calibration automatically selects After again.
     window.referenceFileButton.click()
     assert window._calibration_controller.result is None
-    assert all(switch.isHidden() for switch in window._resolution_switches.calibration_switches)
+    assert all(not switch.isEnabled() for switch in window._resolution_switches.calibration_switches)
     window.calibrateButton.click()
     _wait_for_calibration(qtbot, window)
-    assert switch.isChecked() and not switch.isHidden()
+    assert switch.isChecked() and switch.isEnabled()
     switch.click()
     window.load_image_from_path(synthetic_cube_path)
     assert window._calibration_controller.result is None
-    assert all(switch.isHidden() for switch in window._resolution_switches.calibration_switches)
+    assert all(not switch.isEnabled() for switch in window._resolution_switches.calibration_switches)
 
 
 def test_classification_layers_are_independent_before_and_after_calibration(
@@ -520,7 +508,7 @@ def test_classification_layers_are_independent_before_and_after_calibration(
     controller = window._classification_controller
     after_slot = controller._current_slot
     window.classificationLayerPanel._rows[1]._toggle.setChecked(False)
-    switch = window._resolution_switches.calibration_switches[2]
+    switch = window._resolution_switches.calibration_switches[0]
     switch.click()
     assert controller._current_slot.result is None
     assert not window.classificationLayerPanel._rows

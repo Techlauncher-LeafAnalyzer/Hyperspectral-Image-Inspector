@@ -86,7 +86,7 @@ def test_viewer_context_menu_keeps_actions_and_polished_identity(
     assert menu.objectName() == "viewerContextMenu"
     assert menu.minimumWidth() == 252
     assert {
-        "Spectrum Plot",
+        "Spectrum Analyzer",
         "Index Mean",
         "Show Pixel Values",
         "Crop",
@@ -95,6 +95,13 @@ def test_viewer_context_menu_keeps_actions_and_polished_identity(
     assert actions["Show Pixel Values"].isCheckable()
     assert actions["Show Pixel Values"].isChecked()
     assert actions["Index Mean"].menu().objectName() == "viewerIndexMenu"
+    spectrum_menu = actions["Spectrum Analyzer"].menu()
+    assert spectrum_menu.objectName() == "viewerSpectrumMenu"
+    assert [a.text() for a in spectrum_menu.actions() if a.text()] == [
+        "Pin Spectrum Here\tCtrl+Click",
+        "Add Image Mean",
+        "Open Spectrum Inspector",
+    ]
     assert [action.text() for action in actions["Index Mean"].menu().actions()] == [
         "NDVI",
         "EVI",
@@ -135,12 +142,20 @@ def test_context_menu_actions_keep_existing_signal_wiring(viewer_with_photo):
     menu = viewer_with_photo._build_context_menu(scene_pos)
     actions = {action.text(): action for action in menu.actions() if action.text()}
 
-    actions["Spectrum Plot"].trigger()
+    spectrum_actions = {
+        a.text().split("\t")[0]: a for a in actions["Spectrum Analyzer"].menu().actions()
+    }
+    inspector_spy = QSignalSpy(viewer_with_photo.spectrumInspectorRequested)
+    image_mean_spy = QSignalSpy(viewer_with_photo.imageMeanSpectrumRequested)
+    spectrum_actions["Pin Spectrum Here"].trigger()
+    spectrum_actions["Add Image Mean"].trigger()
+    spectrum_actions["Open Spectrum Inspector"].trigger()
     actions["Index Mean"].menu().actions()[0].trigger()
     actions["Show Pixel Values"].trigger()
     actions["Crop"].trigger()
 
     assert list(spectrum_spy[0]) == [scene_pos]
+    assert len(inspector_spy) == 1 and len(image_mean_spy) == 1
     assert list(mean_spy[0]) == ["NDVI"]
     assert viewer_with_photo._pixel_overlay_enabled is True
     assert viewer_with_photo._cropping is True

@@ -54,6 +54,11 @@ _ROTATE_HANDLE_PX = 24
 _ROTATE_KNOB_PX = 5
 # Holding Shift while rotating snaps to this many degrees.
 _ROTATE_SNAP_DEGREES = 15
+# Screen radius of a pinned-spectrum marker, and of the selected one. Pin
+# markers sit above annotations but below the crop overlays (z=10/11).
+_PIN_MARKER_PX = 9
+_PIN_MARKER_SELECTED_PX = 12
+_PIN_MARKER_Z = 9
 
 
 def _rotate_point(point: QPointF, center: QPointF, degrees: float) -> QPointF:
@@ -97,6 +102,18 @@ def _distance_to_segment(point: QPointF, line: QtCore.QLineF) -> float:
     return QtCore.QLineF(point, QPointF(line.x1() + t * dx, line.y1() + t * dy)).length()
 
 
+class PinMarkerSpec(NamedTuple):
+    """One pinned spectrum's marker: image pixel, number and colour (0-255)."""
+
+    row: int
+    column: int
+    number: int
+    color: tuple[int, int, int]
+    selected: bool = False
+    # Opaque ID echoed back by pinDragged/pinMoved/pinPicked.
+    key: str = ""
+
+
 class PixelValueEntry(NamedTuple):
     """A single visualization's reading at one pixel.
 
@@ -114,6 +131,11 @@ PixelValueProvider = Callable[
 ]
 
 
+# Context-menu label and its mouse shortcut, shared with the inspector's hints.
+PIN_SPECTRUM_TEXT = "Pin Spectrum Here"
+PIN_SPECTRUM_SHORTCUT = "Ctrl+Click"
+
+
 # All visualization modes except HyperCube, in display order.
 VISUALIZATION_NAMES = (
     "RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI", "NDWI", "NDMI"
@@ -122,6 +144,14 @@ VISUALIZATION_NAMES = (
 
 # Modes that only make sense for some cameras; hidden unless the image has them.
 OPTIONAL_VISUALIZATION_NAMES = frozenset(mode.value for mode in OPTIONAL_VISUALIZATION_MODES)
+
+
+def _contrast_text_color(color: tuple[int, int, int]) -> QColor:
+    """Black or white, whichever reads better on ``color``."""
+
+    red, green, blue = color
+    luminance = 0.299 * red + 0.587 * green + 0.114 * blue
+    return QColor(0, 0, 0) if luminance > 150 else QColor(255, 255, 255)
 
 
 def format_pixel_values_html(
@@ -177,6 +207,19 @@ class HSIViewer(QtWidgets.QGraphicsView):
     """
 
     spectrumPlotRequested = pyqtSignal(QPointF)
+    # Spectrum Analyzer submenu actions that need no pixel position.
+    spectrumInspectorRequested = pyqtSignal()
+    imageMeanSpectrumRequested = pyqtSignal()
+    classSpectraRequested = pyqtSignal()
+    # The image pixel under an idle cursor changed: (row, column). Emitted
+    # only on change, so a live spectrum plot reads at most once per pixel.
+    pixelHovered          = pyqtSignal(int, int)
+    # A pinned-spectrum marker was dragged: (key, row, column). pinDragged
+    # fires once per new pixel during the drag, pinMoved once on release.
+    pinDragged            = pyqtSignal(str, int, int)
+    pinMoved              = pyqtSignal(str, int, int)
+    # A pin marker was clicked without moving it.
+    pinPicked             = pyqtSignal(str)
     meanIndexRequested    = pyqtSignal(str)
     cropRequested         = pyqtSignal(QtCore.QRectF)
     # Payload is a list of (x, y) image-pixel vertex tuples, already clamped
@@ -243,6 +286,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.rgb: Optional[NDArray[np.uint8]] = None
         self.mask_array: Optional[NDArray[np.uint8]] = None
 
+        # Offer "Add Class Spectra" in the context menu (Classification tab).
+        self.class_spectra_available: bool = False
+
         # --- pixel value overlay ---
         self.pixel_value_provider: PixelValueProvider = self._no_pixel_values
         # Optional index names the current image can compute (see above).
@@ -253,6 +299,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._pixel_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._pixel_overlay.setTextFormat(Qt.TextFormat.RichText)
         self._pixel_overlay.hide()
+        self._hovered_pixel: Optional[tuple[int, int]] = None
+        self._pin_marker_items: list[QtWidgets.QGraphicsItem] = []
+        self._pin_markers: tuple[PinMarkerSpec, ...] = ()
+        # (marker key, root item, current pixel) while a pin is being dragged.
+        self._pin_drag: Optional[tuple[str, QtWidgets.QGraphicsItem, tuple[int, int]]] = None
+        self._pin_drag_moved = False
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
@@ -489,6 +541,78 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._scene.addItem(root)
         self._annotation_items.append(root)
 
+    def set_pin_markers(self, markers: tuple[PinMarkerSpec, ...]) -> None:
+        """Show a numbered circle on each pinned spectrum's pixel.
+
+        Circles keep a constant screen size at any zoom, take the colour of
+        their spectrum's line, and the selected pin is drawn larger. They are
+        never included in saved images. Left-dragging a circle moves its pin
+        (see :attr:`pinDragged` / :attr:`pinMoved`); clicking one picks it.
+        """
+
+        if self._pin_drag is not None:
+            # Keep the item being dragged; the controller's refresh mid-drag
+            # would otherwise snap it back under the cursor.
+            return
+        self._pin_markers = tuple(markers)
+        for item in self._pin_marker_items:
+            if item.scene() is self._scene:
+                self._scene.removeItem(item)
+        self._pin_marker_items = []
+        if not self.has_photo():
+            return
+        bounds = self._photo.pixmap().rect()
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+        font.setBold(True)
+        for marker in markers:
+            if not bounds.contains(marker.column, marker.row):
+                continue
+            radius = _PIN_MARKER_SELECTED_PX if marker.selected else _PIN_MARKER_PX
+            root = QGraphicsRectItem(-0.5, -0.5, 1, 1)
+            root.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            root.setPen(QPen(Qt.PenStyle.NoPen))
+            root.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            # Centre of the pixel, not its top-left corner.
+            root.setPos(marker.column + 0.5, marker.row + 0.5)
+            root.setZValue(_PIN_MARKER_Z + (0.5 if marker.selected else 0))
+            circle = QtWidgets.QGraphicsEllipseItem(
+                -radius, -radius, 2 * radius, 2 * radius, root
+            )
+            circle.setPen(QPen(QColor(255, 255, 255), 2.5 if marker.selected else 1.5))
+            circle.setBrush(QBrush(QColor(*marker.color)))
+            text = QtWidgets.QGraphicsSimpleTextItem(str(marker.number), root)
+            font.setPixelSize(max(8, int(radius * 1.3)))
+            text.setFont(font)
+            text.setBrush(QBrush(_contrast_text_color(marker.color)))
+            box = text.boundingRect()
+            text.setPos(-box.width() / 2, -box.height() / 2)
+            root.setToolTip(f"Pinned spectrum #{marker.number} · drag to move")
+            root.setData(0, marker.key)
+            self._scene.addItem(root)
+            self._pin_marker_items.append(root)
+
+    def _pin_at(self, view_pos: QtCore.QPoint) -> Optional[QtWidgets.QGraphicsItem]:
+        """The topmost pin marker under ``view_pos`` (screen-space hit test)."""
+
+        best = None
+        for item in self._pin_marker_items:
+            centre = self.mapFromScene(item.pos())
+            circle = item.childItems()[0]
+            radius = circle.rect().width() / 2 + 2
+            if math.hypot(view_pos.x() - centre.x(), view_pos.y() - centre.y()) <= radius:
+                if best is None or item.zValue() > best.zValue():
+                    best = item
+        return best
+
+    def _pin_pixel_at(self, view_pos: QtCore.QPoint) -> tuple[int, int]:
+        """Image pixel under ``view_pos``, clamped inside the image."""
+
+        scene = self.mapToScene(view_pos)
+        bounds = self._photo.pixmap().rect()
+        column = min(max(math.floor(scene.x()), 0), bounds.width() - 1)
+        row = min(max(math.floor(scene.y()), 0), bounds.height() - 1)
+        return row, column
+
     def draw_circle(self, point: NDArray[np.uint32], label: int) -> None:
         """Draw a foreground (green) or background (red) prompt circle."""
         color = PROMPT_POSITIVE_COLOR if label == 1 else PROMPT_NEGATIVE_COLOR
@@ -522,6 +646,24 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         self._remember_pointer(event)
         self._press_view_pos = event.position().toPoint()
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.has_photo()
+            and not self._cropping
+            and not self._polygon_cropping
+        ):
+            # Pins sit above everything else on the image, so they win the
+            # press (with or without Ctrl, so Ctrl+Click picks a pin up
+            # instead of dropping a new one on top of it).
+            pin = self._pin_at(event.position().toPoint())
+            if pin is not None:
+                pixel = (
+                    math.floor(pin.pos().y()), math.floor(pin.pos().x())
+                )
+                self._pin_drag = (pin.data(0), pin, pixel)
+                self._pin_drag_moved = False
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                return
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self.has_photo()
@@ -570,6 +712,16 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         self._remember_pointer(event)
+        if self._pin_drag is not None:
+            key, item, pixel = self._pin_drag
+            new_pixel = self._pin_pixel_at(event.position().toPoint())
+            if new_pixel != pixel:
+                row, column = new_pixel
+                item.setPos(column + 0.5, row + 0.5)
+                self._pin_drag = (key, item, new_pixel)
+                self._pin_drag_moved = True
+                self.pinDragged.emit(key, row, column)
+            return
         if self._annotation_interaction is not None:
             self._drag_annotation(
                 self._clamped_scene_point(event),
@@ -633,6 +785,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         if event.buttons() == Qt.MouseButton.NoButton:
             self._apply_idle_cursor()
         self._update_pixel_overlay(event.position().toPoint())
+        self._emit_hovered_pixel(event.position().toPoint())
 
     def enterEvent(self, event: QtGui.QEnterEvent) -> None:
         super().enterEvent(event)
@@ -644,10 +797,22 @@ class HSIViewer(QtWidgets.QGraphicsView):
         super().leaveEvent(event)
         self._pixel_overlay.hide()
         self._pointer_view_pos = None
+        self._hovered_pixel = None
         self._apply_idle_cursor()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         self._remember_pointer(event)
+        if self._pin_drag is not None:
+            key, _item, (row, column) = self._pin_drag
+            moved = self._pin_drag_moved
+            self._pin_drag = None
+            self._pin_drag_moved = False
+            if moved:
+                self.pinMoved.emit(key, row, column)
+            else:
+                self.pinPicked.emit(key)
+            self._apply_idle_cursor()
+            return
         if self._annotation_interaction is not None:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._annotation_interaction = None
@@ -723,6 +888,15 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
         clicked_pos = self.mapToScene(event.position().toPoint())
 
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Ctrl+Click pins the clicked pixel's spectrum in the Spectrum
+            # Inspector without moving the cursor off the region of interest.
+            pixel = QPointF(math.floor(clicked_pos.x()), math.floor(clicked_pos.y()))
+            if QtCore.QRectF(self._photo.pixmap().rect()).contains(pixel):
+                self.spectrumPlotRequested.emit(pixel)
+            self._apply_idle_cursor()
+            return
+
         input_point = np.array(
             [clicked_pos.x(), clicked_pos.y()], dtype=np.uint32
         )
@@ -785,9 +959,35 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
         icon_dir = QtCore.QFileInfo(__file__).absoluteDir().filePath("assets")
 
-        spectrum_action = menu.addAction(
-            "Spectrum Plot", lambda: self.spectrumPlotRequested.emit(scene_pos)
+        spectrum_menu = QMenu("Spectrum Analyzer", menu)
+        spectrum_menu.setObjectName("viewerSpectrumMenu")
+        spectrum_menu.setAccessibleName("Spectrum analyzer")
+        spectrum_menu.setMinimumWidth(230)
+        spectrum_menu.setToolTipsVisible(True)
+        # Text after the tab renders in the menu's shortcut column. It is a
+        # hint only: the click itself is handled in mouseReleaseEvent.
+        pin_action = spectrum_menu.addAction(
+            f"{PIN_SPECTRUM_TEXT}\t{PIN_SPECTRUM_SHORTCUT}",
+            lambda: self.spectrumPlotRequested.emit(scene_pos),
         )
+        pin_action.setToolTip(
+            "Add this pixel's spectrum to the Spectrum Inspector. Tip: "
+            "Ctrl+Click any pixel to pin it without opening this menu."
+        )
+        pin_action.setEnabled(self.has_photo())
+        mean_action = spectrum_menu.addAction(
+            "Add Image Mean", self.imageMeanSpectrumRequested.emit
+        )
+        mean_action.setEnabled(self.has_photo())
+        if self.class_spectra_available:
+            spectrum_menu.addAction(
+                "Add Class Spectra", self.classSpectraRequested.emit
+            ).setToolTip("Add the mean spectrum of each selected class")
+        spectrum_menu.addSeparator()
+        spectrum_menu.addAction(
+            "Open Spectrum Inspector", self.spectrumInspectorRequested.emit
+        )
+        spectrum_action = menu.addMenu(spectrum_menu)
 
         index_menu = QMenu("Index Mean", menu)
         index_menu.setObjectName("viewerIndexMenu")
@@ -1200,7 +1400,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
         ours after that handling, and keep the active drag cursor even when
         the controller rebuilds the selected annotation during a drag.
         """
-        if self._annotation_interaction is not None:
+        if self._pin_drag is not None:
+            cursor = Qt.CursorShape.ClosedHandCursor
+        elif (self._annotation_interaction is None
+              and self.has_photo() and self._pointer_view_pos is not None
+              and not (self._cropping or self._polygon_cropping)
+              and self._pin_at(self._pointer_view_pos) is not None):
+            cursor = Qt.CursorShape.OpenHandCursor
+        elif self._annotation_interaction is not None:
             mode = self._annotation_interaction[1]
             cursor = (
                 Qt.CursorShape.ClosedHandCursor if mode == "move"
@@ -1247,6 +1454,21 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._position_pixel_overlay(view_pos)
         self._pixel_overlay.show()
         self._pixel_overlay.raise_()
+
+    def _emit_hovered_pixel(self, view_pos: QtCore.QPoint) -> None:
+        if not self.has_photo():
+            return
+        # Floor, not QPointF.toPoint()'s rounding: pixel (r, c) spans
+        # [c, c+1) x [r, r+1) in scene coordinates.
+        scene_pos = self.mapToScene(view_pos)
+        pixel = QtCore.QPoint(math.floor(scene_pos.x()), math.floor(scene_pos.y()))
+        if not self._photo.pixmap().rect().contains(pixel):
+            self._hovered_pixel = None
+            return
+        hovered = (pixel.y(), pixel.x())
+        if hovered != self._hovered_pixel:
+            self._hovered_pixel = hovered
+            self.pixelHovered.emit(*hovered)
 
     def _position_pixel_overlay(self, view_pos: QtCore.QPoint) -> None:
         offset = QtCore.QPoint(16, 16)
