@@ -55,6 +55,7 @@ def test_each_separate_cluster_becomes_its_own_leaf_class():
     assert result.training_sample_counts.tolist() == [0, 0, 0, 10, 20]
     assert result.one_hot_masks.shape == (5, 40, 60)
     assert np.all(result.one_hot_masks.sum(axis=0) == 1)
+    assert separation.fixed_colors == {2: (0, 0, 0)}
     ClassificationLayerModel(result, names=separation.leaf_names)
 
 

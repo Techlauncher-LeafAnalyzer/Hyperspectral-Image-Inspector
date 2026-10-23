@@ -14,7 +14,7 @@ the same original region, so leaf edges are not eroded in the final result.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from scipy import ndimage as ndi
@@ -23,6 +23,10 @@ from .classification_model import SupervisedClassificationResult
 from .errors import ClassificationError
 
 PLANT_CLASS_ID = 1
+BACKGROUND_CLASS_ID = 2
+# Once the plant is split into leaves, background is drawn black so the
+# coloured leaves stand out instead of competing with a background hue.
+SEPARATED_BACKGROUND_COLOR = (0, 0, 0)
 
 # Regions smaller than this share of the plant (or the absolute floor) are
 # treated as noise and left in the original plant class.
@@ -33,10 +37,15 @@ _DEFAULT_OPENING_ITERATIONS = 2
 
 @dataclass(frozen=True, slots=True)
 class LeafSeparationResult:
-    """The re-labelled classification result and a display name per leaf."""
+    """The re-labelled result, a display name per leaf, and pinned colours.
+
+    ``fixed_colors`` maps class IDs that must not take a palette hue to their
+    display colour -- the background class, drawn black.
+    """
 
     result: SupervisedClassificationResult
     leaf_names: dict[int, str]
+    fixed_colors: dict[int, tuple[int, int, int]] = field(default_factory=dict)
 
     @property
     def leaf_count(self) -> int:
@@ -124,7 +133,14 @@ def separate_leaves(
         training_sample_counts=training_counts,
     )
     names = {leaf_id: f"Leaf {index}" for index, leaf_id in enumerate(leaf_ids, start=1)}
-    return LeafSeparationResult(result=separated, leaf_names=names)
+    fixed_colors = (
+        {BACKGROUND_CLASS_ID: SEPARATED_BACKGROUND_COLOR}
+        if BACKGROUND_CLASS_ID in class_ids
+        else {}
+    )
+    return LeafSeparationResult(
+        result=separated, leaf_names=names, fixed_colors=fixed_colors
+    )
 
 
 def _label_leaves(plant: np.ndarray, opening_iterations: int) -> np.ndarray:

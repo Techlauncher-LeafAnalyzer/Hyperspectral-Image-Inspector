@@ -17,7 +17,7 @@ import colorsys
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -382,6 +382,7 @@ class BatchService:
         classified = False
         classification_result = None
         leaf_names: dict[int, str] | None = None
+        fixed_colors: dict[int, tuple[int, int, int]] = {}
         csv_saved: Path | None = None
         extension =_EXPORT_EXTENSIONS[request.export_format]
         try:
@@ -486,8 +487,11 @@ class BatchService:
                         separation = separate_leaves(classification_result)
                         classification_result = separation.result
                         leaf_names = separation.leaf_names
+                        fixed_colors = separation.fixed_colors
                     class_ids = classification_result.class_ids
-                display_rgb = _colorize_class_map(classification_result.class_map, class_ids)
+                display_rgb = _colorize_class_map(
+                    classification_result.class_map, class_ids, fixed_colors
+                )
                 classified = True
 
             if request.export_csv:
@@ -649,26 +653,37 @@ class BatchService:
             progress(value, message)
 
 
-def _classification_palette(class_ids: Sequence[int]) -> dict[int, tuple[int, int, int]]:
+def _classification_palette(
+    class_ids: Sequence[int],
+    fixed_colors: Mapping[int, tuple[int, int, int]] | None = None,
+) -> dict[int, tuple[int, int, int]]:
     """Return a stable, evenly spaced display colour per class, Qt-free.
 
     Matches ``ui.classification_colors.classification_palette``'s HSV formula
-    so a batch-colorized class map looks the same as the single-image tab.
+    (including ``fixed_colors`` handling) so a batch-colorized class map
+    looks the same as the single-image tab.
     """
 
+    fixed_colors = fixed_colors or {}
     ordered_ids = tuple(int(class_id) for class_id in class_ids)
-    class_count = max(len(ordered_ids), 1)
+    hued_ids = [class_id for class_id in ordered_ids if class_id not in fixed_colors]
+    class_count = max(len(hued_ids), 1)
     palette: dict[int, tuple[int, int, int]] = {}
-    for color_index, class_id in enumerate(ordered_ids):
+    for color_index, class_id in enumerate(hued_ids):
         red, green, blue = colorsys.hsv_to_rgb(color_index / class_count, 0.72, 0.92)
         palette[class_id] = (round(red * 255), round(green * 255), round(blue * 255))
-    return palette
+    return {
+        class_id: tuple(fixed_colors[class_id]) if class_id in fixed_colors else palette[class_id]
+        for class_id in ordered_ids
+    }
 
 
 def _colorize_class_map(
-    class_map: np.ndarray, class_ids: Sequence[int]
+    class_map: np.ndarray,
+    class_ids: Sequence[int],
+    fixed_colors: Mapping[int, tuple[int, int, int]] | None = None,
 ) -> np.ndarray:
     display_rgb = np.zeros((*class_map.shape, 3), dtype=np.uint8)
-    for class_id, color in _classification_palette(class_ids).items():
+    for class_id, color in _classification_palette(class_ids, fixed_colors).items():
         display_rgb[class_map == class_id] = color
     return display_rgb

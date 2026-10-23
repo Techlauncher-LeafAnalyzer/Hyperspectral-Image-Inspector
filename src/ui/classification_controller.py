@@ -83,6 +83,7 @@ class _ClassificationSlot:
     active_data: Optional[HSIData] = None
     means: Optional[dict[int, dict[str, PixelValueEntry]]] = None
     leaves_separated: bool = False
+    fixed_colors: dict[int, tuple[int, int, int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -882,6 +883,7 @@ class ClassificationController(QObject):
         slot.layers = ClassificationLayerModel(result)
         slot.means = None
         slot.leaves_separated = False
+        slot.fixed_colors = {}
         if slot_key == self._is_super_resolution_active():
             self._populate_layer_panel(slot)
             self._show_result()
@@ -955,7 +957,10 @@ class ClassificationController(QObject):
         names.update(separation.leaf_names)
         result = separation.result
         slot.result = result
-        slot.rgb = self._colorize_class_map(result.class_map, result.class_ids)
+        slot.fixed_colors = separation.fixed_colors
+        slot.rgb = self._colorize_class_map(
+            result.class_map, result.class_ids, slot.fixed_colors
+        )
         slot.layers = ClassificationLayerModel(result, names=names)
         slot.means = None
         slot.leaves_separated = True
@@ -1389,6 +1394,7 @@ class ClassificationController(QObject):
             global_opacity=slot.layers.global_opacity,
             outline_mode=slot.layers.outline_mode,
             means=self._segment_means(slot),
+            fixed_colors=slot.fixed_colors,
         )
 
     def _segment_means(
@@ -1448,10 +1454,11 @@ class ClassificationController(QObject):
     def _colorize_class_map(
         class_map: np.ndarray,
         class_ids: tuple,
+        fixed_colors: Optional[Mapping[int, tuple[int, int, int]]] = None,
     ) -> NDArray[np.uint8]:
         """Map arbitrary class IDs to stable, evenly spaced display colors."""
 
         display_rgb = np.zeros((*class_map.shape, 3), dtype=np.uint8)
-        for class_id, color in classification_palette(class_ids).items():
+        for class_id, color in classification_palette(class_ids, fixed_colors).items():
             display_rgb[class_map == class_id] = color
         return display_rgb

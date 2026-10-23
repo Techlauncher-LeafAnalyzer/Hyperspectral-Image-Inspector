@@ -195,5 +195,8 @@ def test_separate_leaves_splits_plant_class_into_leaf_layers(
     layers = controller._current_slot.layers.layers
     assert [layer.name for layer in layers] == ["Leaf 1", "Leaf 2", "Soil"]
     assert [layer.pixel_count for layer in layers] == [9, 9, 46]
+    rgb = controller._current_slot.rgb
+    assert rgb[4, 0].tolist() == [0, 0, 0]
+    assert rgb[0, 0].any() and rgb[7, 7].any()
     assert not button.isEnabled()
     assert not dialogs.critical

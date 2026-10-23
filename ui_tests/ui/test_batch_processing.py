@@ -284,6 +284,12 @@ def test_batch_supervised_separate_leaves_writes_one_row_per_leaf(tmp_path):
         rows = list(csv.DictReader(handle))
     assert [row["class_name"] for row in rows] == ["Leaf 1", "Leaf 2", "Background"]
     assert [int(row["pixel_count"]) for row in rows] == [120, 100, 900 - 220]
+    from PIL import Image
+
+    with Image.open(file_result.output_path) as image:
+        preview = np.asarray(image.convert("RGB"))
+    assert preview[0, 0].tolist() == [0, 0, 0]
+    assert preview[5, 5].any() and preview[20, 20].any()
 
 
 def test_batch_separate_leaves_checkbox_reaches_request(window, tmp_path, monkeypatch):
