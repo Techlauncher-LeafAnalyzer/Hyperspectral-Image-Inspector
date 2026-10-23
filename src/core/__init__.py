@@ -55,6 +55,7 @@ from .classification_layer_model import (
     ClassificationLayerComposite,
     ClassificationLayerModel,
 )
+from .leaf_separation import LeafSeparationResult, separate_leaves
 from .classification_export_model import ExportRegion, export_class_summary_csv
 from .annotation_region import RegionMeasurement, measure_region, region_mask
 from .hsi_data import Functionality, HSIData, ImageFormat
@@ -108,6 +109,8 @@ __all__ = [
     "ClassificationLayer",
     "ClassificationLayerComposite",
     "ClassificationLayerModel",
+    "LeafSeparationResult",
+    "separate_leaves",
     "ClassificationService",
     "ClassIndexStatistics",
     "ClassVisualizationMean",

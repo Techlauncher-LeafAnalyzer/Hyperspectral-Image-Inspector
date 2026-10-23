@@ -96,6 +96,7 @@ class BatchController(QtCore.QObject):
         training_cube_button: QtWidgets.QPushButton,
         training_cube_edit: QtWidgets.QLineEdit,
         classifier_combo: QtWidgets.QComboBox,
+        separate_leaves_check: QtWidgets.QCheckBox,
         output_dir_button: QtWidgets.QPushButton,
         output_dir_edit: QtWidgets.QLineEdit,
         format_combo: QtWidgets.QComboBox,
@@ -126,6 +127,7 @@ class BatchController(QtCore.QObject):
         self._training_cube_button = training_cube_button
         self._training_cube_edit = training_cube_edit
         self._classifier_combo = classifier_combo
+        self._separate_leaves_check = separate_leaves_check
         self._output_dir_button = output_dir_button
         self._output_dir_edit = output_dir_edit
         self._format_combo = format_combo
@@ -196,6 +198,11 @@ class BatchController(QtCore.QObject):
             self._classifier_combo.addItem(
                 classifier_labels.get(classifier, classifier.value), classifier
             )
+
+        self._separate_leaves_check.setToolTip(
+            "After classifying each file, split clearly separate plant clusters "
+            "into one class per leaf"
+        )
 
         self._format_combo.clear()
         for export_format, label in _FORMAT_LABELS:
@@ -409,6 +416,7 @@ class BatchController(QtCore.QObject):
                     mode=BatchClassificationMode.SUPERVISED,
                     supervised_request=SupervisedClassificationRequest(classifier),
                     training_pair=pair,
+                    separate_leaves=self._separate_leaves_check.isChecked(),
                 )
 
         export_format = self._format_combo.currentData()

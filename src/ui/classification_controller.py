@@ -44,6 +44,7 @@ from core import (
     VisualizationResult,
     export_class_summary_csv,
     measure_region,
+    separate_leaves,
 )
 from ui.annotation_render import render_annotations
 from ui.classification_colors import classification_palette
@@ -81,6 +82,7 @@ class _ClassificationSlot:
     layers: Optional[ClassificationLayerModel] = None
     active_data: Optional[HSIData] = None
     means: Optional[dict[int, dict[str, PixelValueEntry]]] = None
+    leaves_separated: bool = False
 
 
 @dataclass
@@ -288,6 +290,7 @@ class ClassificationController(QObject):
         parent_widget: QtWidgets.QWidget,
         *,
         is_calibrated: Callable[[], bool] | None = None,
+        separate_leaves_button: QtWidgets.QPushButton | None = None,
     ) -> None:
         super().__init__()
         self._display_data_provider = display_data_provider
@@ -307,6 +310,7 @@ class ClassificationController(QObject):
         self._max_iterations_edit = max_iterations_edit
         self._groundtruth_path_edit = groundtruth_path_edit
         self._hyperspectral_path_edit = hyperspectral_path_edit
+        self._separate_leaves_button = separate_leaves_button
         self._load_image_action = load_image_action
         self._stop_hypercube = stop_hypercube
         self._parent = parent_widget
@@ -411,6 +415,10 @@ class ClassificationController(QObject):
     def set_image_loaded(self, loaded: bool) -> None:
         self._unsupervised_button.setEnabled(loaded)
         self._supervised_button.setEnabled(loaded)
+        if loaded:
+            self._update_separate_leaves_button()
+        elif self._separate_leaves_button is not None:
+            self._separate_leaves_button.setEnabled(False)
 
     def clear_result(self) -> None:
         """Discard both resolutions' labels when the cube geometry changes."""
@@ -420,6 +428,7 @@ class ClassificationController(QObject):
         self._annotation_slots = {}
         self._layer_panel.clear()
         self._sync_annotations()
+        self._update_separate_leaves_button()
 
     def set_visualization_results(
         self, results: Mapping[VisualizationMode, VisualizationResult]
@@ -449,6 +458,7 @@ class ClassificationController(QObject):
 
         self._slots[True] = _ClassificationSlot()
         self._calibrated_slots[True] = _ClassificationSlot()
+        self._update_separate_leaves_button()
 
     def refresh_display(self) -> None:
         """Show the layer panel for whichever classification result is active.
@@ -469,6 +479,7 @@ class ClassificationController(QObject):
         else:
             self._layer_panel.clear()
         self._sync_annotations()
+        self._update_separate_leaves_button()
 
     def sync_annotations(self) -> None:
         """Redraw annotations after another component replaced the viewer photo."""
@@ -504,6 +515,12 @@ class ClassificationController(QObject):
         self._hyperspectral_button.clicked.connect(self._on_select_hyperspectral_clicked)
         self._supervised_button.clicked.connect(self._on_supervised_classify_clicked)
         self._unsupervised_button.clicked.connect(self._on_unsupervised_classify_clicked)
+        if self._separate_leaves_button is not None:
+            self._separate_leaves_button.clicked.connect(self._on_separate_leaves_clicked)
+            self._separate_leaves_button.setToolTip(
+                "Run a supervised classification first, then split clearly "
+                "separate plant clusters into one class per leaf"
+            )
         self._layer_panel.visibilityChanged.connect(self._on_layer_visibility_changed)
         self._layer_panel.opacityChanged.connect(self._on_layer_opacity_changed)
         self._layer_panel.renameRequested.connect(self._on_layer_rename_requested)
@@ -825,6 +842,8 @@ class ClassificationController(QObject):
         self._load_image_action.setEnabled(False)
         self._unsupervised_button.setEnabled(active_button is self._unsupervised_button)
         self._supervised_button.setEnabled(active_button is self._supervised_button)
+        if self._separate_leaves_button is not None:
+            self._separate_leaves_button.setEnabled(False)
         active_button.setText("Cancel")
         active_button.setToolTip(
             "Request cancellation after the current classification stage"
@@ -861,6 +880,8 @@ class ClassificationController(QObject):
         )
         slot.rgb = self._colorize_class_map(result.class_map, class_ids)
         slot.layers = ClassificationLayerModel(result)
+        slot.means = None
+        slot.leaves_separated = False
         if slot_key == self._is_super_resolution_active():
             self._populate_layer_panel(slot)
             self._show_result()
@@ -904,11 +925,54 @@ class ClassificationController(QObject):
             "Classify from the selected ground-truth mask and training cube"
         )
 
+    def _update_separate_leaves_button(self) -> None:
+        """Enable leaf separation only for an unseparated supervised result."""
+
+        if self._separate_leaves_button is None:
+            return
+        slot = self._current_slot
+        self._separate_leaves_button.setEnabled(
+            not self.is_running()
+            and isinstance(slot.result, SupervisedClassificationResult)
+            and not slot.leaves_separated
+        )
+
+    def _on_separate_leaves_clicked(self) -> None:
+        """Replace the plant class with one class per clearly separate leaf."""
+
+        slot = self._current_slot
+        if not isinstance(slot.result, SupervisedClassificationResult) or self.is_running():
+            return
+        try:
+            separation = separate_leaves(slot.result)
+        except ClassificationError as exc:
+            QMessageBox.information(self._parent, "Cannot separate leaves", str(exc))
+            return
+        # Keep any names the user already gave the classes that survive.
+        names = {}
+        if slot.layers is not None:
+            names = {layer.class_id: layer.name for layer in slot.layers.layers}
+        names.update(separation.leaf_names)
+        result = separation.result
+        slot.result = result
+        slot.rgb = self._colorize_class_map(result.class_map, result.class_ids)
+        slot.layers = ClassificationLayerModel(result, names=names)
+        slot.means = None
+        slot.leaves_separated = True
+        self._populate_layer_panel(slot)
+        self._show_result()
+        self._update_separate_leaves_button()
+        self._statusbar.showMessage(
+            f"Separated the plant into {separation.leaf_count} leaf classes", 8000
+        )
+
     @QtCore.pyqtSlot()
     def _clear_worker(self) -> None:
         self._worker = None
         self._thread = None
         self._active_button = None
+        # Only now is the job no longer running, so the button can enable.
+        self._update_separate_leaves_button()
         self.runningChanged.emit(False)
         if self._close_after_classification:
             self._close_after_classification = False

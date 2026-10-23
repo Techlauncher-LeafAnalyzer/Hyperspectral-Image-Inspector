@@ -35,6 +35,7 @@ from .classification_model import (
 )
 from .classification_export_model import ExportRegion, export_class_summary_csv
 from .classification_layer_model import ClassificationLayerModel, ClassIndexStatistics
+from .leaf_separation import separate_leaves
 from .errors import (
     BatchError,
     CalibrationError,
@@ -93,12 +94,17 @@ class BatchClassificationOptions:
     Unsupervised K-means is independent per file. Supervised classification
     trains once per file from the same ``training_pair`` -- there is no
     single-example training workflow that spans multiple target cubes.
+
+    ``separate_leaves`` (supervised only) splits each file's plant class into
+    one class per clearly separate leaf, as the Classification tab's
+    Separate Leaves button does.
     """
 
     mode: BatchClassificationMode
     unsupervised_request: UnsupervisedClassificationRequest | None = None
     supervised_request: SupervisedClassificationRequest | None = None
     training_pair: TrainingFilePair | None = None
+    separate_leaves: bool = False
 
     def __post_init__(self) -> None:
         if self.mode is BatchClassificationMode.UNSUPERVISED:
@@ -115,6 +121,8 @@ class BatchClassificationOptions:
                 )
         else:
             raise BatchError(f"Unsupported batch classification mode: {self.mode}")
+        if self.separate_leaves and self.mode is not BatchClassificationMode.SUPERVISED:
+            raise BatchError("Leaf separation requires supervised classification.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,6 +381,7 @@ class BatchService:
         super_resolved = False
         classified = False
         classification_result = None
+        leaf_names: dict[int, str] | None = None
         csv_saved: Path | None = None
         extension =_EXPORT_EXTENSIONS[request.export_format]
         try:
@@ -473,6 +482,10 @@ class BatchService:
                         progress=classify_progress,
                         is_cancelled=is_cancelled,
                     )
+                    if request.classify.separate_leaves:
+                        separation = separate_leaves(classification_result)
+                        classification_result = separation.result
+                        leaf_names = separation.leaf_names
                     class_ids = classification_result.class_ids
                 display_rgb = _colorize_class_map(classification_result.class_map, class_ids)
                 classified = True
@@ -486,6 +499,7 @@ class BatchService:
                     classification_result,
                     request.output_directory / f"{path.stem}.csv",
                     overwrite=request.overwrite,
+                    class_names=leaf_names,
                 )
                 csv_progress(100, "Saved summary CSV")
 
@@ -533,6 +547,7 @@ class BatchService:
         output_path: Path,
         *,
         overwrite: bool,
+        class_names: dict[int, str] | None = None,
     ) -> Path:
         """Write the Classification tab's summary CSV for one processed cube.
 
@@ -552,7 +567,7 @@ class BatchService:
                 continue  # Camera lacks the bands for this index.
         rows, columns = data.rows, data.columns
         if classification_result is not None:
-            layers = ClassificationLayerModel(classification_result)
+            layers = ClassificationLayerModel(classification_result, names=class_names)
             means: dict[int, dict[str, object]] = {
                 layer.class_id: {} for layer in layers.layers
             }

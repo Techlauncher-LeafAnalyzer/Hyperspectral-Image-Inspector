@@ -225,3 +225,76 @@ def test_batch_without_csv_option_writes_no_csv(tmp_path):
     output_dir = tmp_path / "out"
     BatchService().run(BatchRequest((sample,), output_dir))
     assert not (output_dir / "sample.csv").exists()
+
+
+def _write_two_leaf_cube(directory: Path) -> tuple[Path, Path]:
+    """A cube with two separate leaf blocks, plus its plant/background mask."""
+    from PIL import Image
+
+    rng = np.random.default_rng(3)
+    bands = len(SYNTHETIC_WAVELENGTHS_NM)
+    labels = np.full((30, 30), 2, dtype=np.uint8)
+    labels[3:13, 3:13] = 1
+    labels[17:27, 15:27] = 1
+    leaf = np.linspace(0.1, 0.8, bands)
+    soil = np.linspace(0.5, 0.3, bands)
+    cube = np.where((labels == 1)[..., None], leaf, soil)
+    cube = (cube + rng.normal(0, 0.01, cube.shape)).astype(np.float32)
+    path = directory / "leaves.hdr"
+    envi.save_image(
+        str(path), cube, dtype=np.float32, interleave="bsq", ext=".img",
+        metadata={"wavelength": SYNTHETIC_WAVELENGTHS_NM},
+    )
+    mask = directory / "leaves_mask.png"
+    Image.fromarray(labels).save(mask)
+    return path, mask
+
+
+def test_batch_supervised_separate_leaves_writes_one_row_per_leaf(tmp_path):
+    import csv
+
+    from core import (
+        BatchClassificationMode,
+        BatchClassificationOptions,
+        BatchRequest,
+        BatchService,
+        SupervisedClassificationRequest,
+        SupervisedClassifierType,
+        TrainingPairResolver,
+    )
+
+    cube, mask = _write_two_leaf_cube(tmp_path)
+    pair = TrainingPairResolver().resolve_manual(mask, cube)
+    classify = BatchClassificationOptions(
+        mode=BatchClassificationMode.SUPERVISED,
+        supervised_request=SupervisedClassificationRequest(
+            SupervisedClassifierType.GAUSSIAN
+        ),
+        training_pair=pair,
+        separate_leaves=True,
+    )
+    output_dir = tmp_path / "out"
+    result = BatchService().run(
+        BatchRequest((cube,), output_dir, classify=classify, export_csv=True)
+    )
+
+    file_result = result.file_results[0]
+    assert file_result.succeeded, file_result.error
+    with file_result.csv_output_path.open(encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["class_name"] for row in rows] == ["Leaf 1", "Leaf 2", "Background"]
+    assert [int(row["pixel_count"]) for row in rows] == [120, 100, 900 - 220]
+
+
+def test_batch_separate_leaves_checkbox_reaches_request(window, tmp_path, monkeypatch):
+    cube, mask = _write_two_leaf_cube(tmp_path)
+    controller = window._batch_controller
+    controller._input_paths = [cube]
+    controller._output_directory = tmp_path / "out"
+    controller._training_mask_path = mask
+    controller._training_cube_path = cube
+    window.batchClassifyCheck.setChecked(True)
+    window.batchClassifyModeTabs.setCurrentIndex(1)
+    window.batchSeparateLeavesCheck.setChecked(True)
+
+    assert controller._build_request().classify.separate_leaves
