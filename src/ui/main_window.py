@@ -55,6 +55,7 @@ from ui.tool_windows import (
     STRIPE_GAP,
     StripeMenuButton,
     ToolSettingsPanel,
+    ToolStripeButton,
     ToolWindow,
     ToolWindowStripe,
     ViewToggleButton,
@@ -113,6 +114,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         super().__init__(*args, **kwargs)
         self.setupUi(self)
         self._setup_workflow_panels_form()
+        self.separateLeavesButton = self.classificationLayerPanel.separate_leaves_button
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QtGui.QIcon(str(ICON_PATH)))
         # Qt's app stylesheet misses the combo's left edge when its border changes.
@@ -177,7 +179,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             lambda: self._hypercube_controller.stop_and_wait(),
             self,
             is_calibrated=lambda: self._calibration_controller.display_result is not None,
-            separate_leaves_button=self.separateLeavesButton,
+            separate_leaves_button=self.classificationLayerPanel.separate_leaves_button,
         )
         self._calibration_controller = CalibrationController(
             self._hsi_data,
@@ -275,6 +277,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.classificationLayerPanel.inspectRequested.connect(
             self._spectrum_controller.inspect_region
         )
+        self._stripe_geometry_timer = QtCore.QTimer(self)
+        self._stripe_geometry_timer.setSingleShot(True)
+        self._stripe_geometry_timer.timeout.connect(self._sync_stripe_geometry)
         self._configure_tabs()
         self._configure_file_menu()
         self._configure_status_bar()
@@ -289,15 +294,13 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._connect_signals()
         self._configure_workflow_panels()
         self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
-        self._stripe_geometry_timer = QtCore.QTimer(self)
-        self._stripe_geometry_timer.setSingleShot(True)
-        self._stripe_geometry_timer.timeout.connect(self._sync_stripe_geometry)
         self.tabWidget.installEventFilter(self)
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if watched is self.tabWidget and event.type() in (
+        if watched in (self.tabWidget, self.classificationLayerPanel) and event.type() in (
             QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Move,
-            QtCore.QEvent.Type.Show, QtCore.QEvent.Type.LayoutRequest,
+            QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide,
+            QtCore.QEvent.Type.LayoutRequest,
         ):
             self._stripe_geometry_timer.start(0)
         return super().eventFilter(watched, event)
@@ -329,11 +332,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         right.set_inner_inset(
             0 if self._stripe_has_dock_open(right) else max(right_edge - content_right, 0)
         )
+        # Flyouts follow their buttons and make way for docked panels.
+        for tool in right.tool_windows:
+            tool.place_flyout()
 
     @staticmethod
     def _stripe_has_dock_open(stripe: ToolWindowStripe) -> bool:
         return any(
-            not tool.floating and tool.is_open() for tool in stripe.tool_windows
+            not tool.compact and not tool.floating and tool.is_open()
+            for tool in stripe.tool_windows
         )
 
     # ------------------------------------------------------------------ #
@@ -419,25 +426,31 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _configure_workflow_panels(self) -> None:
         """Build the right stripe: one captioned pill per workflow panel.
 
-        These replace the old main tabs. Each pill opens a tool window holding
-        a panel from ``WorkflowPanels.ui``. Visualization, Super-Resolution,
-        Calibration and Segmentation are bound to a view, so turning to one
-        of them (opening it, clicking into it, or activating its popped-out
-        window) shows that view on the canvas, and its pill carries an accent
-        marker. Batch has no view of its own: it works on files, not the
-        canvas.
+        These replace the old main tabs. Visualization, Super-Resolution and
+        Calibration need little room, so each pill opens a compact flyout over
+        the image (shown on hover, pinned by a click) holding a panel from
+        ``WorkflowPanels.ui``. Segment is a plain toggle for the Segmentation
+        view's own inspector (see :meth:`_on_segmentation_pill_clicked`), and
+        Batch gets a full-height dock; dividers set those two apart. The
+        first four pills are bound to a view: turning to one shows that view
+        on the canvas, and its pill carries an accent marker. Batch has no
+        view of its own: it works on files, not the canvas.
 
         ``tabWidget`` is the canvas's page stack, with its tab bar hidden, so
         view switching keeps its pan/zoom hand-off and fade.
         """
-        self.workflowStripe = ToolWindowStripe(
+        stripe = self.workflowStripe = ToolWindowStripe(
             self, edge=QtCore.Qt.Edge.RightEdge, title="Workflow panels",
             object_name="workflowStripe", show_logo=False,
         )
-        self.addToolBar(self.workflowStripe.toolbar_area, self.workflowStripe)
+        self.addToolBar(stripe.toolbar_area, stripe)
         self.tabWidget.tabBar().hide()
 
-        panels = (
+        self.workflowTools: dict[str, ToolWindow] = {}
+        # Stripe button → the canvas view it is bound to.
+        self._view_pills: dict[ToolStripeButton, QtWidgets.QWidget] = {}
+        flyouts = (
+            # name, title, caption, icon, content, view page, tooltip
             ("visualization", "Visualization", "Visualize", paint_visualization_icon,
              self.visualizationPanel, self.Visualization,
              "Visualization: RGB, vegetation indices, HyperCube and spectral similarity"),
@@ -447,42 +460,98 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             ("calibration", "Calibration", "Calibrate", paint_calibration_icon,
              self.calibrationPanel, self.Calibration,
              "Calibration: correct the image with dark and white references"),
-            ("segmentation", "Segmentation", "Segment", paint_segmentation_icon,
-             self.segmentationPanel, self.Classification,
-             "Segmentation: classify pixels into classes and annotate regions"),
-            ("batch", "Batch", "Batch", paint_batch_icon, self.batchPanel, None,
-             "Batch: run the pipeline over many files"),
         )
-        self.workflowTools: dict[str, ToolWindow] = {}
-        self._tool_pages: dict[ToolWindow, QtWidgets.QWidget] = {}
-        for name, title, caption, painter, content, page, tooltip in panels:
-            tool = ToolWindow(
-                self, self.workflowStripe,
-                object_name=name, title=title, caption=caption,
-                icon_painter=painter, content=ToolSettingsPanel(content), tooltip=tooltip,
-                popped_size=QtCore.QSize(380, 560) if page is not None else QtCore.QSize(760, 640),
+        for name, title, caption, painter, content, page, tooltip in flyouts:
+            tool = self._add_workflow_tool(
+                name, title, caption, painter, content, tooltip, compact=True,
+                popped_size=QtCore.QSize(380, 560),
             )
-            self.workflowTools[name] = tool
-            if page is not None:
-                self._tool_pages[tool] = page
-                tool.activated.connect(
-                    lambda page=page: self.tabWidget.setCurrentWidget(page)
-                )
-            tool.dock.visibilityChanged.connect(
-                lambda _visible: self._stripe_geometry_timer.start(0)
-            )
-            tool.floatingChanged.connect(
-                lambda _floating: self._stripe_geometry_timer.start(0)
-            )
-        self.tabWidget.currentChanged.connect(self._sync_current_view_pill)
-        self._sync_current_view_pill()
-        # Open where the old first tab was: Visualization, docked.
-        self.workflowTools["visualization"].show()
+            self._view_pills[tool.button] = page
+            tool.activated.connect(lambda page=page: self.tabWidget.setCurrentWidget(page))
 
-    def _sync_current_view_pill(self, *_args) -> None:
+        stripe.add_divider()
+        self.segmentationPill = ToolStripeButton(
+            paint_segmentation_icon, "Segmentation", stripe, caption="Segment"
+        )
+        self.segmentationPill.setObjectName("segmentationStripeButton")
+        self.segmentationPill.setToolTip(
+            "Segmentation: classify pixels into classes and annotate regions"
+        )
+        stripe.add_button(self.segmentationPill)
+        self._view_pills[self.segmentationPill] = self.Classification
+        self.segmentationPill.clicked.connect(self._on_segmentation_pill_clicked)
+        # The classifier form joins the inspector beside the image.
+        self.classificationLayerPanel.set_classifier_controls(self.segmentationPanel)
+        self.classificationModeTabs.currentChanged.connect(self._fit_classification_mode_tabs)
+        self._fit_classification_mode_tabs()
+
+        stripe.add_divider()
+        self._add_workflow_tool(
+            "batch", "Batch", "Batch", paint_batch_icon, self.batchPanel,
+            "Batch: run the pipeline over many files", compact=False,
+            popped_size=QtCore.QSize(760, 640),
+        )
+
+        stripe.flyout_obstacles = lambda: [self.classificationLayerPanel]
+        # Re-place flyouts when the view (and so the inspector) changes.
+        self.classificationLayerPanel.installEventFilter(self)
+        self.tabWidget.currentChanged.connect(lambda _index: self._stripe_geometry_timer.start(0))
+        self.tabWidget.currentChanged.connect(self._sync_view_pills)
+        self._sync_view_pills()
+
+    def _add_workflow_tool(
+        self, name: str, title: str, caption: str, painter, content: QtWidgets.QWidget,
+        tooltip: str, *, compact: bool, popped_size: QtCore.QSize,
+    ) -> ToolWindow:
+        tool = ToolWindow(
+            self, self.workflowStripe,
+            object_name=name, title=title, caption=caption,
+            icon_painter=painter, content=ToolSettingsPanel(content), tooltip=tooltip,
+            popped_size=popped_size, compact=compact,
+        )
+        self.workflowTools[name] = tool
+        tool.host.visibilityChanged.connect(lambda _visible: self._stripe_geometry_timer.start(0))
+        tool.floatingChanged.connect(lambda _floating: self._stripe_geometry_timer.start(0))
+        return tool
+
+    def _segmentation_sidebar_shown(self) -> bool:
+        return (
+            self.tabWidget.currentWidget() is self.Classification
+            and not self.classificationLayerPanel.isHidden()
+        )
+
+    def _on_segmentation_pill_clicked(self) -> None:
+        """Show the Segmentation view with its inspector, or hide the inspector.
+
+        Hiding keeps the view and its results on the canvas; showing again
+        brings the inspector back exactly as it was (same mode, scroll, width).
+        """
+        if self._segmentation_sidebar_shown():
+            self.classificationLayerPanel.hide()
+        else:
+            self.tabWidget.setCurrentWidget(self.Classification)
+            self.classificationLayerPanel.show()
+        self._sync_view_pills()
+
+    def _fit_classification_mode_tabs(self, *_args) -> None:
+        """Size the Segmentation method tabs to the shown page, not the tallest.
+
+        QTabWidget's size hint covers every page, so cap its height instead;
+        this keeps the inspector's class list as tall as possible.
+        """
+        tabs = self.classificationModeTabs
+        page = tabs.currentWidget()
+        if page is None:
+            return
+        tabs.setMaximumHeight(tabs.tabBar().sizeHint().height() + page.sizeHint().height())
+
+    def _sync_view_pills(self, *_args) -> None:
         page = self.tabWidget.currentWidget()
-        for tool, tool_page in self._tool_pages.items():
-            tool.button.set_current(tool_page is page)
+        for button, button_page in self._view_pills.items():
+            button.set_current(button_page is page)
+        # The Segment pill is selected while its inspector is on screen.
+        self.segmentationPill.setChecked(self._segmentation_sidebar_shown())
+        self.segmentationPill.update()
 
     def _configure_status_bar(self) -> None:
         """Show the loaded file's name and the CPU/RAM monitor."""

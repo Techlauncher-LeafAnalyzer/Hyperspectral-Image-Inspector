@@ -55,6 +55,9 @@ _CAPTION_POINT_SIZE = 7.5
 # Workflow settings panels open at this width and shrink to the minimum.
 SETTINGS_PANEL_WIDTH = 330
 SETTINGS_PANEL_MIN_WIDTH = 260
+# A peeking flyout stays this long after the pointer leaves it, so the
+# pointer can cross the gap between the button and the flyout.
+FLYOUT_HIDE_DELAY_MS = 300
 # Width of the accent bar that marks the pill whose view the canvas shows.
 _CURRENT_MARKER_WIDTH = 3
 
@@ -252,6 +255,9 @@ class ToolStripeButton(QtWidgets.QAbstractButton):
     the canvas is displaying, even while the pill's panel is closed.
     """
 
+    # Pointer entered (True) or left (False) the button.
+    hoverChanged = QtCore.pyqtSignal(bool)
+
     def __init__(
         self,
         icon_painter: IconPainter,
@@ -304,11 +310,13 @@ class ToolStripeButton(QtWidgets.QAbstractButton):
         self._hovered = True
         self.update()
         super().enterEvent(event)
+        self.hoverChanged.emit(True)
 
     def leaveEvent(self, event: QtCore.QEvent) -> None:
         self._hovered = False
         self.update()
         super().leaveEvent(event)
+        self.hoverChanged.emit(False)
 
     def icon_color(self) -> QtGui.QColor:
         """The colour the icon is drawn in for the current state."""
@@ -449,6 +457,8 @@ class ToolWindowStripe(QtWidgets.QToolBar):
     ) -> None:
         super().__init__(title, parent)
         self.tool_windows: list["ToolWindow"] = []
+        # Widgets beside the stripe that compact flyouts must not cover.
+        self.flyout_obstacles: Callable[[], list[QtWidgets.QWidget]] = list
         self.edge = edge
         self.setObjectName(object_name)
         self.setAccessibleName(title)
@@ -730,17 +740,99 @@ class _PoppedOutWindow(QtWidgets.QWidget):
             self.hidden.emit()
 
 
+class _FlyoutHost(QtWidgets.QFrame):
+    """In-window container for a compact tool: a panel floating over the image.
+
+    A child of the main window (not a top-level popup, which on Wayland
+    would need a mouse grab), raised above the canvas and placed beside its
+    stripe button by :meth:`ToolWindow.place_flyout`. Sized to its content
+    rather than the full window height.
+    """
+
+    visibilityChanged = QtCore.pyqtSignal(bool)
+    # Pointer entered (True) or left (False) the flyout.
+    hoverChanged = QtCore.pyqtSignal(bool)
+    # A click landed on the flyout itself (not on a child that took it).
+    pressed = QtCore.pyqtSignal()
+    # The content's size hint may have changed; the owner re-places it.
+    layoutChanged = QtCore.pyqtSignal()
+
+    def __init__(self, parent: QtWidgets.QWidget) -> None:
+        super().__init__(parent)
+        self.setProperty("toolWindowFlyout", True)
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self._layout = QtWidgets.QVBoxLayout(self)
+        self._layout.setContentsMargins(1, 1, 1, 1)
+        self._layout.setSpacing(0)
+        self._widget: Optional[QtWidgets.QWidget] = None
+        shadow = QtWidgets.QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QtGui.QColor(16, 40, 36, 60))
+        self.setGraphicsEffect(shadow)
+        self.hide()
+
+    def widget(self) -> Optional[QtWidgets.QWidget]:
+        return self._widget
+
+    def setWidget(self, widget: Optional[QtWidgets.QWidget]) -> None:
+        if self._widget is not None:
+            self._layout.removeWidget(self._widget)
+        self._widget = widget
+        if widget is not None:
+            self._layout.addWidget(widget)
+
+    def event(self, event: QtCore.QEvent) -> bool:
+        handled = super().event(event)
+        if event.type() == QtCore.QEvent.Type.LayoutRequest:
+            self.layoutChanged.emit()
+        return handled
+
+    def enterEvent(self, event: QtGui.QEnterEvent) -> None:
+        super().enterEvent(event)
+        self.hoverChanged.emit(True)
+
+    def leaveEvent(self, event: QtCore.QEvent) -> None:
+        super().leaveEvent(event)
+        self.hoverChanged.emit(False)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        super().mousePressEvent(event)
+        self.pressed.emit()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self.visibilityChanged.emit(True)
+
+    def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        super().hideEvent(event)
+        self.visibilityChanged.emit(False)
+
+
 class ToolWindow(QtCore.QObject):
-    """One stripe button bound to one panel, docked or popped out.
+    """One stripe button bound to one panel, in the sidebar or popped out.
 
     The panel (title bar + content) lives in exactly one container at a time:
-    the :class:`QDockWidget` beside its stripe, or a :class:`_PoppedOutWindow`.
+    its in-window *host*, or a :class:`_PoppedOutWindow`. The host is a full
+    height :class:`QDockWidget` beside the stripe, or -- for a ``compact``
+    tool that needs little room -- a :class:`_FlyoutHost` floating over the
+    image beside the tool's button.
+
+    A compact tool *peeks* while the pointer is over its button or flyout (or
+    crossing between them) and disappears shortly after it leaves. Clicking
+    the button, or clicking inside the peeking flyout, *pins* it: it stays
+    until the button is clicked again or it is hidden. Only a pinned (or
+    popped-out) tool counts as open. Flyouts never overlap: a peek briefly
+    *suspends* (hides) a pinned flyout, which returns when the peek ends, and
+    every flyout sits clear of open docks and of the stripe's
+    ``flyout_obstacles``.
     """
 
     # Emitted after the panel moves between the sidebar and its own window.
     floatingChanged = QtCore.pyqtSignal(bool)
     # Emitted when the user turns to the tool: it is opened, its popped-out
-    # window is activated, or focus moves into its panel.
+    # window is activated, or focus moves into its panel. Not on a peek.
     activated = QtCore.pyqtSignal()
 
     def __init__(
@@ -755,12 +847,17 @@ class ToolWindow(QtCore.QObject):
         tooltip: str,
         caption: Optional[str] = None,
         popped_size: QtCore.QSize = QtCore.QSize(820, 560),
+        compact: bool = False,
     ) -> None:
         super().__init__(main_window)
         self._main_window = main_window
         self._floating = False
         self._popped_size: Optional[QtCore.QSize] = None
         self._default_popped_size = popped_size
+        self.compact = compact
+        self._peeking = False
+        # A pinned flyout hidden while a sibling peeks; still counts as open.
+        self._suspended = False
 
         # Title bar + content travel together between the two containers.
         self.panel = QtWidgets.QWidget()
@@ -774,17 +871,23 @@ class ToolWindow(QtCore.QObject):
         self.title_bar.float_button.clicked.connect(lambda: self.set_floating(not self._floating))
         self.title_bar.hide_button.clicked.connect(self.hide)
 
-        self.dock = QtWidgets.QDockWidget(title, main_window)
-        self.dock.setObjectName(f"{object_name}Dock")
-        # Not movable/floatable: Qt's drag-to-float needs a mouse grab that
-        # Wayland refuses. Pop-out goes through set_floating() instead.
-        self.dock.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        self.dock.setAllowedAreas(stripe.dock_area)
-        # An empty title-bar widget suppresses Qt's own (draggable) header.
-        self.dock.setTitleBarWidget(QtWidgets.QWidget(self.dock))
-        self.dock.setWidget(self.panel)
-        main_window.addDockWidget(stripe.dock_area, self.dock)
-        self.dock.hide()
+        if compact:
+            self.dock = None
+            self.host = _FlyoutHost(main_window)
+            self.host.setObjectName(f"{object_name}Flyout")
+        else:
+            self.dock = QtWidgets.QDockWidget(title, main_window)
+            self.dock.setObjectName(f"{object_name}Dock")
+            # Not movable/floatable: Qt's drag-to-float needs a mouse grab that
+            # Wayland refuses. Pop-out goes through set_floating() instead.
+            self.dock.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+            self.dock.setAllowedAreas(stripe.dock_area)
+            # An empty title-bar widget suppresses Qt's own (draggable) header.
+            self.dock.setTitleBarWidget(QtWidgets.QWidget(self.dock))
+            main_window.addDockWidget(stripe.dock_area, self.dock)
+            self.host = self.dock
+        self.host.setWidget(self.panel)
+        self.host.hide()
 
         self.window = _PoppedOutWindow(title, main_window)
         self.window.setObjectName(f"{object_name}PopOut")
@@ -803,8 +906,22 @@ class ToolWindow(QtCore.QObject):
         stripe.tool_windows.append(self)
         # Button → window: the button is the user's switch for the tool.
         self.button.toggled.connect(self._on_button_toggled)
-        # Dock → button, for anything that hides the dock behind our back.
-        self.dock.visibilityChanged.connect(self._sync_button)
+        # Host → button, for anything that hides the host behind our back.
+        self.host.visibilityChanged.connect(self._sync_button)
+
+        if compact:
+            # The flyout and tooltip would cover each other; the caption and
+            # the flyout's title already name the tool.
+            self.button.setToolTip("")
+            self.button.setAccessibleDescription(tooltip)
+            self._leave_timer = QtCore.QTimer(self)
+            self._leave_timer.setSingleShot(True)
+            self._leave_timer.setInterval(FLYOUT_HIDE_DELAY_MS)
+            self._leave_timer.timeout.connect(self._end_peek_if_pointer_left)
+            self.button.hoverChanged.connect(self._on_hover_changed)
+            self.host.hoverChanged.connect(self._on_hover_changed)
+            self.host.pressed.connect(self._pin_peek)
+            self.host.layoutChanged.connect(self.place_flyout)
 
     # ------------------------------------------------------------------ #
 
@@ -815,32 +932,114 @@ class ToolWindow(QtCore.QObject):
         return self._floating
 
     def is_open(self) -> bool:
-        """Open means shown in the sidebar or in its popped-out window."""
+        """Open means pinned in the sidebar or shown in its popped-out window."""
 
-        container = self.window if self._floating else self.dock
-        return not container.isHidden()
+        if self._floating:
+            return not self.window.isHidden()
+        return (not self.host.isHidden() or self._suspended) and not self._peeking
+
+    def is_peeking(self) -> bool:
+        """Whether a compact tool is shown only because of hovering."""
+
+        return self._peeking and not self.host.isHidden()
 
     def show(self) -> None:
         if not self.button.isEnabled():
             return
+        self._peeking = False
         if self._floating:
             self.window.show()
             self.window.raise_()
             self.window.activateWindow()
         else:
             self._hide_docked_siblings()
-            self.dock.show()
-            self.dock.raise_()
+            self.host.show()
+            self.host.raise_()
+            if self.compact:
+                self.place_flyout()
         # visibilityChanged doesn't fire while the main window is hidden.
         self._sync_button()
         self.activated.emit()
 
     def hide(self) -> None:
+        self._hide(resume=True)
+
+    def _hide(self, *, resume: bool) -> None:
+        was_peeking = self.is_peeking()
         if self._floating:
             self._remember_popped_size()
             self.window.hide()
-        self.dock.hide()
+        self._peeking = False
+        self._suspended = False
+        self.host.hide()
         self._sync_button()
+        if was_peeking and resume:
+            # Bring back the pinned flyout this peek stood in for.
+            for other in self._stripe.tool_windows:
+                other._resume()
+
+    def peek(self) -> None:
+        """Show a compact tool's flyout until the pointer leaves it."""
+
+        if not self.compact or self._floating or not self.button.isEnabled():
+            return
+        for other in self._stripe.tool_windows:
+            if other is not self and other.is_peeking():
+                # A pinned flyout stays suspended across peek-to-peek moves.
+                other._hide(resume=False)
+        if self._suspended:
+            # Back on the pinned tool's own button: show it again.
+            self._resume()
+            return
+        if not self.host.isHidden():
+            return  # already pinned or peeking
+        for other in self._stripe.tool_windows:
+            if other is not self:
+                other._suspend()
+        self._peeking = True
+        self.host.show()
+        self.host.raise_()
+        self.place_flyout()
+
+    def _suspend(self) -> None:
+        """Hide a pinned flyout while a sibling peeks, without unpinning it."""
+
+        if self.compact and not self._floating and self.is_open() and not self.host.isHidden():
+            self._suspended = True
+            self.host.hide()
+
+    def _resume(self) -> None:
+        if self._suspended:
+            self._suspended = False
+            self.host.show()
+            self.host.raise_()
+            self.place_flyout()
+
+    def place_flyout(self) -> None:
+        """Put a compact tool's flyout beside its button, sized to its content.
+
+        It sits left of any open dock and of the stripe's flyout obstacles
+        (e.g. an inspector beside the image), so it never covers them.
+        """
+
+        if not self.compact or self.host.isHidden():
+            return
+        window = self._main_window
+        right = self._stripe.mapTo(window, QtCore.QPoint()).x() - STRIPE_GAP
+        blockers = [other.host for other in self._stripe.tool_windows
+                    if not other.compact and not other.floating and other.is_open()]
+        blockers += self._stripe.flyout_obstacles()
+        for blocker in blockers:
+            if blocker.isVisible():
+                right = min(right, blocker.mapTo(window, QtCore.QPoint()).x() - STRIPE_GAP)
+        hint = self.host.sizeHint()
+        status_bar = window.statusBar()
+        bottom = (status_bar.mapTo(window, QtCore.QPoint()).y() if status_bar.isVisible()
+                  else window.height()) - STRIPE_GAP
+        height = min(hint.height(), bottom - STRIPE_GAP)
+        top = self.button.mapTo(window, QtCore.QPoint()).y()
+        top = max(min(top, bottom - height), STRIPE_GAP)
+        self.host.setGeometry(right - hint.width(), top, hint.width(), height)
 
     def set_floating(self, floating: bool) -> None:
         """Move the panel between the sidebar and its own window.
@@ -852,8 +1051,8 @@ class ToolWindow(QtCore.QObject):
         if floating == self._floating:
             return
         if floating:
-            self.dock.hide()
-            self.dock.setWidget(None)
+            self.host.hide()
+            self.host.setWidget(None)
             self.window.host(self.panel)
             self.panel.show()
             self._floating = True
@@ -861,7 +1060,7 @@ class ToolWindow(QtCore.QObject):
         else:
             self._remember_popped_size()
             self.window.hide()
-            self.dock.setWidget(self.panel)
+            self.host.setWidget(self.panel)
             self.panel.show()
             self._floating = False
         self.title_bar.set_floating(floating)
@@ -880,7 +1079,35 @@ class ToolWindow(QtCore.QObject):
         if now is None or sip.isdeleted(self.panel):
             return
         if self.panel.isAncestorOf(now):
+            # Working in a peeking flyout keeps it on screen.
+            self._pin_peek()
             self.activated.emit()
+
+    def _pin_peek(self) -> None:
+        if self.is_peeking():
+            self.show()
+
+    def _on_hover_changed(self, inside: bool) -> None:
+        if inside:
+            self._leave_timer.stop()
+            self.peek()
+        elif self.is_peeking():
+            self._leave_timer.start()
+
+    def _end_peek_if_pointer_left(self) -> None:
+        if not self.is_peeking():
+            return
+        window = self._main_window
+        cursor = window.mapFromGlobal(QtGui.QCursor.pos())
+        button = QtCore.QRect(self.button.mapTo(window, QtCore.QPoint()), self.button.size())
+        if button.contains(cursor) or self.host.geometry().contains(cursor):
+            return
+        # Crossing from the button to the flyout (perhaps over a dock or an
+        # inspector between them): keep it a while longer.
+        if button.united(self.host.geometry()).contains(cursor):
+            self._leave_timer.start()
+            return
+        self.hide()
 
     def _remember_popped_size(self) -> None:
         if not self._floating:
@@ -891,8 +1118,9 @@ class ToolWindow(QtCore.QObject):
             self._popped_size = self.window.last_size
 
     def _hide_docked_siblings(self) -> None:
+        # One full-height dock and one pinned flyout per side, like an IDE.
         for other in self._stripe.tool_windows:
-            if other is not self and not other.floating:
+            if other is not self and not other.floating and other.compact == self.compact:
                 other.hide()
 
     def _on_window_hidden(self) -> None:
@@ -932,11 +1160,20 @@ class ToolSettingsPanel(QtWidgets.QScrollArea):
         self.body = content
         content.setProperty("toolSettingsBody", True)
         self.setWidget(content)
+        content.installEventFilter(self)
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        # The size hint follows the content; let parent layouts (and a
+        # flyout sized to it) know when the content's layout changes.
+        if watched is self.body and event.type() == QtCore.QEvent.Type.LayoutRequest:
+            self.updateGeometry()
+        return super().eventFilter(watched, event)
 
     def sizeHint(self) -> QtCore.QSize:
         # The dock opens at this width; the user can drag it wider or narrower.
+        # Tall enough for the content, so a flyout needs no scrolling.
         width = max(SETTINGS_PANEL_WIDTH, self.minimumSizeHint().width())
-        return QtCore.QSize(width, super().sizeHint().height())
+        return QtCore.QSize(width, self.body.sizeHint().height() + 2 * self.frameWidth())
 
     def minimumSizeHint(self) -> QtCore.QSize:
         # Never narrower than the content: horizontal scrolling is off, so a

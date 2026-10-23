@@ -93,7 +93,7 @@ python src/main.py
 ## Usage
 
 1. Open the **File** menu (folder icon, top of the left sidebar) → **Load Image** and select a `.bil` file (its `.hdr` header must sit alongside it).
-2. Use the panels in the right sidebar: **Visualize**, **Super-Res**, **Calibrate**, **Segment** and **Batch**. Opening one shows its view of the image; each panel can be popped out into its own window (⧉) and docked back (⇤).
+2. Use the panels in the right sidebar. **Visualize**, **Super-Res**, **Calibrate** and **Segment** open as small flyouts when you hover them; click the button (or inside the flyout) to keep one open. **Batch** opens as a full-height panel. Opening a panel shows its view of the image; each can be popped out into its own window (⧉) and docked back (⇤).
 3. Right-click the image for spectrum plots, pixel values, index means and crop tools.
 4. Export the displayed result with the save button.
 

@@ -228,7 +228,7 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
         <property name="sizeHint" stdset="0">
          <size>
           <width>20</width>
-          <height>40</height>
+          <height>0</height>
          </size>
         </property>
        </spacer>
@@ -366,7 +366,7 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
         <property name="sizeHint" stdset="0">
          <size>
           <width>20</width>
-          <height>40</height>
+          <height>0</height>
          </size>
         </property>
        </spacer>
@@ -406,65 +406,87 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
        </widget>
       </item>
       <item>
-       <widget class="QWidget" name="calibrationControls">
-        <layout class="QGridLayout" name="calibrationGridLayout">
-         <property name="leftMargin">
-          <number>0</number>
-         </property>
-         <property name="topMargin">
-          <number>0</number>
-         </property>
-         <property name="rightMargin">
-          <number>0</number>
-         </property>
-         <property name="bottomMargin">
-          <number>0</number>
-         </property>
-         <item row="0" column="0">
-          <widget class="QPushButton" name="darkFileButton">
-           <property name="text">
-            <string>Dark File</string>
-           </property>
-          </widget>
-         </item>
-         <item row="0" column="1">
-          <widget class="QLineEdit" name="darkFileEdit">
-           <property name="readOnly">
-            <bool>true</bool>
-           </property>
-           <property name="placeholderText">
-            <string>Select dark reference file</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="0">
-          <widget class="QPushButton" name="referenceFileButton">
-           <property name="text">
-            <string>White File</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="1">
-          <widget class="QLineEdit" name="referenceFileEdit">
-           <property name="readOnly">
-            <bool>true</bool>
-           </property>
-           <property name="placeholderText">
-            <string>Select bright calibration file</string>
-           </property>
-          </widget>
-         </item>
-         <item row="2" column="0" rowspan="1" colspan="2">
-          <widget class="QPushButton" name="calibrateButton">
-           <property name="text">
-            <string>Calibrate</string>
-           </property>
-           <property name="primaryButton" stdset="0">
-            <bool>true</bool>
-           </property>
-          </widget>
-         </item>
-        </layout>
+       <widget class="QLabel" name="darkFileLabel">
+        <property name="text">
+         <string>Dark reference</string>
+        </property>
+        <property name="toolSettingsField" stdset="0">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="darkFileRow">
+        <property name="spacing">
+         <number>6</number>
+        </property>
+        <item>
+         <widget class="QLineEdit" name="darkFileEdit">
+          <property name="readOnly">
+           <bool>true</bool>
+          </property>
+          <property name="placeholderText">
+           <string>No dark reference selected</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="darkFileButton">
+          <property name="text">
+           <string>Browse…</string>
+          </property>
+          <property name="accessibleName">
+           <string>Choose dark reference file</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QLabel" name="referenceFileLabel">
+        <property name="text">
+         <string>White reference</string>
+        </property>
+        <property name="toolSettingsField" stdset="0">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="referenceFileRow">
+        <property name="spacing">
+         <number>6</number>
+        </property>
+        <item>
+         <widget class="QLineEdit" name="referenceFileEdit">
+          <property name="readOnly">
+           <bool>true</bool>
+          </property>
+          <property name="placeholderText">
+           <string>No white reference selected</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="referenceFileButton">
+          <property name="text">
+           <string>Browse…</string>
+          </property>
+          <property name="accessibleName">
+           <string>Choose white reference file</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QPushButton" name="calibrateButton">
+        <property name="text">
+         <string>Calibrate</string>
+        </property>
+        <property name="primaryButton" stdset="0">
+         <bool>true</bool>
+        </property>
        </widget>
       </item>
       <item>
@@ -488,7 +510,7 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
         <property name="sizeHint" stdset="0">
          <size>
           <width>20</width>
-          <height>40</height>
+          <height>0</height>
          </size>
         </property>
        </spacer>
@@ -506,21 +528,21 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
        <number>6</number>
       </property>
       <property name="leftMargin">
-       <number>12</number>
+       <number>0</number>
       </property>
       <property name="topMargin">
-       <number>10</number>
+       <number>0</number>
       </property>
       <property name="rightMargin">
-       <number>12</number>
+       <number>0</number>
       </property>
       <property name="bottomMargin">
-       <number>12</number>
+       <number>0</number>
       </property>
       <item>
        <widget class="QLabel" name="segmentationHeading">
         <property name="text">
-         <string>Classifier</string>
+         <string>Classify</string>
         </property>
         <property name="toolSettingsHeading" stdset="0">
          <bool>true</bool>
@@ -542,51 +564,67 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
          <attribute name="title">
           <string>Unsupervised</string>
          </attribute>
-         <layout class="QGridLayout" name="classificationGridLayout">
-          <property name="leftMargin">
-           <number>9</number>
-          </property>
-          <property name="topMargin">
-           <number>9</number>
-          </property>
-          <property name="rightMargin">
-           <number>9</number>
-          </property>
-          <property name="bottomMargin">
-           <number>9</number>
-          </property>
-          <property name="verticalSpacing">
+         <layout class="QVBoxLayout" name="unsupervisedClassificationLayout">
+          <property name="spacing">
            <number>6</number>
           </property>
-          <item row="0" column="0">
-           <widget class="QLabel" name="numOfClassesLabel">
-            <property name="text">
-             <string>Num of Classes:</string>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>10</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <layout class="QGridLayout" name="classificationGridLayout">
+            <property name="horizontalSpacing">
+             <number>8</number>
             </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QLineEdit" name="numOfClassesEdit">
-            <property name="placeholderText">
-             <string>e.g. 5</string>
+            <property name="verticalSpacing">
+             <number>4</number>
             </property>
-           </widget>
+            <item row="0" column="0">
+             <widget class="QLabel" name="numOfClassesLabel">
+              <property name="text">
+               <string>Classes</string>
+              </property>
+              <property name="toolSettingsField" stdset="0">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QLabel" name="maxIterationsLabel">
+              <property name="text">
+               <string>Max iterations</string>
+              </property>
+              <property name="toolSettingsField" stdset="0">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="0">
+             <widget class="QLineEdit" name="numOfClassesEdit">
+              <property name="placeholderText">
+               <string>e.g. 5</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="1">
+             <widget class="QLineEdit" name="maxIterationsEdit">
+              <property name="placeholderText">
+               <string>e.g. 20</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
-          <item row="1" column="0">
-           <widget class="QLabel" name="maxIterationsLabel">
-            <property name="text">
-             <string>Max Iterations:</string>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="1">
-           <widget class="QLineEdit" name="maxIterationsEdit">
-            <property name="placeholderText">
-             <string>e.g. 20</string>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="0" rowspan="1" colspan="2">
+          <item>
            <widget class="QPushButton" name="unsupervisedClassifyButton">
             <property name="enabled">
              <bool>false</bool>
@@ -599,70 +637,126 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
             </property>
            </widget>
           </item>
+          <item>
+           <spacer name="unsupervisedSpacer">
+            <property name="orientation">
+             <enum>Qt::Orientation::Vertical</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>0</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
          </layout>
         </widget>
         <widget class="QWidget" name="supervisedClassificationTab">
          <attribute name="title">
           <string>Supervised</string>
          </attribute>
-         <layout class="QGridLayout" name="supervisedClassificationGridLayout">
-          <property name="leftMargin">
-           <number>9</number>
-          </property>
-          <property name="topMargin">
-           <number>9</number>
-          </property>
-          <property name="rightMargin">
-           <number>9</number>
-          </property>
-          <property name="bottomMargin">
-           <number>9</number>
-          </property>
-          <property name="verticalSpacing">
+         <layout class="QVBoxLayout" name="supervisedClassificationLayout">
+          <property name="spacing">
            <number>6</number>
           </property>
-          <item row="0" column="0">
-           <widget class="QPushButton" name="pushButton">
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>10</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="groundtruthLabel">
             <property name="text">
-             <string>Groundtruth File</string>
+             <string>Ground-truth mask</string>
             </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QLineEdit" name="lineEdit">
-            <property name="readOnly">
+            <property name="toolSettingsField" stdset="0">
              <bool>true</bool>
             </property>
-            <property name="placeholderText">
-             <string>Select groundtruth file</string>
-            </property>
            </widget>
           </item>
-          <item row="1" column="0">
-           <widget class="QPushButton" name="hyperspectralImageButton">
+          <item>
+           <layout class="QHBoxLayout" name="groundtruthRow">
+            <property name="spacing">
+             <number>6</number>
+            </property>
+            <item>
+             <widget class="QLineEdit" name="lineEdit">
+              <property name="readOnly">
+               <bool>true</bool>
+              </property>
+              <property name="placeholderText">
+               <string>No mask selected</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="pushButton">
+              <property name="text">
+               <string>Browse…</string>
+              </property>
+              <property name="accessibleName">
+               <string>Choose ground-truth mask</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLabel" name="hyperspectralImageLabel">
             <property name="text">
-             <string>Hyperspectral Image</string>
+             <string>Training cube</string>
             </property>
-           </widget>
-          </item>
-          <item row="1" column="1">
-           <widget class="QLineEdit" name="hyperspectralImageEdit">
-            <property name="readOnly">
+            <property name="toolSettingsField" stdset="0">
              <bool>true</bool>
             </property>
-            <property name="placeholderText">
-             <string>Select hyperspectral image</string>
-            </property>
            </widget>
           </item>
-          <item row="2" column="0" rowspan="1" colspan="2">
+          <item>
+           <layout class="QHBoxLayout" name="hyperspectralImageRow">
+            <property name="spacing">
+             <number>6</number>
+            </property>
+            <item>
+             <widget class="QLineEdit" name="hyperspectralImageEdit">
+              <property name="readOnly">
+               <bool>true</bool>
+              </property>
+              <property name="placeholderText">
+               <string>Paired automatically by name</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="hyperspectralImageButton">
+              <property name="text">
+               <string>Browse…</string>
+              </property>
+              <property name="accessibleName">
+               <string>Choose training cube</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
            <widget class="QLabel" name="classifierLabel">
             <property name="text">
-             <string>Classifier:</string>
+             <string>Classifier</string>
+            </property>
+            <property name="toolSettingsField" stdset="0">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
-          <item row="3" column="0" rowspan="1" colspan="2">
+          <item>
            <widget class="QComboBox" name="comboBox">
             <property name="toolTip">
              <string>Select a classifier</string>
@@ -672,7 +766,7 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
             </property>
            </widget>
           </item>
-          <item row="4" column="0" rowspan="1" colspan="2">
+          <item>
            <widget class="QPushButton" name="pushButton_2">
             <property name="enabled">
              <bool>false</bool>
@@ -685,45 +779,9 @@ Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it.</string>
             </property>
            </widget>
           </item>
-          <item row="5" column="0" rowspan="1" colspan="2">
-           <widget class="QPushButton" name="separateLeavesButton">
-            <property name="enabled">
-             <bool>false</bool>
-            </property>
-            <property name="text">
-             <string>Separate Leaves</string>
-            </property>
-           </widget>
-          </item>
          </layout>
         </widget>
        </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="segmentationHint">
-        <property name="text">
-         <string>Class layers, annotations and class spectra are in the inspector beside the image.</string>
-        </property>
-        <property name="wordWrap">
-         <bool>true</bool>
-        </property>
-        <property name="toolSettingsHint" stdset="0">
-         <bool>true</bool>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <spacer name="segmentationSpacer">
-        <property name="orientation">
-         <enum>Qt::Orientation::Vertical</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>20</width>
-          <height>40</height>
-         </size>
-        </property>
-       </spacer>
       </item>
      </layout>
     </widget>

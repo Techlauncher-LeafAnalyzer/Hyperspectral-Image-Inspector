@@ -638,18 +638,11 @@ class ClassificationController(QObject):
         self._supervised_button.setToolTip(
             "Classify the current image from the selected reference mask and cube"
         )
-        self._groundtruth_button.setText("Ground-truth Mask")
         self._groundtruth_button.setToolTip(
             "Select a mask; its hyperspectral cube is paired automatically by name"
         )
-        self._groundtruth_path_edit.setPlaceholderText(
-            "Select mask; matching cube is detected automatically"
-        )
         self._hyperspectral_button.setToolTip(
             "Choose a training cube manually if automatic pairing is missing or wrong"
-        )
-        self._hyperspectral_path_edit.setPlaceholderText(
-            "Paired automatically, or select a hyperspectral image"
         )
 
     # ------------------------------------------------------------------ #

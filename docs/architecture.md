@@ -351,7 +351,19 @@ The **left stripe** has, top to bottom: the logo, the **File** menu button
 
 The **right stripe** (`workflowStripe`) replaced the main tab row. Its buttons
 are captioned "pills" (`ToolStripeButton(caption=...)`): **Visualize**,
-**Super-Res**, **Calibrate**, **Segment**, **Batch**. Each opens a
+**Super-Res**, **Calibrate** | **Segment** | **Batch** (dividers between the
+groups). Visualize, Super-Res, Calibrate and Segment are `compact` tool windows: their
+in-window host is a `_FlyoutHost` floating over the image beside the pill,
+sized to its content, instead of a full-height dock. Hovering the pill
+*peeks* it (not counted as open; no view switch) and it disappears
+`FLYOUT_HIDE_DELAY_MS` after the pointer leaves both pill and flyout;
+clicking the pill, or clicking/focusing inside the flyout, *pins* it. One
+peek and one pinned flyout at a time, and they never overlap: a peek
+*suspends* (hides) the pinned flyout, which returns when the peek ends.
+Flyouts sit left of an open dock and of `ToolWindowStripe.flyout_obstacles`
+(the class-layer inspector on the Segmentation view); a pointer crossing
+between pill and flyout keeps the peek alive. Batch keeps a full-height
+dock. Each opens a
 `ToolSettingsPanel` (a scroll area) around a panel from `WorkflowPanels.ui`
 (index radios, Run Super-Resolution, dark/white references, classifier
 settings, the whole batch form). `tabWidget` remains as the canvas's page
@@ -360,8 +372,7 @@ change are unchanged. The first four panels are bound to a view: when one is
 *activated* (`ToolWindow.activated` — opened, its popped-out window
 activated, or focus moved into it) the canvas switches to that page, and that
 pill gets an accent bar (`set_current`) even while its panel is closed. Batch
-has no view and leaves the canvas alone. Visualization opens docked at
-startup. The Segmentation class-layer inspector stays beside its canvas.
+has no view and leaves the canvas alone. Nothing is open at startup. The Segmentation class-layer inspector stays beside its canvas and now also holds **Separate leaves** (`ClassificationLayerPanel.separate_leaves_button`).
 
 ---
 

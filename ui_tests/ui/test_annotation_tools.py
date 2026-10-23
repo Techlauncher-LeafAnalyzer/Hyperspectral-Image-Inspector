@@ -284,11 +284,11 @@ def test_arrow_endpoints_move_independently(qtbot):
     assert (round(x), round(y)) == (10, 10) and abs(w - 70) <= 2 and abs(h - 30) <= 2
 
 
-@pytest.mark.parametrize("width,height", [(236, 450), (236, 750), (520, 850)])
+@pytest.mark.parametrize("width,height", [(270, 450), (270, 750), (520, 850)])
 def test_tool_buttons_toggle_off_and_fit_the_inspector(qtbot, themed_app, width, height):
     panel = ClassificationLayerPanel()
     qtbot.addWidget(panel)
-    panel.set_expanded_width(width)
+    panel.set_panel_width(width)
     panel.resize(width, height)
     panel.set_mode("annotations")
     page = panel.annotation_page
@@ -304,7 +304,7 @@ def test_tool_buttons_toggle_off_and_fit_the_inspector(qtbot, themed_app, width,
     circle.click()
     assert tools == [AnnotationKind.RECTANGLE, AnnotationKind.ELLIPSE, None]
     assert not any(b.isChecked() for b in page._tool_buttons.values())
-    scroll = page.findChild(QtWidgets.QScrollArea)
+    scroll = panel._scroll_area  # the whole inspector scrolls, not the page
     qtbot.waitUntil(lambda: scroll.widget().width() <= scroll.viewport().width())
     for button in page._tool_buttons.values():
         assert not button.icon().isNull()
@@ -661,8 +661,8 @@ def test_clicking_another_annotation_reselects_it_with_a_drawing_tool(qtbot):
 def test_annotation_spin_box_arrows_are_visible_and_change_values(qtbot, themed_app):
     panel = ClassificationLayerPanel()
     qtbot.addWidget(panel)
-    panel.set_expanded_width(236)
-    panel.resize(236, 620)
+    panel.set_panel_width(270)
+    panel.resize(270, 620)
     panel.set_mode("annotations")
     panel.show()
     qtbot.wait(10)

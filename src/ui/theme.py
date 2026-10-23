@@ -73,11 +73,24 @@ QWidget[toolSettingsBody="true"] {
     border: none;
 }
 
+/* Compact panels float over the image beside their pill. */
+QFrame[toolWindowFlyout="true"] {
+    background: #f9fbfa;
+    border: 1px solid #cddad6;
+    border-radius: 8px;
+}
+
 QLabel[toolSettingsHeading="true"] {
     color: #526662;
     font-size: 11px;
     font-weight: 700;
     padding: 8px 0 0 0;
+}
+
+QLabel[toolSettingsField="true"] {
+    color: #4f6359;
+    font-size: 12px;
+    padding: 2px 0 0 0;
 }
 
 QLabel[toolSettingsHint="true"] {
@@ -250,47 +263,55 @@ QFrame#tabIndicator {
     border-radius: 1px;
 }
 
+/* Segmentation method: a two-segment switch above a borderless page. */
 QTabWidget#classificationModeTabs::pane {
-    border: 1px solid #cbdad6;
-    border-radius: 6px;
-    top: -1px;
-    background: #ffffff;
+    border: none;
+    background: transparent;
 }
 
 QTabBar#classificationTabBar::tab {
-    min-width: 112px;
-    background: transparent;
+    min-width: 110px;
+    background: #ffffff;
     color: #536663;
-    border: 1px solid transparent;
-    border-bottom: 0;
-    padding: 7px 16px;
-    margin-right: 3px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border: 1px solid #cddad6;
+    padding: 6px 12px;
     font-weight: 600;
 }
 
+QTabBar#classificationTabBar::tab:first {
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
+}
+
+QTabBar#classificationTabBar::tab:last {
+    border-left: none;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
 QTabBar#classificationTabBar::tab:hover {
-    background: #dcebe7;
+    background: #f0f7f5;
     color: #264b46;
 }
 
 QTabBar#classificationTabBar::tab:selected {
-    background: #ffffff;
-    color: #173532;
-    border-color: #cbdad6;
-    border-bottom-color: #ffffff;
+    background: #dcefeb;
+    color: #105f55;
 }
 
 QTabBar#classificationTabBar:focus::tab:selected {
     border-color: #78afa5;
-    border-bottom-color: #ffffff;
 }
 
 QTabBar#classificationTabBar::tab:disabled {
     background: #f0f3f2;
     color: #9ba9a6;
     border-color: #dde5e2;
+}
+
+/* The segment fill shows the selection; no sliding underline. */
+QTabBar#classificationTabBar QFrame#tabIndicator {
+    background: transparent;
 }
 
 QProgressBar {
@@ -616,35 +637,6 @@ QLabel#classificationLayerCount {
     font-weight: 700;
 }
 
-QToolButton#classificationLayerCollapseButton {
-    min-width: 22px;
-    max-width: 22px;
-    min-height: 22px;
-    max-height: 22px;
-    color: #3e5c57;
-    background: #ffffff;
-    border: 1px solid #d1dedb;
-    border-radius: 7px;
-    font-size: 21px;
-    font-weight: 500;
-    padding: 0 0 2px 0;
-}
-
-QToolButton#classificationLayerCollapseButton:hover {
-    color: #126f62;
-    background: #e5f3f0;
-    border-color: #9fcac1;
-}
-
-QToolButton#classificationLayerCollapseButton:pressed {
-    background: #d5ebe6;
-    border-color: #78afa5;
-}
-
-QToolButton#classificationLayerCollapseButton:focus {
-    border-color: #168b7b;
-}
-
 QLabel#classificationLayerSummary {
     color: #71827f;
     font-size: 11px;
@@ -786,6 +778,7 @@ QCheckBox#layerVisibilityToggle:focus {
 QPushButton#layerToggleAllButton,
 QPushButton#layerExportButton,
 QPushButton#layerSpectraButton,
+QPushButton#separateLeavesButton,
 QPushButton#layerInspectButton,
 QPushButton#layerOutlineToggleButton {
     min-height: 18px;
@@ -801,6 +794,7 @@ QPushButton#layerOutlineToggleButton {
 QPushButton#layerToggleAllButton:hover,
 QPushButton#layerExportButton:hover,
 QPushButton#layerSpectraButton:hover,
+QPushButton#separateLeavesButton:hover,
 QPushButton#layerInspectButton:hover,
 QPushButton#layerOutlineToggleButton:hover {
     color: #126f62;
@@ -811,6 +805,7 @@ QPushButton#layerOutlineToggleButton:hover {
 QPushButton#layerToggleAllButton:pressed,
 QPushButton#layerExportButton:pressed,
 QPushButton#layerSpectraButton:pressed,
+QPushButton#separateLeavesButton:pressed,
 QPushButton#layerInspectButton:pressed,
 QPushButton#layerOutlineToggleButton:pressed {
     background: #dcefeb;
@@ -822,6 +817,7 @@ QPushButton#layerInspectButton {
     padding: 3px 8px;
 }
 
+QPushButton#separateLeavesButton:disabled,
 QPushButton#layerInspectButton:disabled {
     color: #a9b8b3;
     border-color: #dfe7e4;
@@ -900,42 +896,9 @@ QToolButton#annotationToolButton:focus {
     border: 1px solid #168b7b;
 }
 
-QWidget#annotationContent,
-QScrollArea#annotationScrollArea,
-QScrollArea#annotationScrollArea > QWidget > QWidget {
+QWidget#annotationContent {
     background: transparent;
     border: 0;
-}
-
-QScrollArea#annotationScrollArea QScrollBar:vertical,
-QListWidget#annotationLayerList QScrollBar:vertical {
-    width: 7px;
-    background: transparent;
-    margin: 2px 0;
-}
-
-QScrollArea#annotationScrollArea QScrollBar::handle:vertical,
-QListWidget#annotationLayerList QScrollBar::handle:vertical {
-    min-height: 26px;
-    background: #bfceca;
-    border-radius: 3px;
-}
-
-QScrollArea#annotationScrollArea QScrollBar::handle:vertical:hover,
-QListWidget#annotationLayerList QScrollBar::handle:vertical:hover {
-    background: #93aaa5;
-}
-
-QScrollArea#annotationScrollArea QScrollBar::add-line:vertical,
-QScrollArea#annotationScrollArea QScrollBar::sub-line:vertical,
-QScrollArea#annotationScrollArea QScrollBar::add-page:vertical,
-QScrollArea#annotationScrollArea QScrollBar::sub-page:vertical,
-QListWidget#annotationLayerList QScrollBar::add-line:vertical,
-QListWidget#annotationLayerList QScrollBar::sub-line:vertical,
-QListWidget#annotationLayerList QScrollBar::add-page:vertical,
-QListWidget#annotationLayerList QScrollBar::sub-page:vertical {
-    height: 0;
-    background: transparent;
 }
 
 QFrame#annotationAppearance {
@@ -1308,7 +1271,7 @@ QListView::item:hover {
 # QGraphicsScene items (the photo, mask overlay, watermark, and annotation
 # prompts drawn on HSIViewer) are painted directly and are not reachable by
 # QSS, so their colours live here as plain constants instead.
-INSPECTOR_PANEL_WIDTH = 236
+INSPECTOR_PANEL_WIDTH = 300
 VIEWER_SCENE_BACKGROUND   = QColor(255, 255, 255)
 VIEWER_WATERMARK_COLOR    = QColor("#eaecee")
 VIEWER_WATERMARK_POINT_SIZE = 45
