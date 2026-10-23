@@ -36,6 +36,7 @@ from core import (
     VisualizationService,
     WavelengthError,
 )
+from ui.batch_controller import BatchController
 from ui.calibration_controller import CalibrationController
 from ui.branding import APP_NAME, ICON_PATH
 from ui.classification_controller import ClassificationController
@@ -191,6 +192,35 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._calibration_controller.referencesChanged.connect(
             self._on_calibration_references_changed
         )
+        self._batch_controller = BatchController(
+            file_list=self.batchFileList,
+            results_list=self.batchResultsList,
+            add_files_button=self.batchAddFilesButton,
+            add_folder_button=self.batchAddFolderButton,
+            remove_button=self.batchRemoveButton,
+            clear_button=self.batchClearButton,
+            calibrate_check=self.batchCalibrateCheck,
+            super_resolve_check=self.batchSuperResolveCheck,
+            classify_check=self.batchClassifyCheck,
+            classify_mode_tabs=self.batchClassifyModeTabs,
+            num_classes_edit=self.batchNumClassesEdit,
+            max_iterations_edit=self.batchMaxIterationsEdit,
+            groundtruth_button=self.batchGroundtruthButton,
+            groundtruth_edit=self.batchGroundtruthEdit,
+            training_cube_button=self.batchTrainingCubeButton,
+            training_cube_edit=self.batchTrainingCubeEdit,
+            classifier_combo=self.batchClassifierCombo,
+            output_dir_button=self.batchOutputDirButton,
+            output_dir_edit=self.batchOutputDirEdit,
+            format_combo=self.batchFormatCombo,
+            overwrite_check=self.batchOverwriteCheck,
+            export_csv_check=self.batchExportCsvCheck,
+            run_button=self.batchRunButton,
+            progress_bar=self.batchProgressBar,
+            status_label=self.batchStatusLabel,
+            parent_widget=self,
+        )
+        self._batch_controller.readyToClose.connect(self.close)
         self._configure_tabs()
         self._configure_file_menu()
         self._resource_usage = ResourceUsageWidget(self.tabWidget)
@@ -753,6 +783,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             event.ignore()
             return
         if self._classification_controller.request_close():
+            event.ignore()
+            return
+        if self._batch_controller.request_close():
             event.ignore()
             return
         # Never destroy a running QThread or block Qt waiting for inference.

@@ -52,3 +52,7 @@ class CancelledError(HSIError):
 
 class SuperResolutionError(HSIError):
     """The SR input, checkpoint, dependencies, or inference are invalid."""
+
+
+class BatchError(HSIError):
+    """A batch-processing request or one of its stage configurations is invalid."""

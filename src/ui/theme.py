@@ -115,7 +115,8 @@ QPushButton[primaryButton="true"]:hover {
 
 QPushButton#unsupervisedClassifyButton:disabled,
 QPushButton#pushButton_2:disabled,
-QPushButton#runSuperResButton:disabled {
+QPushButton#runSuperResButton:disabled,
+QPushButton#batchRunButton:disabled {
     color: #9ba9a6;
     background: #f0f3f2;
     border-color: #dde5e2;
@@ -1314,6 +1315,50 @@ QSlider#annotationOpacitySlider::handle:horizontal:hover,
 QSlider#annotationOpacitySlider::handle:horizontal:focus {
     background: #dff1ed;
     border-color: #0d6a5f;
+}
+
+QListWidget#batchFileList,
+QListWidget#batchResultsList {
+    background: #ffffff;
+    color: #263735;
+    border: 1px solid #cddad6;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QListWidget#batchFileList::item,
+QListWidget#batchResultsList::item {
+    min-height: 20px;
+    padding: 3px 4px;
+    border-radius: 4px;
+}
+
+QListWidget#batchFileList::item:hover,
+QListWidget#batchResultsList::item:hover {
+    background: #f0f7f5;
+}
+
+QListWidget#batchFileList::item:selected {
+    color: #105f55;
+    background: #dcefeb;
+}
+
+QGroupBox#batchStagesGroup,
+QGroupBox#batchOutputGroup {
+    background: #f7faf9;
+    border: 1px solid #d8e2df;
+    border-radius: 6px;
+    margin-top: 10px;
+    padding-top: 6px;
+    font-weight: 600;
+}
+
+QGroupBox#batchStagesGroup::title,
+QGroupBox#batchOutputGroup::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+    color: #526662;
 }
 """
 

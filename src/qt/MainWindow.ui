@@ -668,6 +668,300 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="Batch">
+       <attribute name="title">
+        <string>Batch</string>
+       </attribute>
+       <layout class="QHBoxLayout" name="batchLayout">
+        <item>
+         <layout class="QVBoxLayout" name="batchFilesColumn">
+          <item>
+           <widget class="QLabel" name="batchFilesLabel">
+            <property name="text">
+             <string>Input files</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QListWidget" name="batchFileList">
+            <property name="selectionMode">
+             <enum>QAbstractItemView::SelectionMode::ExtendedSelection</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="batchFileButtonsRow">
+            <item>
+             <widget class="QPushButton" name="batchAddFilesButton">
+              <property name="text">
+               <string>Add Files…</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="batchAddFolderButton">
+              <property name="text">
+               <string>Add Folder…</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="batchRemoveButton">
+              <property name="text">
+               <string>Remove Selected</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="batchClearButton">
+              <property name="text">
+               <string>Clear</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLabel" name="batchResultsLabel">
+            <property name="text">
+             <string>Results</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QListWidget" name="batchResultsList"/>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="batchOptionsColumn">
+          <item>
+           <widget class="QGroupBox" name="batchStagesGroup">
+            <property name="title">
+             <string>Stages</string>
+            </property>
+            <layout class="QVBoxLayout" name="batchStagesLayout">
+             <item>
+              <widget class="QCheckBox" name="batchCalibrateCheck">
+               <property name="text">
+                <string>Calibrate (auto-resolve dark/bright frames per file)</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QCheckBox" name="batchSuperResolveCheck">
+               <property name="text">
+                <string>Super-Resolution (2×)</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QCheckBox" name="batchClassifyCheck">
+               <property name="text">
+                <string>Classify</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QTabWidget" name="batchClassifyModeTabs">
+               <property name="enabled">
+                <bool>false</bool>
+               </property>
+               <property name="currentIndex">
+                <number>0</number>
+               </property>
+               <widget class="QWidget" name="batchUnsupervisedTab">
+                <attribute name="title">
+                 <string>Unsupervised</string>
+                </attribute>
+                <layout class="QGridLayout" name="batchUnsupervisedLayout">
+                 <item row="0" column="0">
+                  <widget class="QLabel" name="batchNumClassesLabel">
+                   <property name="text">
+                    <string>Num of Classes:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="0" column="1">
+                  <widget class="QLineEdit" name="batchNumClassesEdit">
+                   <property name="placeholderText">
+                    <string>e.g. 5</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="1" column="0">
+                  <widget class="QLabel" name="batchMaxIterationsLabel">
+                   <property name="text">
+                    <string>Max Iterations:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="1" column="1">
+                  <widget class="QLineEdit" name="batchMaxIterationsEdit">
+                   <property name="placeholderText">
+                    <string>e.g. 20</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+               <widget class="QWidget" name="batchSupervisedTab">
+                <attribute name="title">
+                 <string>Supervised</string>
+                </attribute>
+                <layout class="QGridLayout" name="batchSupervisedLayout">
+                 <item row="0" column="0">
+                  <widget class="QPushButton" name="batchGroundtruthButton">
+                   <property name="text">
+                    <string>Groundtruth File</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="0" column="1">
+                  <widget class="QLineEdit" name="batchGroundtruthEdit">
+                   <property name="readOnly">
+                    <bool>true</bool>
+                   </property>
+                   <property name="placeholderText">
+                    <string>Select groundtruth file</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="1" column="0">
+                  <widget class="QPushButton" name="batchTrainingCubeButton">
+                   <property name="text">
+                    <string>Hyperspectral Image</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="1" column="1">
+                  <widget class="QLineEdit" name="batchTrainingCubeEdit">
+                   <property name="readOnly">
+                    <bool>true</bool>
+                   </property>
+                   <property name="placeholderText">
+                    <string>Select hyperspectral image</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="2" column="0">
+                  <widget class="QLabel" name="batchClassifierLabel">
+                   <property name="text">
+                    <string>Classifier:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="2" column="1">
+                  <widget class="QComboBox" name="batchClassifierCombo">
+                   <property name="toolTip">
+                    <string>Select a classifier</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="batchOutputGroup">
+            <property name="title">
+             <string>Output</string>
+            </property>
+            <layout class="QGridLayout" name="batchOutputLayout">
+             <item row="0" column="0">
+              <widget class="QPushButton" name="batchOutputDirButton">
+               <property name="text">
+                <string>Output Folder</string>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QLineEdit" name="batchOutputDirEdit">
+               <property name="readOnly">
+                <bool>true</bool>
+               </property>
+               <property name="placeholderText">
+                <string>Select output folder</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="batchFormatLabel">
+               <property name="text">
+                <string>Format:</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="QComboBox" name="batchFormatCombo"/>
+             </item>
+             <item row="2" column="0" colspan="2">
+              <widget class="QCheckBox" name="batchOverwriteCheck">
+               <property name="text">
+                <string>Overwrite existing files</string>
+               </property>
+              </widget>
+             </item>
+             <item row="3" column="0" colspan="2">
+              <widget class="QCheckBox" name="batchExportCsvCheck">
+               <property name="text">
+                <string>Export summary CSV per file</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="batchRunButton">
+            <property name="enabled">
+             <bool>false</bool>
+            </property>
+            <property name="text">
+             <string>Run Batch</string>
+            </property>
+            <property name="primaryButton" stdset="0">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QProgressBar" name="batchProgressBar">
+            <property name="value">
+             <number>0</number>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="batchStatusLabel">
+            <property name="text">
+             <string>Select files to begin</string>
+            </property>
+            <property name="statusMessage" stdset="0">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="batchOptionsSpacer">
+            <property name="orientation">
+             <enum>Qt::Orientation::Vertical</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>40</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
      </widget>
     </item>
    </layout>
