@@ -641,15 +641,19 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         global_opacity: float = 1.0,
         outline_mode: bool = False,
         means: Optional[Mapping[int, Mapping[str, PixelValueEntry]]] = None,
+        fixed_colors: Optional[Mapping[int, RGBColor]] = None,
     ) -> None:
         """Rebuild rows to reflect the Model while preserving global controls.
 
         ``means`` maps a class ID to that class's per-visualization means,
         keyed by visualization name; classes without an entry show none.
+        ``fixed_colors`` pins swatch colours, matching the viewer's class map.
         """
 
         self._clear_rows()
-        colors = classification_palette(layer.class_id for layer in layers)
+        colors = classification_palette(
+            (layer.class_id for layer in layers), fixed_colors
+        )
         means = means or {}
         for layer in layers:
             row = _LayerRowWidget(

@@ -153,6 +153,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             lambda: self._hypercube_controller.stop_and_wait(),
             self,
             is_calibrated=lambda: self._calibration_controller.display_result is not None,
+            separate_leaves_button=self.separateLeavesButton,
         )
         self._calibration_controller = CalibrationController(
             self._hsi_data,
@@ -210,6 +211,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             training_cube_button=self.batchTrainingCubeButton,
             training_cube_edit=self.batchTrainingCubeEdit,
             classifier_combo=self.batchClassifierCombo,
+            separate_leaves_check=self.batchSeparateLeavesCheck,
             output_dir_button=self.batchOutputDirButton,
             output_dir_edit=self.batchOutputDirEdit,
             format_combo=self.batchFormatCombo,

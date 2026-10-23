@@ -196,7 +196,12 @@ class ClassificationLayerModel:
     or loading another cube because those actions invalidate the masks.
     """
 
-    def __init__(self, result: ClassificationResult) -> None:
+    def __init__(
+        self,
+        result: ClassificationResult,
+        *,
+        names: dict[int, str] | None = None,
+    ) -> None:
         self._result = result
         masks = np.asarray(result.one_hot_masks)
         if masks.ndim != 3:
@@ -237,6 +242,7 @@ class ClassificationLayerModel:
         defaults = _SUPERVISED_DEFAULT_NAMES if isinstance(
             result, SupervisedClassificationResult
         ) else {}
+        defaults = {**defaults, **(names or {})}
         self._names = {
             class_id: defaults.get(class_id, f"Class {class_id}")
             for class_id in class_ids

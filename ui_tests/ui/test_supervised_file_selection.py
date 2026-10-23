@@ -120,3 +120,83 @@ def test_invalid_manual_cube_keeps_previous_auto_pair(
     assert ".hdr" in dialogs.critical[-1][2].lower()
     assert loaded_window._classification_controller._training_pair is previous_pair
     assert loaded_window.hyperspectralImageEdit.text() == str(previous_pair.cube_path)
+
+
+
+def test_separate_leaves_enabled_after_supervised_run(
+    loaded_window, synthetic_cube_path, file_dialog, qtbot, dialogs
+):
+    button = loaded_window.separateLeavesButton
+    assert not button.isEnabled()
+    mask = _mask(synthetic_cube_path.with_name("synthetic_mask.png"))
+    _choose_mask(loaded_window, file_dialog, mask)
+
+    loaded_window.pushButton_2.click()
+    assert not button.isEnabled()
+    qtbot.waitUntil(
+        lambda: loaded_window._classification_controller._thread is None,
+        timeout=10000,
+    )
+
+    assert not dialogs.critical
+    assert button.isEnabled()
+
+
+def test_separate_leaves_splits_plant_class_into_leaf_layers(
+    loaded_window, dialogs, monkeypatch
+):
+    from functools import partial
+    from pathlib import Path
+
+    import ui.classification_controller as classification_controller
+    from core import separate_leaves
+
+    from core.classification_model import (
+        SupervisedClassificationResult,
+        SupervisedClassifierType,
+    )
+
+    # The synthetic image is 8x8, far below the default noise floor.
+    monkeypatch.setattr(
+        classification_controller,
+        "separate_leaves",
+        partial(separate_leaves, min_area_pixels=1),
+    )
+    controller = loaded_window._classification_controller
+    button = loaded_window.separateLeavesButton
+
+    class_map = np.full((8, 8), 2, dtype=np.int32)
+    class_map[0:3, 0:3] = 1
+    class_map[5:8, 5:8] = 1
+    class_ids = (1, 2)
+    masks = (class_map[None] == np.asarray(class_ids)[:, None, None]).astype(np.uint8)
+    result = SupervisedClassificationResult(
+        class_map=class_map,
+        one_hot_masks=masks,
+        class_ids=class_ids,
+        class_pixel_counts=masks.reshape(2, -1).sum(axis=1),
+        training_sample_counts=np.asarray([1, 1]),
+        classifier=SupervisedClassifierType.GAUSSIAN,
+        training_band_indices=(0,),
+        target_band_indices=(0,),
+        band_wavelengths_nm=np.asarray([550.0]),
+        training_mask_path=Path("mask.png"),
+        training_cube_path=Path("cube.img"),
+    )
+    controller._pending_slot_key = False
+    controller._pending_calibrated = False
+    controller._on_result(result)
+    controller.refresh_display()
+    assert button.isEnabled()
+
+    controller._current_slot.layers.rename_class(2, "Soil")
+    button.click()
+
+    layers = controller._current_slot.layers.layers
+    assert [layer.name for layer in layers] == ["Leaf 1", "Leaf 2", "Soil"]
+    assert [layer.pixel_count for layer in layers] == [9, 9, 46]
+    rgb = controller._current_slot.rgb
+    assert rgb[4, 0].tolist() == [0, 0, 0]
+    assert rgb[0, 0].any() and rgb[7, 7].any()
+    assert not button.isEnabled()
+    assert not dialogs.critical
