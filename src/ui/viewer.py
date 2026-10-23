@@ -232,6 +232,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
     annotationTextRequested = pyqtSignal(QPointF)
     # A finished drag with the arrow tool: (tail, head) in image pixels.
     annotationArrowDrawn = pyqtSignal(QPointF, QPointF)
+    # A finished polygon: a list of (x, y) image-pixel vertices, clamped to
+    # the image, drawn with the same clicks as "Crop to Polygon".
+    annotationPolygonDrawn = pyqtSignal(list)
     # The selected annotation was moved/resized: (layer_id, x, y, width, height),
     # emitted continuously during the drag and once more at its end.
     annotationGeometryChanged = pyqtSignal(int, float, float, float, float)
@@ -266,6 +269,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._annotation_style_provider: Callable[[], AnnotationStyle] = AnnotationStyle
         self._annotation_start: Optional[QPointF] = None
         self._annotation_preview: Optional[QtWidgets.QGraphicsItem] = None
+        # Vertices placed so far with the polygon tool.
+        self._annotation_polygon: list[QPointF] = []
+        # A right-click that finished a polygon must not also open the menu.
+        self._suppress_context_menu = False
         self._annotation_items: list[QtWidgets.QGraphicsItem] = []
         self._annotation_items_by_id: dict[int, QtWidgets.QGraphicsItem] = {}
         self._annotation_layers: tuple[AnnotationLayer, ...] = ()
@@ -646,11 +653,13 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         self._remember_pointer(event)
         self._press_view_pos = event.position().toPoint()
+        self._suppress_context_menu = False
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self.has_photo()
             and not self._cropping
             and not self._polygon_cropping
+            and not self._annotation_polygon
         ):
             # Pins sit above everything else on the image, so they win the
             # press (with or without Ctrl, so Ctrl+Click picks a pin up
@@ -669,6 +678,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             and self.has_photo()
             and not self._cropping
             and not self._polygon_cropping
+            and not self._annotation_polygon
             and not event.modifiers() & Qt.KeyboardModifier.ControlModifier
         ):
             # A selected annotation under the cursor wins over every tool, so
@@ -681,6 +691,16 @@ class HSIViewer(QtWidgets.QGraphicsView):
                     layer.layer_id, mode, point, layer, self._annotation_bounds(layer)
                 )
                 self._apply_idle_cursor()
+                return
+        if self._annotation_tool is AnnotationKind.POLYGON and self.has_photo():
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._annotation_polygon.append(self._clamped_scene_point(event))
+                self.setFocus(Qt.FocusReason.MouseFocusReason)
+                self._update_polygon_preview(None)
+                return
+            if event.button() == Qt.MouseButton.RightButton and self._annotation_polygon:
+                self._suppress_context_menu = True
+                self._finish_annotation_polygon()
                 return
         if self._annotation_tool is not None and self.has_photo():
             if event.button() == Qt.MouseButton.LeftButton:
@@ -708,6 +728,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         if self._polygon_cropping:
             self._finish_polygon_crop()
             return
+        if self._annotation_polygon and event.button() == Qt.MouseButton.LeftButton:
+            self._finish_annotation_polygon()
+            return
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
@@ -732,6 +755,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
             return
         if self._annotation_start is not None:
             self._update_annotation_preview(self._clamped_scene_point(event))
+            return
+        if self._annotation_polygon:
+            self._update_polygon_preview(self._clamped_scene_point(event))
             return
         if self._polygon_cropping:
             if self._polygon_points:
@@ -926,6 +952,20 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._polygon_points.pop()
                 self._update_polygon_overlay(None)
                 return
+        if self._annotation_polygon:
+            if event.key() == Qt.Key.Key_Escape:
+                self._cancel_annotation_drag()
+                return
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._finish_annotation_polygon()
+                return
+            if event.key() == Qt.Key.Key_Backspace:
+                self._annotation_polygon.pop()
+                if self._annotation_polygon:
+                    self._update_polygon_preview(None)
+                else:
+                    self._cancel_annotation_drag()
+                return
         if event.key() == Qt.Key.Key_Escape and self._annotation_start is not None:
             self._cancel_annotation_drag()
             return
@@ -946,6 +986,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._render_mask()
 
     def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
+        if self._suppress_context_menu or self._annotation_polygon:
+            self._suppress_context_menu = False
+            return
         scene_pos = self.mapToScene(event.pos())
         menu = self._build_context_menu(scene_pos)
         menu.exec(event.globalPos())
@@ -1112,6 +1155,15 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 QPointF(layer.x + layer.width, layer.y + layer.height),
             )
             return _distance_to_segment(point, line) <= tolerance
+        if layer.kind is AnnotationKind.POLYGON:
+            corners = [QPointF(x, y) for x, y in layer.points]
+            edges = zip(corners, corners[1:] + corners[:1])
+            if any(_distance_to_segment(point, QtCore.QLineF(a, b)) <= tolerance
+                   for a, b in edges):
+                return True
+            return layer.style.fill_enabled and QtGui.QPolygonF(corners).containsPoint(
+                point, Qt.FillRule.OddEvenFill
+            )
         bounds = self._unrotated_rect(layer)
         point = _rotate_point(point, bounds.center(), -layer.rotation)
         if layer.kind is AnnotationKind.TEXT:
@@ -1271,8 +1323,47 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._scene.addItem(preview)
         self._annotation_preview = preview
 
+    def _update_polygon_preview(self, cursor: Optional[QPointF]) -> None:
+        """Draw the polygon placed so far, closing back through ``cursor``.
+
+        The shape is drawn in the current style, with a thin dashed guide on
+        top so it stays visible with no stroke or fill.
+        """
+
+        points = self._annotation_polygon + ([cursor] if cursor is not None else [])
+        if self._annotation_preview is not None:
+            self._scene.removeItem(self._annotation_preview)
+        outline = QPainterPath()
+        outline.addPolygon(QtGui.QPolygonF(points))
+        outline.closeSubpath()
+        guide = QtWidgets.QGraphicsPathItem(outline)
+        guide.setPen(QPen(CROP_SELECTION_COLOR, 0, Qt.PenStyle.DashLine))
+        if len(points) >= 3:
+            shape = make_annotation_item(
+                AnnotationLayer(
+                    -1, "", AnnotationKind.POLYGON, 0, 0,
+                    style=self._annotation_style_provider(),
+                    points=tuple((p.x(), p.y()) for p in points),
+                )
+            )
+            shape.setParentItem(guide)
+            shape.setFlag(
+                QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent
+            )
+        guide.setZValue(_ANNOTATION_BASE_Z + 5)
+        self._scene.addItem(guide)
+        self._annotation_preview = guide
+
+    def _finish_annotation_polygon(self) -> None:
+        points = [(point.x(), point.y()) for point in self._annotation_polygon]
+        self._cancel_annotation_drag()
+        if len(points) >= 3:
+            self.annotationPolygonDrawn.emit(points)
+        self._apply_idle_cursor()
+
     def _cancel_annotation_drag(self) -> None:
         self._annotation_start = None
+        self._annotation_polygon = []
         if self._annotation_preview is not None:
             self._scene.removeItem(self._annotation_preview)
             self._annotation_preview = None

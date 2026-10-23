@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace
 from enum import Enum
-from typing import Optional
+from typing import Optional, Sequence
 
 from .errors import AnnotationError
 
@@ -23,11 +23,16 @@ class AnnotationKind(Enum):
     ELLIPSE = "Circle"
     ARROW = "Arrow"
     TEXT = "Text"
+    POLYGON = "Polygon"
 
 
 ROTATABLE_KINDS = frozenset({AnnotationKind.RECTANGLE, AnnotationKind.TEXT})
 # Shapes that enclose an area of pixels, so can report index means inside it.
-MEASURABLE_KINDS = frozenset({AnnotationKind.RECTANGLE, AnnotationKind.ELLIPSE})
+MEASURABLE_KINDS = frozenset(
+    {AnnotationKind.RECTANGLE, AnnotationKind.ELLIPSE, AnnotationKind.POLYGON}
+)
+
+Point = tuple[float, float]
 
 
 @dataclass(frozen=True)
@@ -58,13 +63,17 @@ class AnnotationLayer:
     ``x``/``y`` as its top-left anchor. An arrow runs from ``(x, y)`` to
     ``(x + width, y + height)``, so ``width``/``height`` may be negative.
 
+    A polygon keeps its vertices in ``points`` as absolute ``(x, y)`` image
+    pixels, and ``x``/``y``/``width``/``height`` is their bounding box. Moving
+    or resizing the box maps every vertex into the new box.
+
     ``rotation`` is in degrees, clockwise, about the centre of the unrotated
     box. Only rectangles and text rotate; ``x``/``y``/``width``/``height`` always
     describe the unrotated box.
 
     ``measure_index`` asks for the mean of each visualization over the pixels
-    the shape encloses; only rectangles and ellipses support it. The Model
-    enables measurement by default when creating those shapes.
+    the shape encloses; only rectangles, ellipses and polygons support it. The
+    Model enables measurement by default when creating those shapes.
     """
 
     layer_id: int
@@ -79,6 +88,7 @@ class AnnotationLayer:
     visible: bool = True
     rotation: float = 0.0
     measure_index: bool = False
+    points: tuple[Point, ...] = ()
 
 
 class AnnotationLayerModel:
@@ -161,6 +171,8 @@ class AnnotationLayerModel:
             raise AnnotationError("Use add_text() to create text annotations.")
         if kind is AnnotationKind.ARROW:
             raise AnnotationError("Use add_arrow() to create arrows.")
+        if kind is AnnotationKind.POLYGON:
+            raise AnnotationError("Use add_polygon() to create polygons.")
         if width <= 0 or height <= 0:
             raise AnnotationError("Shapes need a positive width and height.")
         return self._append(kind, self._auto_name(kind), x, y, width, height, "", style)
@@ -180,6 +192,22 @@ class AnnotationLayerModel:
             "",
             style,
         )
+
+    def add_polygon(
+        self, points: Sequence[Point], style: AnnotationStyle
+    ) -> AnnotationLayer:
+        """Add a closed polygon through ``points`` (image-pixel ``(x, y)`` pairs)."""
+
+        vertices = _polygon_vertices(points)
+        x, y, width, height = _bounds(vertices)
+        layer = self._append(
+            AnnotationKind.POLYGON,
+            self._auto_name(AnnotationKind.POLYGON),
+            x, y, width, height, "", style,
+        )
+        # _append already recorded the undo step; attach the vertices in place.
+        self._layers[-1] = layer = replace(layer, points=vertices)
+        return layer
 
     def add_text(
         self, x: float, y: float, text: str, style: AnnotationStyle
@@ -250,6 +278,15 @@ class AnnotationLayerModel:
             raise AnnotationError("Shapes need a positive width and height.")
         if (x, y, width, height) == (layer.x, layer.y, layer.width, layer.height):
             return
+        extra: dict[str, object] = {}
+        if layer.kind is AnnotationKind.POLYGON:
+            extra["points"] = tuple(
+                (
+                    x + (px - layer.x) / layer.width * width,
+                    y + (py - layer.y) / layer.height * height,
+                )
+                for px, py in layer.points
+            )
         self._update(
             layer_id,
             coalesce_key=("geometry", layer_id),
@@ -257,6 +294,7 @@ class AnnotationLayerModel:
             y=y,
             width=width,
             height=height,
+            **extra,
         )
 
     def set_rotation(self, layer_id: int, degrees: float) -> None:
@@ -359,3 +397,31 @@ class AnnotationLayerModel:
             return self.get(layer_id)
         except AnnotationError:
             return None
+
+
+def _polygon_vertices(points: Sequence[Point]) -> tuple[Point, ...]:
+    """Validate polygon vertices, dropping consecutive duplicates.
+
+    A double-click finishing a polygon can repeat the last vertex, which adds
+    nothing to the outline.
+    """
+
+    vertices: list[Point] = []
+    for x, y in points:
+        point = (float(x), float(y))
+        if not vertices or vertices[-1] != point:
+            vertices.append(point)
+    if len(vertices) > 1 and vertices[0] == vertices[-1]:
+        vertices.pop()
+    if len(vertices) < 3:
+        raise AnnotationError("Polygons need at least three distinct corners.")
+    _, _, width, height = _bounds(vertices)
+    if width <= 0 or height <= 0:
+        raise AnnotationError("Polygons need a positive width and height.")
+    return tuple(vertices)
+
+
+def _bounds(points: Sequence[Point]) -> tuple[float, float, float, float]:
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)

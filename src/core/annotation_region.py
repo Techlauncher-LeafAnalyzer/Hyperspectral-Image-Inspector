@@ -1,4 +1,4 @@
-"""Index means over the pixels enclosed by a rectangle or circle annotation.
+"""Index means over the pixels enclosed by a rectangle, circle or polygon.
 
 Qt-free Model. An annotation is drawn in image-pixel coordinates, so the pixels
 it encloses can be found without the View: a pixel belongs to the region when
@@ -16,6 +16,7 @@ import numpy as np
 from .annotation_model import MEASURABLE_KINDS, AnnotationKind, AnnotationLayer
 from .classification_layer_model import ClassVisualizationMean
 from .errors import AnnotationError
+from .roi import polygon_mask
 from .visualization_model import VisualizationMode, VisualizationResult
 
 
@@ -45,6 +46,8 @@ def _region_window(
             f"{layer.kind.value} annotations do not enclose an area to measure."
         )
     rows, columns = shape
+    if layer.kind is AnnotationKind.POLYGON:
+        return _polygon_window(layer, shape)
     half_width = layer.width / 2.0
     half_height = layer.height / 2.0
     centre_x = layer.x + half_width
@@ -71,6 +74,23 @@ def _region_window(
         inside = (u / half_width) ** 2 + (v / half_height) ** 2 <= 1.0
     else:
         inside = (np.abs(u) <= half_width) & (np.abs(v) <= half_height)
+    return (slice(first_row, last_row), slice(first_column, last_column)), inside
+
+
+def _polygon_window(
+    layer: AnnotationLayer, shape: tuple[int, int]
+) -> tuple[tuple[slice, slice], np.ndarray] | None:
+    """Rasterize a polygon inside its bounding box, as a crop's ROI is."""
+
+    rows, columns = shape
+    first_column = max(0, math.floor(layer.x))
+    last_column = min(columns, math.ceil(layer.x + layer.width))
+    first_row = max(0, math.floor(layer.y))
+    last_row = min(rows, math.ceil(layer.y + layer.height))
+    if first_column >= last_column or first_row >= last_row:
+        return None
+    local = [(x - first_column, y - first_row) for x, y in layer.points]
+    inside = polygon_mask(local, (last_row - first_row, last_column - first_column))
     return (slice(first_row, last_row), slice(first_column, last_column)), inside
 
 

@@ -56,7 +56,7 @@ not a full cube copy.
   Spectra* (Classification viewer only), *Open Spectrum Inspector*.
 - Visualization tab: *Spectrum Inspector* button; *Similarity* mode radio.
 - Classification layer panel: classification classes and measured
-  annotation regions (rectangles, ellipses) are listed together as classes,
+  annotation regions (rectangles, ellipses, polygons) are listed together as classes,
   each with a selection checkbox and an **Inspect** button.
   - *Class spectra* plots every **selected** class and region
     (`SpectralAnalysisService.masked_spectra`, one chunked pass), replacing

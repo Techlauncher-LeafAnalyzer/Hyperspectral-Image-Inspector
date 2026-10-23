@@ -38,12 +38,16 @@ def make_annotation_item(layer: AnnotationLayer) -> QtWidgets.QGraphicsItem:
         return item
     if layer.kind is AnnotationKind.ARROW:
         return make_arrow_item(layer)
-    rect = QtCore.QRectF(layer.x, layer.y, layer.width, layer.height)
-    item = (
-        QtWidgets.QGraphicsEllipseItem(rect)
-        if layer.kind is AnnotationKind.ELLIPSE
-        else QGraphicsRectItem(rect)
-    )
+    if layer.kind is AnnotationKind.POLYGON:
+        item = QtWidgets.QGraphicsPolygonItem(
+            QtGui.QPolygonF([QPointF(x, y) for x, y in layer.points])
+        )
+    elif layer.kind is AnnotationKind.ELLIPSE:
+        item = QtWidgets.QGraphicsEllipseItem(
+            QtCore.QRectF(layer.x, layer.y, layer.width, layer.height)
+        )
+    else:
+        item = QGraphicsRectItem(QtCore.QRectF(layer.x, layer.y, layer.width, layer.height))
     if style.stroke_width > 0:
         pen = QPen(QColor(*style.stroke), style.stroke_width)
         pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)

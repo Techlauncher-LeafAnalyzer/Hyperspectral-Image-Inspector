@@ -25,6 +25,12 @@ _TOOL_LABELS: tuple[tuple[AnnotationKind, str, str], ...] = (
         "Drag to draw an arrow in the stroke colour (click again to turn off)",
     ),
     (AnnotationKind.TEXT, "Text", "Click the image to add text (click again to turn off)"),
+    (
+        AnnotationKind.POLYGON,
+        "Polygon",
+        "Click each corner; double-click, right-click or Enter to finish, "
+        "Backspace to undo a corner, Esc to cancel (click again to turn off)",
+    ),
 )
 _ASSETS = Path(__file__).parent / "assets"
 _TOOL_ICONS = {
@@ -32,6 +38,7 @@ _TOOL_ICONS = {
     AnnotationKind.ELLIPSE: "annotation_ellipse.svg",
     AnnotationKind.ARROW: "annotation_arrow.svg",
     AnnotationKind.TEXT: "annotation_text.svg",
+    AnnotationKind.POLYGON: "annotation_polygon.svg",
 }
 
 
@@ -233,7 +240,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._measure_check = QtWidgets.QCheckBox("Measure index means", self)
         self._measure_check.setObjectName("annotationFillCheck")
         self._measure_check.setToolTip(
-            "Add the pixels inside the selected rectangle or circle to the Classes "
+            "Add the pixels inside the selected rectangle, circle or polygon to the Classes "
             "tab, with their index means kept up to date as it moves"
         )
         self._measure_check.setChecked(True)
@@ -446,7 +453,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self.styleChanged.emit(self.current_style())
 
     def _update_measure_check(self) -> None:
-        """Enable the measure box for a selected rectangle/circle, showing its state."""
+        """Enable the measure box for a selected area shape, showing its state."""
 
         selected_id = self.selected_layer_id()
         layer = self._layers_by_id.get(selected_id) if selected_id is not None else None

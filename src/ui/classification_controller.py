@@ -439,7 +439,7 @@ class ClassificationController(QObject):
 
         Returns ``(data, {key: AnalysisRegion})``; keys are ``"class:<id>"``
         for classification classes and ``"annotation:<id>"`` for measured,
-        visible rectangle/ellipse annotations, so both are analysed as
+        visible rectangle/ellipse/polygon annotations, so both are analysed as
         classes. ``selected`` mirrors each row's checkbox in the layer panel.
         ``None`` when there is neither a classification nor a region.
         """
@@ -604,6 +604,7 @@ class ClassificationController(QObject):
         self._viewer.annotationShapeDrawn.connect(self._on_annotation_shape_drawn)
         self._viewer.annotationTextRequested.connect(self._on_annotation_text_requested)
         self._viewer.annotationArrowDrawn.connect(self._on_annotation_arrow_drawn)
+        self._viewer.annotationPolygonDrawn.connect(self._on_annotation_polygon_drawn)
         self._viewer.annotationGeometryChanged.connect(self._on_annotation_geometry_changed)
         self._viewer.annotationInteractionFinished.connect(
             lambda: self._annotation_slot.layers.break_coalescing()
@@ -1360,6 +1361,17 @@ class ClassificationController(QObject):
             layer = slot.layers.add_arrow(
                 tail.x(), tail.y(), head.x(), head.y(), style
             )
+        except AnnotationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        slot.selected_id = layer.layer_id
+        self._sync_annotations()
+
+    def _on_annotation_polygon_drawn(self, points: list) -> None:
+        slot = self._annotation_slot
+        style = self._layer_panel.annotation_page.current_style()
+        try:
+            layer = slot.layers.add_polygon(points, style)
         except AnnotationError as exc:
             self._statusbar.showMessage(str(exc), 8000)
             return
