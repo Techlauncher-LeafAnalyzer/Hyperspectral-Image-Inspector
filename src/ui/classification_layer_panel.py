@@ -19,12 +19,11 @@ from ui.theme import INSPECTOR_PANEL_WIDTH
 from ui.viewer import PixelValueEntry, format_pixel_values_html
 
 
-_EXPANDED_WIDTH = INSPECTOR_PANEL_WIDTH
-_EXPANDED_MINIMUM_WIDTH = 236
+_DEFAULT_WIDTH = INSPECTOR_PANEL_WIDTH
+# Narrow enough to leave the image room; wide enough for the classifier form.
+_MINIMUM_WIDTH = 270
 _MAXIMUM_WIDTH = 520
 _GRIP_WIDTH = 6
-_COLLAPSED_WIDTH = 48
-_COLLAPSE_DURATION_MS = 220
 
 
 class _ColorSwatch(QtWidgets.QLabel):
@@ -395,7 +394,9 @@ class _RegionRowWidget(QtWidgets.QWidget):
 
 
 class ClassificationLayerPanel(QtWidgets.QWidget):
-    """Collapsible side inspector listing each classification layer."""
+    """Side inspector for segmentation: classifier controls, class layers and
+    annotations. Resizable by its left-edge grip; shown and hidden as a whole
+    by the Segment pill on the right stripe."""
 
     visibilityChanged = pyqtSignal(int, bool)
     opacityChanged = pyqtSignal(int, float)
@@ -420,12 +421,11 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Preferred,
             QtWidgets.QSizePolicy.Policy.Expanding,
         )
-        self.setMinimumWidth(_EXPANDED_MINIMUM_WIDTH)
-        self.setMaximumWidth(_EXPANDED_WIDTH)
-        self._collapsed = False
-        self._expanded_width = _EXPANDED_WIDTH
+        self.setMinimumWidth(_MINIMUM_WIDTH)
+        self.setMaximumWidth(_DEFAULT_WIDTH)
+        self._panel_width = _DEFAULT_WIDTH
         self._resize_grip = _ResizeGrip(self)
-        self._resize_grip.widthRequested.connect(self.set_expanded_width)
+        self._resize_grip.widthRequested.connect(self.set_panel_width)
 
         self._title = QtWidgets.QLabel("Class layers", self)
         self._title.setObjectName("classificationLayerPanelTitle")
@@ -443,14 +443,6 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         header_details_layout.addWidget(self._layer_count_label)
         header_details_layout.addStretch(1)
 
-        self._collapse_button = QtWidgets.QToolButton(self)
-        self._collapse_button.setObjectName("classificationLayerCollapseButton")
-        self._collapse_button.setText("›")
-        self._collapse_button.setToolTip("Collapse class layers")
-        self._collapse_button.setAccessibleName("Collapse class layers")
-        self._collapse_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._collapse_button.clicked.connect(self.toggle_collapsed)
-
         header = QtWidgets.QWidget(self)
         header.setObjectName("classificationLayerHeader")
         header.setSizePolicy(
@@ -462,7 +454,6 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(5)
         header_layout.addWidget(self._header_details, 1)
-        header_layout.addWidget(self._collapse_button)
 
         self._summary_label = QtWidgets.QLabel("No classes available", self)
         self._summary_label.setObjectName("classificationLayerSummary")
@@ -505,6 +496,13 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         )
         self._spectra_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._spectra_button.clicked.connect(self.classSpectraRequested)
+
+        # Splits the plant class into one class per leaf; the classification
+        # controller enables it after a supervised run and handles clicks.
+        self.separate_leaves_button = QtWidgets.QPushButton("Separate leaves", self)
+        self.separate_leaves_button.setObjectName("separateLeavesButton")
+        self.separate_leaves_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.separate_leaves_button.setEnabled(False)
 
         export_row = QtWidgets.QHBoxLayout()
         export_row.setContentsMargins(0, 0, 0, 0)
@@ -564,6 +562,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         controls_layout.addLayout(background_row)
         controls_layout.addLayout(header_controls_row)
         controls_layout.addLayout(export_row)
+        controls_layout.addWidget(self.separate_leaves_button)
         controls_layout.addLayout(global_opacity_header)
         controls_layout.addWidget(self._global_opacity_slider)
 
@@ -585,15 +584,6 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._rows_layout.setSpacing(7)
         self._rows_layout.addStretch(1)
 
-        self._scroll_area = QtWidgets.QScrollArea(self)
-        self._scroll_area.setObjectName("classificationLayerScrollArea")
-        self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._scroll_area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        self._scroll_area.setWidget(self._rows_container)
-
         self._body = QtWidgets.QWidget(self)
         self._body.setObjectName("classificationLayerBody")
         body_layout = QtWidgets.QVBoxLayout(self._body)
@@ -603,7 +593,8 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         body_layout.addWidget(controls)
         body_layout.addWidget(classes_label)
         body_layout.addWidget(self._empty_label, 1)
-        body_layout.addWidget(self._scroll_area, 1)
+        # Rows take their natural height; the whole inspector scrolls.
+        body_layout.addWidget(self._rows_container, 1)
 
         self.annotation_page = AnnotationToolsPage(self)
 
@@ -633,18 +624,28 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._stack.addWidget(self._body)
         self._stack.addWidget(self.annotation_page)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        # Everything scrolls together as one sidebar: no inner scroll areas.
+        self._content = QtWidgets.QWidget(self)
+        self._content.setObjectName("classificationLayerContent")
+        layout = QtWidgets.QVBoxLayout(self._content)
         layout.setContentsMargins(11, 10, 11, 10)
         layout.setSpacing(10)
         layout.addWidget(header)
         layout.setAlignment(header, Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self._mode_row)
         layout.addWidget(self._stack, 1)
-
-        self._width_animation = QtCore.QPropertyAnimation(self, b"maximumWidth", self)
-        self._width_animation.setDuration(_COLLAPSE_DURATION_MS)
-        self._width_animation.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
-        self._width_animation.finished.connect(self._finish_width_animation)
+        self._scroll_area = QtWidgets.QScrollArea(self)
+        self._scroll_area.setObjectName("classificationLayerScrollArea")
+        self._scroll_area.setWidgetResizable(True)
+        self._scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._scroll_area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self._scroll_area.setWidget(self._content)
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self._scroll_area)
+        self._fit_stack_to_page()
 
         self._rows: dict[int, _LayerRowWidget] = {}
         self._region_rows: dict[int, _RegionRowWidget] = {}
@@ -676,32 +677,43 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._title.setText("Annotations" if annotations else "Class layers")
         self._layer_count_label.setVisible(not annotations)
         self._stack.setCurrentWidget(self.annotation_page if annotations else self._body)
+        self._fit_stack_to_page()
         if mode != getattr(self, "_announced_mode", "classes"):
             self._announced_mode = mode
             self.modeChanged.emit(mode)
 
-    @property
-    def is_collapsed(self) -> bool:
-        return self._collapsed
+    def _fit_stack_to_page(self) -> None:
+        """Size the page stack to the shown page, so the scroll length is
+        the current mode's content rather than the taller of the two."""
+
+        for index in range(self._stack.count()):
+            page = self._stack.widget(index)
+            vertical = (
+                QtWidgets.QSizePolicy.Policy.Preferred if page is self._stack.currentWidget()
+                else QtWidgets.QSizePolicy.Policy.Ignored
+            )
+            page.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, vertical)
+        self._stack.updateGeometry()
 
     @property
-    def expanded_width(self) -> int:
-        """Width the panel takes when expanded (user-adjustable)."""
+    def panel_width(self) -> int:
+        """Width the panel takes (user-adjustable with the grip)."""
 
-        return self._expanded_width
+        return self._panel_width
 
-    def set_expanded_width(self, width: int) -> None:
-        """Set the expanded width, clamped to the supported range.
+    def set_panel_width(self, width: int) -> None:
+        """Set the panel width, clamped to the supported range."""
 
-        A collapsed panel remembers the width and restores it on expanding.
-        """
+        self._panel_width = max(_MINIMUM_WIDTH, min(_MAXIMUM_WIDTH, width))
+        self.setMaximumWidth(self._panel_width)
+        self.updateGeometry()
 
-        self._expanded_width = max(_EXPANDED_MINIMUM_WIDTH, min(_MAXIMUM_WIDTH, width))
-        if not self._collapsed and self._width_animation.state() != (
-            QtCore.QAbstractAnimation.State.Running
-        ):
-            self.setMaximumWidth(self._expanded_width)
-            self.updateGeometry()
+    def set_classifier_controls(self, controls: QtWidgets.QWidget) -> None:
+        """Show the classifier form at the top of the Classes page."""
+
+        controls.setParent(self._body)
+        self._body.layout().insertWidget(0, controls)
+        controls.show()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -709,10 +721,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._resize_grip.raise_()
 
     def sizeHint(self) -> QtCore.QSize:
-        return QtCore.QSize(
-            _COLLAPSED_WIDTH if self._collapsed else self._expanded_width,
-            super().sizeHint().height(),
-        )
+        return QtCore.QSize(self._panel_width, super().sizeHint().height())
 
     def set_layers(
         self,
@@ -803,55 +812,6 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._reset_global_controls()
         self._update_empty_state()
 
-    def toggle_collapsed(self) -> None:
-        self.set_collapsed(not self._collapsed)
-
-    def set_collapsed(self, collapsed: bool, *, animate: bool = True) -> None:
-        """Collapse to a compact rail or expand back to the full inspector."""
-
-        if collapsed == self._collapsed and self._width_animation.state() != (
-            QtCore.QAbstractAnimation.State.Running
-        ):
-            return
-
-        self._width_animation.stop()
-        self._collapsed = collapsed
-        target_width = _COLLAPSED_WIDTH if collapsed else self._expanded_width
-        self.setMinimumWidth(_COLLAPSED_WIDTH)
-        self._resize_grip.setVisible(not collapsed)
-
-        if collapsed:
-            self._stack.hide()
-            self._mode_row.hide()
-            self._header_details.hide()
-            self._collapse_button.setText("‹")
-            self._collapse_button.setToolTip("Expand class layers")
-            self._collapse_button.setAccessibleName("Expand class layers")
-        else:
-            self._stack.show()
-            self._mode_row.show()
-            self._header_details.show()
-            self._collapse_button.setText("›")
-            self._collapse_button.setToolTip("Collapse class layers")
-            self._collapse_button.setAccessibleName("Collapse class layers")
-
-        if not animate or not self.isVisible():
-            self.setMaximumWidth(target_width)
-            self._finish_width_animation()
-            return
-
-        self._width_animation.setStartValue(self.width())
-        self._width_animation.setEndValue(target_width)
-        self._width_animation.start()
-
-    def _finish_width_animation(self) -> None:
-        target_width = _COLLAPSED_WIDTH if self._collapsed else self._expanded_width
-        self.setMaximumWidth(target_width)
-        self.setMinimumWidth(
-            _COLLAPSED_WIDTH if self._collapsed else _EXPANDED_MINIMUM_WIDTH
-        )
-        self.updateGeometry()
-
     def _clear_rows(self) -> None:
         for row in self._rows.values():
             self._rows_layout.removeWidget(row)
@@ -913,7 +873,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         has_rows = bool(self._rows)
         has_content = has_rows or bool(self._region_rows)
         self._empty_label.setVisible(not has_content)
-        self._scroll_area.setVisible(has_content)
+        self._rows_container.setVisible(has_content)
         self._toggle_all_button.setEnabled(has_content)
         self._outline_toggle_button.setEnabled(has_rows)
         self._export_button.setEnabled(has_content)

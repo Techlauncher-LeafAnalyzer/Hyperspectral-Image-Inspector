@@ -242,11 +242,13 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._list = QtWidgets.QListWidget(self)
         self._list.setObjectName("annotationLayerList")
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self._list.setMinimumHeight(110)
+        # Grows to fit every layer (see _fit_list_height): the whole inspector
+        # scrolls, not the list.
         self._list.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Ignored
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
         )
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._list.setSpacing(3)
         self._list.setIconSize(QSize(16, 16))
@@ -271,7 +273,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._empty_label.setMinimumHeight(110)
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Ignored
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
         )
 
         self._layer_count = QtWidgets.QLabel("0", self)
@@ -301,21 +303,15 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         layout.addWidget(controls)
         layout.addWidget(self._measure_check)
         layout.addLayout(layers_heading)
-        layout.addWidget(self._empty_label, 1)
-        layout.addWidget(self._list, 1)
+        layout.addWidget(self._empty_label)
+        layout.addWidget(self._list)
         layout.addLayout(order_row)
+        layout.addStretch(1)
 
-        # Let short windows scroll the inspector without compressing controls
-        # or forcing the image workspace beyond the available height.
-        scroll = QtWidgets.QScrollArea(self)
-        scroll.setObjectName("annotationScrollArea")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        scroll.setWidget(content)
+        # No scroll area of its own: the class-layer inspector scrolls as one.
         page_layout = QtWidgets.QVBoxLayout(self)
         page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
+        page_layout.addWidget(content)
 
         self._fill_button.colorChanged.connect(self._emit_style)
         self._stroke_button.colorChanged.connect(self._emit_style)
@@ -411,7 +407,20 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._layer_count.setAccessibleName(f"{len(layers)} annotation layers")
         self._list.setVisible(has_layers)
         self._empty_label.setVisible(not has_layers)
+        self._fit_list_height()
         self._update_buttons()
+
+    def _fit_list_height(self) -> None:
+        """Make the layer list exactly as tall as its rows, so it never scrolls."""
+
+        rows = self._list.count()
+        if not rows:
+            return
+        self._list.doItemsLayout()
+        last = self._list.visualItemRect(self._list.item(rows - 1))
+        bottom = last.bottom() + self._list.verticalOffset()
+        frame = 2 * self._list.frameWidth()
+        self._list.setFixedHeight(bottom + 1 + self._list.spacing() + frame)
 
     # ------------------------------------------------------------------ #
 

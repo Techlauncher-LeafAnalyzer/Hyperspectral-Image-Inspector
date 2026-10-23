@@ -42,6 +42,7 @@ from ui.calibration_controller import CalibrationController
 from ui.branding import APP_NAME, ICON_PATH
 from ui.classification_controller import ClassificationController
 from ui.generated.MainWindow import Ui_MainWindow
+from ui.generated.WorkflowPanels import Ui_WorkflowPanels
 from ui.index_mean_dialog import IndexMeanDialog
 from ui.image_capabilities import ImageCapabilityController
 from ui.resolution_toggle import ResolutionSwitchGroup
@@ -51,12 +52,20 @@ from ui.spectrum_controller import SpectrumController
 from ui.super_resolution_worker import SuperResolutionWorker
 from ui.tab_transition.handler import TabTransitionHandler
 from ui.tool_windows import (
+    STRIPE_GAP,
+    StripeMenuButton,
+    ToolSettingsPanel,
+    ToolStripeButton,
     ToolWindow,
     ToolWindowStripe,
     ViewToggleButton,
+    paint_batch_icon,
     paint_calibration_icon,
+    paint_file_icon,
+    paint_segmentation_icon,
     paint_spectrum_icon,
     paint_super_resolution_icon,
+    paint_visualization_icon,
 )
 from ui.theme import CLASSIFIER_BORDER_QSS, CLASSIFIER_POPUP_QSS
 from ui.viewer import HSIViewer, PixelValueEntry
@@ -82,7 +91,6 @@ _CACHED_VISUALIZATION_MODES = (
 
 LOGGER = logging.getLogger(__name__)
 
-
 @dataclass
 class _CropSnapshot:
     """A prior image state, kept around so a crop can be undone."""
@@ -105,6 +113,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.setupUi(self)
+        self._setup_workflow_panels_form()
+        self.separateLeavesButton = self.classificationLayerPanel.separate_leaves_button
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QtGui.QIcon(str(ICON_PATH)))
         # Qt's app stylesheet misses the combo's left edge when its border changes.
@@ -127,6 +137,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._sr_view_scale = 1
         self._viz_view_scale = 1
         self._close_after_sr = False
+        # Whether the user chose to view the Super-Resolution result (the left
+        # stripe's toggle). Effective only once a result exists; see
+        # _is_super_resolution_active.
+        self._high_resolution_selected = False
         self._active_visualization_mode: VisualizationMode = VisualizationMode.RGB
         # True while the Visualization tab shows the spectral-similarity map
         # instead of a VisualizationMode render.
@@ -165,7 +179,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             lambda: self._hypercube_controller.stop_and_wait(),
             self,
             is_calibrated=lambda: self._calibration_controller.display_result is not None,
-            separate_leaves_button=self.separateLeavesButton,
+            separate_leaves_button=self.classificationLayerPanel.separate_leaves_button,
         )
         self._calibration_controller = CalibrationController(
             self._hsi_data,
@@ -263,21 +277,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.classificationLayerPanel.inspectRequested.connect(
             self._spectrum_controller.inspect_region
         )
+        self._stripe_geometry_timer = QtCore.QTimer(self)
+        self._stripe_geometry_timer.setSingleShot(True)
+        self._stripe_geometry_timer.timeout.connect(self._sync_stripe_geometry)
         self._configure_tabs()
         self._configure_file_menu()
-        self._resource_usage = ResourceUsageWidget(self.tabWidget)
-        self.tabWidget.setCornerWidget(
-            self._resource_usage, QtCore.Qt.Corner.TopRightCorner
-        )
-        # Keep the Designer radio buttons as the shared state source; the visible
-        # choice is the Super-Resolution toggle in the left tool-window stripe.
-        self.lowResButton.hide()
-        self.highResButton.hide()
-        self.superResFlowArrow.hide()
-        self.superResComparisonLabel.setText("Processing")
-        self.superResGrid.addWidget(
-            self.runSuperResButton, 0, 1, 1, 3, QtCore.Qt.AlignmentFlag.AlignLeft
-        )
+        self._configure_status_bar()
         self._configure_tool_windows()
         self._resolution_switches = ResolutionSwitchGroup(
             self.superResolutionSwitch,
@@ -287,43 +292,56 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             on_calibration_clicked=self._select_canvas_calibration,
         )
         self._connect_signals()
+        self._configure_workflow_panels()
         self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
-        self._stripe_geometry_timer = QtCore.QTimer(self)
-        self._stripe_geometry_timer.setSingleShot(True)
-        self._stripe_geometry_timer.timeout.connect(self._sync_stripe_geometry)
         self.tabWidget.installEventFilter(self)
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if watched is self.tabWidget and event.type() in (
+        if watched in (self.tabWidget, self.classificationLayerPanel) and event.type() in (
             QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Move,
-            QtCore.QEvent.Type.Show, QtCore.QEvent.Type.LayoutRequest,
+            QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide,
+            QtCore.QEvent.Type.LayoutRequest,
         ):
             self._stripe_geometry_timer.start(0)
         return super().eventFilter(watched, event)
 
     def _sync_stripe_geometry(self) -> None:
-        """Fill the space left of the image area with buttons, and align the logo.
+        """Fill the space either side of the image area with stripe buttons.
 
         Buttons span from the window edge to the image viewer with an even
-        :data:`STRIPE_GAP` on both sides: the left gap is inside the stripe,
-        and the right gap is measured to the image area itself, so the tab
-        pane's border/padding count toward it rather than adding to it. The
-        logo centres on the main tab bar's midpoint.
+        :data:`STRIPE_GAP` on both sides: the outer gap is inside the stripe,
+        and the inner gap is measured to the image area itself, so the page
+        pane's border/padding count toward it rather than adding to it.
         """
-        stripe = self.toolWindowStripe
-        tab_bar = self.tabWidget.tabBar()
         page = self.tabWidget.currentWidget()
-        if not tab_bar.count() or page is None:
+        if page is None:
             return
-        # Distance from the stripe's right edge to where page content starts
-        # (just the pane border: pages have no left margin).
+        # Distance from each stripe's inner edge to where page content starts
+        # (just the pane border: pages have no side margins).
+        # A docked panel sits flush against its stripe, so there the stripe
+        # keeps its full inner gap.
         content_left = page.mapTo(self, QtCore.QPoint()).x()
-        stripe_left = stripe.mapTo(self, QtCore.QPoint()).x()
-        pane_inset = content_left - (stripe_left + stripe.stripe_width())
-        stripe.set_right_inset(max(pane_inset, 0))
-        # Siblings, not ancestors: map through global coordinates.
-        mid = stripe.mapFromGlobal(tab_bar.mapToGlobal(tab_bar.tabRect(0).center())).y()
-        stripe.align_logo_to(mid)
+        content_right = page.mapTo(self, QtCore.QPoint(page.width(), 0)).x()
+        left = self.toolWindowStripe
+        left_edge = left.mapTo(self, QtCore.QPoint()).x() + left.stripe_width()
+        left.set_inner_inset(
+            0 if self._stripe_has_dock_open(left) else max(content_left - left_edge, 0)
+        )
+        right = self.workflowStripe
+        right_edge = right.mapTo(self, QtCore.QPoint(right.width(), 0)).x() - right.stripe_width()
+        right.set_inner_inset(
+            0 if self._stripe_has_dock_open(right) else max(right_edge - content_right, 0)
+        )
+        # Flyouts follow their buttons and make way for docked panels.
+        for tool in right.tool_windows:
+            tool.place_flyout()
+
+    @staticmethod
+    def _stripe_has_dock_open(stripe: ToolWindowStripe) -> bool:
+        return any(
+            not tool.compact and not tool.floating and tool.is_open()
+            for tool in stripe.tool_windows
+        )
 
     # ------------------------------------------------------------------ #
     # Private: signal wiring                                               #
@@ -332,25 +350,29 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _configure_tool_windows(self) -> None:
         """Build the JetBrains-style left stripe.
 
-        Top: the Super-Resolution and Calibration view toggles, which switch
-        every tab between image versions (highlighted = High Res / After,
-        gray = nothing to compare yet). Below a divider: the Spectrum tool
-        window, highlighted while open (docked or popped out).
+        Top: the logo and the File menu. Then the Super-Resolution and
+        Calibration view toggles, which switch every view between image
+        versions (highlighted = High Res / After, gray = nothing to compare
+        yet). Below a divider: the Spectrum tool window, highlighted while
+        open (docked or popped out).
         """
         self.toolWindowStripe = ToolWindowStripe(self)
         self.toolWindowStripe.set_logo(str(ICON_PATH))
-        self.addToolBar(QtCore.Qt.ToolBarArea.LeftToolBarArea, self.toolWindowStripe)
-        # The stripe now spans the old left margin up to the image area, and
-        # each page's image starts at the pane's left edge, so the gap between
-        # the stripe's buttons and the image is the same on every tab.
-        for layout in (self.horizontalLayout, *(
-            page.layout() for page in (
-                self.Visualization, self.SuperResolution, self.Calibration,
-                self.Classification, self.Batch,
-            ) if page.layout() is not None
-        )):
-            margins = layout.contentsMargins()
-            layout.setContentsMargins(0, margins.top(), margins.right(), margins.bottom())
+        self.addToolBar(self.toolWindowStripe.toolbar_area, self.toolWindowStripe)
+        # The stripes span the old side margins up to the image area, and
+        # each page's image starts at the pane's edges, so the gap between
+        # a stripe's buttons and the image is the same in every view.
+        self.horizontalLayout.setContentsMargins(0, STRIPE_GAP, 0, STRIPE_GAP)
+        self.fileMenuButton = StripeMenuButton(
+            paint_file_icon, "File", self._file_menu, self.toolWindowStripe
+        )
+        self.fileMenuButton.setObjectName("fileMenuButton")
+        self.fileMenuButton.setAccessibleDescription(
+            "Open the menu for loading and saving images"
+        )
+        self.fileMenuButton.setToolTip("File: open or save an image")
+        self.toolWindowStripe.add_button(self.fileMenuButton)
+        self.toolWindowStripe.add_divider()
         self.superResolutionSwitch = ViewToggleButton(
             paint_super_resolution_icon, "superResolutionSwitch",
             off_label="Low Res", on_label="High Res (Super-Resolution 2×)",
@@ -384,6 +406,161 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             False, "Spectrum Inspector: load an image first"
         )
 
+    def _setup_workflow_panels_form(self) -> None:
+        """Build the right-sidebar panels from ``qt/WorkflowPanels.ui``.
+
+        Their widgets become window attributes, like ``Ui_MainWindow``'s, so
+        controllers and tests address both forms the same way. Each panel is
+        later moved into its own tool window by
+        :meth:`_configure_workflow_panels`.
+        """
+        form = Ui_WorkflowPanels()
+        holder = QtWidgets.QWidget()
+        form.setupUi(holder)
+        for name, value in vars(form).items():
+            setattr(self, name, value)
+        # The button group outlives the throwaway holder.
+        self.modeButtons.setParent(self)
+        holder.deleteLater()
+
+    def _configure_workflow_panels(self) -> None:
+        """Build the right stripe: one captioned pill per workflow panel.
+
+        These replace the old main tabs. Visualization, Super-Resolution and
+        Calibration need little room, so each pill opens a compact flyout over
+        the image (shown on hover, pinned by a click) holding a panel from
+        ``WorkflowPanels.ui``. Segment is a plain toggle for the Segmentation
+        view's own inspector (see :meth:`_on_segmentation_pill_clicked`), and
+        Batch gets a full-height dock; dividers set those two apart. The
+        first four pills are bound to a view: turning to one shows that view
+        on the canvas, and its pill carries an accent marker. Batch has no
+        view of its own: it works on files, not the canvas.
+
+        ``tabWidget`` is the canvas's page stack, with its tab bar hidden, so
+        view switching keeps its pan/zoom hand-off and fade.
+        """
+        stripe = self.workflowStripe = ToolWindowStripe(
+            self, edge=QtCore.Qt.Edge.RightEdge, title="Workflow panels",
+            object_name="workflowStripe", show_logo=False,
+        )
+        self.addToolBar(stripe.toolbar_area, stripe)
+        self.tabWidget.tabBar().hide()
+
+        self.workflowTools: dict[str, ToolWindow] = {}
+        # Stripe button → the canvas view it is bound to.
+        self._view_pills: dict[ToolStripeButton, QtWidgets.QWidget] = {}
+        flyouts = (
+            # name, title, caption, icon, content, view page, tooltip
+            ("visualization", "Visualization", "Visualize", paint_visualization_icon,
+             self.visualizationPanel, self.Visualization,
+             "Visualization: RGB, vegetation indices, HyperCube and spectral similarity"),
+            ("superResolution", "Super-Resolution", "Super-Res", paint_super_resolution_icon,
+             self.superResolutionPanel, self.SuperResolution,
+             "Super-Resolution: upscale the image 2× with MSDformer"),
+            ("calibration", "Calibration", "Calibrate", paint_calibration_icon,
+             self.calibrationPanel, self.Calibration,
+             "Calibration: correct the image with dark and white references"),
+        )
+        for name, title, caption, painter, content, page, tooltip in flyouts:
+            tool = self._add_workflow_tool(
+                name, title, caption, painter, content, tooltip, compact=True,
+                popped_size=QtCore.QSize(380, 560),
+            )
+            self._view_pills[tool.button] = page
+            tool.activated.connect(lambda page=page: self.tabWidget.setCurrentWidget(page))
+
+        stripe.add_divider()
+        self.segmentationPill = ToolStripeButton(
+            paint_segmentation_icon, "Segmentation", stripe, caption="Segment"
+        )
+        self.segmentationPill.setObjectName("segmentationStripeButton")
+        self.segmentationPill.setToolTip(
+            "Segmentation: classify pixels into classes and annotate regions"
+        )
+        stripe.add_button(self.segmentationPill)
+        self._view_pills[self.segmentationPill] = self.Classification
+        self.segmentationPill.clicked.connect(self._on_segmentation_pill_clicked)
+        # The classifier form joins the inspector beside the image.
+        self.classificationLayerPanel.set_classifier_controls(self.segmentationPanel)
+        self.classificationModeTabs.currentChanged.connect(self._fit_classification_mode_tabs)
+        self._fit_classification_mode_tabs()
+
+        stripe.add_divider()
+        self._add_workflow_tool(
+            "batch", "Batch", "Batch", paint_batch_icon, self.batchPanel,
+            "Batch: run the pipeline over many files", compact=False,
+            popped_size=QtCore.QSize(760, 640),
+        )
+
+        stripe.flyout_obstacles = lambda: [self.classificationLayerPanel]
+        # Re-place flyouts when the view (and so the inspector) changes.
+        self.classificationLayerPanel.installEventFilter(self)
+        self.tabWidget.currentChanged.connect(lambda _index: self._stripe_geometry_timer.start(0))
+        self.tabWidget.currentChanged.connect(self._sync_view_pills)
+        self._sync_view_pills()
+
+    def _add_workflow_tool(
+        self, name: str, title: str, caption: str, painter, content: QtWidgets.QWidget,
+        tooltip: str, *, compact: bool, popped_size: QtCore.QSize,
+    ) -> ToolWindow:
+        tool = ToolWindow(
+            self, self.workflowStripe,
+            object_name=name, title=title, caption=caption,
+            icon_painter=painter, content=ToolSettingsPanel(content), tooltip=tooltip,
+            popped_size=popped_size, compact=compact,
+        )
+        self.workflowTools[name] = tool
+        tool.host.visibilityChanged.connect(lambda _visible: self._stripe_geometry_timer.start(0))
+        tool.floatingChanged.connect(lambda _floating: self._stripe_geometry_timer.start(0))
+        return tool
+
+    def _segmentation_sidebar_shown(self) -> bool:
+        return (
+            self.tabWidget.currentWidget() is self.Classification
+            and not self.classificationLayerPanel.isHidden()
+        )
+
+    def _on_segmentation_pill_clicked(self) -> None:
+        """Show the Segmentation view with its inspector, or hide the inspector.
+
+        Hiding keeps the view and its results on the canvas; showing again
+        brings the inspector back exactly as it was (same mode, scroll, width).
+        """
+        if self._segmentation_sidebar_shown():
+            self.classificationLayerPanel.hide()
+        else:
+            self.tabWidget.setCurrentWidget(self.Classification)
+            self.classificationLayerPanel.show()
+        self._sync_view_pills()
+
+    def _fit_classification_mode_tabs(self, *_args) -> None:
+        """Size the Segmentation method tabs to the shown page, not the tallest.
+
+        QTabWidget's size hint covers every page, so cap its height instead;
+        this keeps the inspector's class list as tall as possible.
+        """
+        tabs = self.classificationModeTabs
+        page = tabs.currentWidget()
+        if page is None:
+            return
+        tabs.setMaximumHeight(tabs.tabBar().sizeHint().height() + page.sizeHint().height())
+
+    def _sync_view_pills(self, *_args) -> None:
+        page = self.tabWidget.currentWidget()
+        for button, button_page in self._view_pills.items():
+            button.set_current(button_page is page)
+        # The Segment pill is selected while its inspector is on screen.
+        self.segmentationPill.setChecked(self._segmentation_sidebar_shown())
+        self.segmentationPill.update()
+
+    def _configure_status_bar(self) -> None:
+        """Show the loaded file's name and the CPU/RAM monitor."""
+        self.imageFilePath = QtWidgets.QLabel("No image loaded", self.statusbar)
+        self.imageFilePath.setObjectName("imageFilePath")
+        self.statusbar.addPermanentWidget(self.imageFilePath)
+        self._resource_usage = ResourceUsageWidget(self.statusbar)
+        self.statusbar.addPermanentWidget(self._resource_usage)
+
     def _configure_tabs(self) -> None:
         tab_settings = (
             (self.tabWidget, "mainTabBar", "Application sections"),
@@ -406,7 +583,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._tab_transitions.append(TabTransitionHandler(tab_widget))
 
     def _configure_file_menu(self) -> None:
-        """Fold the File menu into the main tab row as a ribbon-style dropdown."""
+        """Build the File menu opened from the left stripe's File button."""
         assets_dir = Path(__file__).parent / "assets"
         self.actionLoadImage.setIcon(
             QtGui.QIcon(str(assets_dir / "folder_open.svg"))
@@ -430,61 +607,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._file_menu.setMinimumWidth(220)
         self._file_menu.addAction(self.actionLoadImage)
         self._file_menu.addAction(self.actionSaveImage)
-
-        self._file_menu_button = QtWidgets.QToolButton(self.tabWidget)
-        self._file_menu_button.setObjectName("fileMenuButton")
-        self._file_menu_button.setText("File")
-        self._file_menu_button.setAccessibleName("File menu")
-        self._file_menu_button.setAccessibleDescription(
-            "Open the menu for loading and saving images"
-        )
-        self._file_menu_button.setToolTip("File actions")
-        self._file_menu_button.setMenu(self._file_menu)
-        self._file_menu_button.setPopupMode(
-            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
-        )
-        self._file_menu_button.setToolButtonStyle(
-            QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly
-        )
-        self._file_menu_button.setCursor(
-            QtCore.Qt.CursorShape.PointingHandCursor
-        )
-        self._file_menu_button.setFocusPolicy(
-            QtCore.Qt.FocusPolicy.StrongFocus
-        )
-        self._file_menu.aboutToShow.connect(
-            lambda: self._set_file_menu_open(True)
-        )
-        self._file_menu.aboutToHide.connect(
-            lambda: self._set_file_menu_open(False)
-        )
-        self.tabWidget.setCornerWidget(
-            self._file_menu_button, QtCore.Qt.Corner.TopLeftCorner
-        )
-
-    def _set_file_menu_open(self, is_open: bool) -> None:
-        """Keep the File trigger visually active while its menu is open."""
-        self._file_menu_button.setProperty("menuOpen", is_open)
-        style = self._file_menu_button.style()
-        style.unpolish(self._file_menu_button)
-        style.polish(self._file_menu_button)
-        self._file_menu_button.update()
+        # The menu opens from the left stripe's File button. Registering the
+        # actions on the window keeps Ctrl+O / Ctrl+S working while it's closed.
+        self.addActions((self.actionLoadImage, self.actionSaveImage))
 
     def _connect_signals(self) -> None:
         self.actionLoadImage.triggered.connect(self._load_image)
         self.actionSaveImage.triggered.connect(self._save_image)
-        self.highResButton.toggled.connect(
-            self._update_super_resolution_view_state
-        )
-        self.lowResButton.setToolTip(
-            "View the original file before Super-Resolution processing"
-        )
-        self.highResButton.setToolTip(
-            "View the processed result after Super-Resolution"
-        )
         self.runSuperResButton.clicked.connect(self._run_super_resolution)
         self._set_super_resolution_ready()
-        self._update_super_resolution_view_state(self.highResButton.isChecked())
+        self._update_super_resolution_view_state(self._high_resolution_selected)
         self.tabWidget.currentChanged.connect(self._on_tab_changed)
 
         for viewer in self._all_viewers():
@@ -509,37 +641,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         self.classificationViewer.class_spectra_available = True
 
-        # SWIR water indices live outside the generated form: they are the
-        # applicable modes for cameras whose range excludes the visible bands.
-        self.modeNDWI = QtWidgets.QRadioButton("NDWI", self.modeSelect)
-        self.modeNDWI.setObjectName("modeNDWI")
-        self.modeNDMI = QtWidgets.QRadioButton("NDMI", self.modeSelect)
-        self.modeNDMI.setObjectName("modeNDMI")
-        for column, button in enumerate((self.modeNDWI, self.modeNDMI)):
-            self.modeButtons.addButton(button)
-            self.gridLayout.addWidget(button, 2, column, 1, 1)
-        # Full-spectrum tools: a Spectral Angle Mapper view, and the live
-        # Spectrum Inspector that drives it.
-        self.modeSimilarity = QtWidgets.QRadioButton("Similarity", self.modeSelect)
-        self.modeSimilarity.setObjectName("modeSimilarity")
-        self.modeSimilarity.setToolTip(
-            "Spectral angle to a reference spectrum across every band "
-            "(bright = similar). Choose the reference in the Spectrum Inspector."
-        )
-        self.modeButtons.addButton(self.modeSimilarity)
-        self.gridLayout.addWidget(self.modeSimilarity, 2, 2, 1, 1)
         self.modeSimilarity.toggled.connect(self._on_similarity_mode_toggled)
-        self.spectrumInspectorButton = QtWidgets.QPushButton(
-            "Spectrum Inspector", self.modeSelect
-        )
-        self.spectrumInspectorButton.setObjectName("spectrumInspectorButton")
-        self.spectrumInspectorButton.setToolTip(
-            "Open a live spectrum plot that follows the cursor over any image.\n"
-            "Ctrl+Click a pixel (or right-click → Spectrum Analyzer) to pin it."
-        )
         self.spectrumInspectorButton.clicked.connect(self._spectrum_controller.show)
-        self.gridLayout.addWidget(self.spectrumInspectorButton, 2, 3, 1, 1)
-        self.modeSelect.setMaximumHeight(170)
 
         mode_buttons = (
             (self.modeRGB, VisualizationMode.RGB),
@@ -627,19 +730,27 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         """Raw SR cube (SR only ever runs on uncalibrated data), if present."""
         return None if self._super_res_result is None else self._super_res_result.data
 
+    def _set_high_resolution_selected(self, high: bool) -> None:
+        """Choose whether every view shows the Super-Resolution result."""
+
+        if high == self._high_resolution_selected:
+            return
+        self._high_resolution_selected = high
+        self._update_super_resolution_view_state(high)
+
     def _is_super_resolution_active(self) -> bool:
         """Return whether ``_display_data`` currently resolves to the SR result."""
 
-        return self.highResButton.isChecked() and self._super_res_result is not None
+        return self._high_resolution_selected and self._super_res_result is not None
 
     def _select_canvas_resolution(self, high_resolution: bool) -> None:
         if self._pipeline_busy():
             self._sync_image_switches()
             return
         if high_resolution:
-            self.highResButton.setChecked(True)
+            self._set_high_resolution_selected(True)
         else:
-            self.lowResButton.setChecked(True)
+            self._set_high_resolution_selected(False)
 
     def _select_canvas_calibration(self, calibrated: bool) -> None:
         if self._pipeline_busy():
@@ -648,7 +759,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         previous = self._display_data()
         self._calibration_controller.select_calibrated(calibrated)
         if self._display_data() is not previous:
-            self._update_super_resolution_view_state(self.highResButton.isChecked())
+            self._update_super_resolution_view_state(self._high_resolution_selected)
             label = "After Calibration" if calibrated else "Before Calibration"
             self.statusbar.showMessage(f"Viewing {label}", 3000)
         self._sync_image_switches()
@@ -669,7 +780,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _refresh_super_resolution_display(self) -> None:
         previous_size = self.superResViewer.photo_size()
         state = self.superResViewer.get_view_state()
-        if self.highResButton.isChecked() and self._super_res_result is None:
+        if self._high_resolution_selected and self._super_res_result is None:
             self.superResViewer.rgb = None
             self.superResViewer.mask_array = None
             self.superResViewer.set_photo()
@@ -695,7 +806,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _sr_pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
         data = self._display_data()
-        if self.highResButton.isChecked() and self._super_res_result is None:
+        if self._high_resolution_selected and self._super_res_result is None:
             return {}
         rgb = data.rgb_array
         if rgb is None or not (0 <= row < rgb.shape[0] and 0 <= column < rgb.shape[1]):
@@ -735,8 +846,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self.superResStatusText.setText(str(exc))
             return
         self._super_res_error = None
-        self.lowResButton.setEnabled(False)
-        self.highResButton.setEnabled(False)
         self._resolution_switches.sync(
             available=self._super_res_result is not None,
             high_resolution=self._is_super_resolution_active(),
@@ -816,7 +925,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         # Either operation changes the cube used for classification.
         self._classification_controller.clear_result()
         self._calibration_controller.clear_super_resolution_result()
-        self.highResButton.setChecked(True)
+        self._set_high_resolution_selected(True)
         self._refresh_super_resolution_display()
         self.superResProgressBar.setValue(100)
         self._crop_undo_stack.clear()
@@ -837,7 +946,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._set_super_resolution_ready()
         self._calibration_controller.set_external_running(False)
         self._set_classification_controls_available(True)
-        self._update_super_resolution_view_state(self.highResButton.isChecked())
+        self._update_super_resolution_view_state(self._high_resolution_selected)
         if self._super_res_error:
             self.superResStatusText.setText(self._super_res_error)
             self.statusbar.showMessage(self._super_res_error)
@@ -850,14 +959,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _set_super_resolution_ready(self) -> None:
         self.actionLoadImage.setEnabled(True)
-        self.lowResButton.setEnabled(True)
-        self.highResButton.setEnabled(True)
         self._image_capabilities.refresh_super_resolution(self._hsi_data)
 
     def _reset_super_resolution(self) -> None:
         self._super_res_result = None
         self._super_res_error = None
-        self.lowResButton.setChecked(True)
+        self._set_high_resolution_selected(False)
         self.superResProgressBar.setValue(0)
         self._set_super_resolution_ready()
         self._update_super_resolution_view_state(False)
@@ -888,8 +995,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         else:
             self._set_super_resolution_ready()
             self._set_classification_controls_available(True)
-        self.lowResButton.setEnabled(not running)
-        self.highResButton.setEnabled(not running)
         # runningChanged(True) precedes creation of the first calibration worker.
         self._sync_image_switches()
         if running:
@@ -901,7 +1006,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._crop_redo_stack.clear()
         self._classification_controller.clear_result()
         self._clear_calibration_previews()
-        self._update_super_resolution_view_state(self.highResButton.isChecked())
+        self._update_super_resolution_view_state(self._high_resolution_selected)
 
     @QtCore.pyqtSlot(bool)
     def _on_calibration_references_changed(self, had_result: bool) -> None:
@@ -909,7 +1014,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._classification_controller.clear_result()
         if self._hsi_data.is_loaded():
             self._clear_calibration_previews()
-            self._update_super_resolution_view_state(self.highResButton.isChecked())
+            self._update_super_resolution_view_state(self._high_resolution_selected)
 
     def _clear_calibration_previews(self) -> None:
         self._visualization_cache = {
@@ -1008,13 +1113,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         loaded_path = self._hsi_data.data_path
 
-        loaded_file_text = f"File Loaded: {loaded_path}"
-        self.imageFilePath.setText(loaded_file_text)
-        self.imageFilePath.setToolTip(str(loaded_path))
-        self.superResFilePath.setText(loaded_file_text)
-        self.superResFilePath.setToolTip(str(loaded_path))
-        self.classificationFilePath.setText(loaded_file_text)
-        self.classificationFilePath.setToolTip(str(loaded_path))
+        # Status bar: the name; its tooltip and the window title carry more.
+        self.imageFilePath.setText(loaded_path.name)
+        self.imageFilePath.setToolTip(f"File loaded: {loaded_path}")
+        self.setWindowTitle(f"{loaded_path.name} — {APP_NAME}")
         self._classification_controller.set_image_loaded(True)
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
@@ -1069,7 +1171,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._active_viewer is self.calibrationViewer and calibration_result:
             display_rgb = calibration_result.data.rgb_array
         if self.tabWidget.currentWidget() is self.SuperResolution:
-            if self.highResButton.isChecked() and self._super_res_result is None:
+            if self._high_resolution_selected and self._super_res_result is None:
                 QMessageBox.information(self, "Nothing to save", "Run Super-Resolution first.")
                 return
             display_rgb = self._display_data().rgb_array
@@ -1309,7 +1411,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._spectrum_controller.pin(viewer, int(pos.y()), int(pos.x()))
 
     def _on_mean_index(self, index_name: str) -> None:
-        if self.sender() is self.superResViewer and self.highResButton.isChecked():
+        if self.sender() is self.superResViewer and self._high_resolution_selected:
             self.statusbar.showMessage("Index means are available for the original image in Visualization", 5000)
             return
         if not self._hsi_data.is_loaded():
@@ -1366,7 +1468,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if self._super_res_worker is not None:
             self.statusbar.showMessage("Cancel or finish SR before cropping")
             return True
-        if self.highResButton.isChecked() and self._super_res_result is not None:
+        if self._high_resolution_selected and self._super_res_result is not None:
             # Every viewer displays the SR result at 2x; crop selections are
             # only valid against the Original the rest of the pipeline crops.
             self.statusbar.showMessage("Select Original before cropping, then rerun SR", 5000)

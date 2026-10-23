@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>924</width>
-    <height>718</height>
+    <width>1180</width>
+    <height>760</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -21,16 +21,19 @@
        <number>0</number>
       </property>
       <widget class="QWidget" name="Visualization">
-       <property name="whatsThis">
-        <string>Visualization</string>
-       </property>
        <property name="accessibleName">
-        <string>Vizualization</string>
+        <string>Visualization</string>
        </property>
        <attribute name="title">
         <string>Visualization</string>
        </attribute>
        <layout class="QVBoxLayout" name="verticalLayout">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
         <item>
          <widget class="QStackedWidget" name="visualizationStack">
           <widget class="HSIViewer" name="viewer">
@@ -41,115 +44,22 @@
           <widget class="HypercubeWidget" name="hypercubeWidget"/>
          </widget>
         </item>
-        <item>
-         <widget class="QLabel" name="imageFilePath">
-          <property name="text">
-           <string>File Loaded: </string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QGroupBox" name="modeSelect">
-          <property name="maximumSize">
-           <size>
-            <width>16777215</width>
-            <height>121</height>
-           </size>
-          </property>
-          <property name="title">
-           <string/>
-          </property>
-          <layout class="QGridLayout" name="gridLayout">
-           <item row="0" column="0">
-            <widget class="QRadioButton" name="modeRGB">
-             <property name="text">
-              <string>RGB</string>
-             </property>
-             <attribute name="buttonGroup">
-              <string notr="true">modeButtons</string>
-             </attribute>
-            </widget>
-           </item>
-           <item row="0" column="1">
-            <widget class="QRadioButton" name="modeNDVI">
-             <property name="text">
-              <string>NDVI</string>
-             </property>
-             <attribute name="buttonGroup">
-              <string notr="true">modeButtons</string>
-             </attribute>
-            </widget>
-           </item>
-           <item row="0" column="2">
-            <widget class="QRadioButton" name="modeEVI">
-             <property name="text">
-              <string>EVI</string>
-             </property>
-             <attribute name="buttonGroup">
-              <string notr="true">modeButtons</string>
-             </attribute>
-            </widget>
-           </item>
-           <item row="0" column="3">
-            <widget class="QRadioButton" name="modeMCARI">
-             <property name="text">
-              <string>MCARI</string>
-             </property>
-             <attribute name="buttonGroup">
-              <string notr="true">modeButtons</string>
-             </attribute>
-            </widget>
-           </item>
-           <item row="1" column="0">
-            <widget class="QRadioButton" name="modeMTVI">
-             <property name="text">
-              <string>MTVI</string>
-             </property>
-             <attribute name="buttonGroup">
-              <string notr="true">modeButtons</string>
-             </attribute>
-            </widget>
-           </item>
-           <item row="1" column="1">
-            <widget class="QRadioButton" name="modeOSAVI">
-             <property name="text">
-              <string>OSAVI</string>
-             </property>
-             <attribute name="buttonGroup">
-              <string notr="true">modeButtons</string>
-             </attribute>
-            </widget>
-           </item>
-           <item row="1" column="2">
-            <widget class="QRadioButton" name="modePRI">
-             <property name="text">
-              <string>PRI</string>
-             </property>
-             <attribute name="buttonGroup">
-              <string notr="true">modeButtons</string>
-             </attribute>
-            </widget>
-           </item>
-           <item row="1" column="3">
-            <widget class="QRadioButton" name="modeHyperCube">
-             <property name="text">
-              <string>HyperCube</string>
-             </property>
-             <attribute name="buttonGroup">
-              <string notr="true">modeButtons</string>
-             </attribute>
-            </widget>
-           </item>
-          </layout>
-         </widget>
-        </item>
        </layout>
       </widget>
       <widget class="QWidget" name="SuperResolution">
+       <property name="accessibleName">
+        <string>Super-Resolution</string>
+       </property>
        <attribute name="title">
         <string>Super-Resolution</string>
        </attribute>
        <layout class="QVBoxLayout" name="verticalLayout_2">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
         <item>
          <widget class="HSIViewer" name="superResViewer">
           <property name="layoutDirection">
@@ -157,224 +67,22 @@
           </property>
          </widget>
         </item>
-        <item>
-         <widget class="QLabel" name="superResFilePath">
-          <property name="text">
-           <string>File Loaded: </string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QGroupBox" name="superResControls">
-          <property name="minimumSize">
-           <size>
-            <width>0</width>
-            <height>86</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>16777215</width>
-            <height>86</height>
-           </size>
-          </property>
-          <property name="title">
-           <string/>
-          </property>
-          <layout class="QGridLayout" name="superResGrid" columnstretch="0,0,0,0,1,0">
-           <property name="horizontalSpacing">
-            <number>8</number>
-           </property>
-           <item row="0" column="0">
-            <widget class="QLabel" name="superResComparisonLabel">
-             <property name="text">
-              <string>Compare view</string>
-             </property>
-             <property name="stepLabel" stdset="0">
-              <bool>true</bool>
-             </property>
-            </widget>
-           </item>
-           <item row="0" column="1">
-            <widget class="QRadioButton" name="lowResButton">
-             <property name="minimumSize">
-              <size>
-               <width>0</width>
-               <height>20</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>16777215</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Original · Low resolution</string>
-             </property>
-             <property name="checked">
-              <bool>true</bool>
-             </property>
-             <property name="accessibleDescription">
-              <string>View the original file before Super-Resolution processing</string>
-             </property>
-            </widget>
-           </item>
-           <item row="0" column="2">
-            <widget class="QLabel" name="superResFlowArrow">
-             <property name="text">
-              <string>→</string>
-             </property>
-             <property name="alignment">
-              <set>Qt::AlignmentFlag::AlignCenter</set>
-             </property>
-             <property name="flowArrow" stdset="0">
-              <bool>true</bool>
-             </property>
-            </widget>
-           </item>
-           <item row="0" column="3">
-            <widget class="QRadioButton" name="highResButton">
-             <property name="minimumSize">
-              <size>
-               <width>0</width>
-               <height>20</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>16777215</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Processed · High resolution</string>
-             </property>
-             <property name="accessibleDescription">
-              <string>View the result after Super-Resolution processing</string>
-             </property>
-            </widget>
-           </item>
-           <item row="0" column="4">
-            <spacer name="superResActionSpacer">
-             <property name="orientation">
-              <enum>Qt::Orientation::Horizontal</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size>
-               <width>24</width>
-               <height>20</height>
-              </size>
-             </property>
-            </spacer>
-           </item>
-           <item row="0" column="5">
-            <widget class="QPushButton" name="runSuperResButton">
-             <property name="enabled">
-              <bool>false</bool>
-             </property>
-             <property name="minimumSize">
-              <size>
-               <width>190</width>
-               <height>28</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>190</width>
-               <height>28</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Run Super-Resolution</string>
-             </property>
-             <property name="primaryButton" stdset="0">
-              <bool>true</bool>
-             </property>
-             <property name="accessibleDescription">
-              <string>Create the processed high-resolution result from the original file</string>
-             </property>
-            </widget>
-           </item>
-           <item row="1" column="0">
-            <widget class="QLabel" name="superResResultLabel">
-             <property name="text">
-              <string>Result status</string>
-             </property>
-             <property name="stepLabel" stdset="0">
-              <bool>true</bool>
-             </property>
-            </widget>
-           </item>
-           <item row="1" column="1" colspan="5">
-            <widget class="QStackedWidget" name="superResStatusStack">
-             <property name="currentIndex">
-              <number>0</number>
-             </property>
-             <widget class="QWidget" name="superResIdlePage">
-              <layout class="QHBoxLayout" name="superResIdleLayout">
-               <property name="leftMargin">
-                <number>0</number>
-               </property>
-               <property name="topMargin">
-                <number>0</number>
-               </property>
-               <property name="rightMargin">
-                <number>0</number>
-               </property>
-               <property name="bottomMargin">
-                <number>0</number>
-               </property>
-               <item>
-                <widget class="QLabel" name="superResStatusText">
-                 <property name="text">
-                  <string>Showing the original file before processing</string>
-                 </property>
-                 <property name="statusMessage" stdset="0">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </widget>
-             <widget class="QWidget" name="superResProgressPage">
-              <layout class="QHBoxLayout" name="superResProgressLayout">
-               <property name="leftMargin">
-                <number>0</number>
-               </property>
-               <property name="topMargin">
-                <number>0</number>
-               </property>
-               <property name="rightMargin">
-                <number>0</number>
-               </property>
-               <property name="bottomMargin">
-                <number>0</number>
-               </property>
-               <item>
-                <widget class="QProgressBar" name="superResProgressBar">
-                 <property name="value">
-                  <number>0</number>
-                 </property>
-                 <property name="accessibleName">
-                  <string>Super-Resolution processing progress</string>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </widget>
-            </widget>
-           </item>
-          </layout>
-         </widget>
-        </item>
        </layout>
       </widget>
       <widget class="QWidget" name="Calibration">
+       <property name="accessibleName">
+        <string>Calibration</string>
+       </property>
        <attribute name="title">
         <string>Calibration</string>
        </attribute>
        <layout class="QVBoxLayout" name="calibrationLayout">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
         <item>
          <widget class="HSIViewer" name="calibrationViewer">
           <property name="layoutDirection">
@@ -382,606 +90,41 @@
           </property>
          </widget>
         </item>
-        <item>
-         <layout class="QGridLayout" name="calibrationGridLayout">
-          <item row="0" column="0">
-           <widget class="QPushButton" name="darkFileButton">
-            <property name="text">
-             <string>Dark File</string>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QLineEdit" name="darkFileEdit">
-            <property name="readOnly">
-             <bool>true</bool>
-            </property>
-            <property name="placeholderText">
-             <string>Select dark reference file</string>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="0">
-           <widget class="QPushButton" name="referenceFileButton">
-            <property name="text">
-             <string>White File</string>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="1">
-           <widget class="QLineEdit" name="referenceFileEdit">
-            <property name="readOnly">
-             <bool>true</bool>
-            </property>
-            <property name="placeholderText">
-             <string>Select bright calibration file</string>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="0" colspan="2">
-           <widget class="QPushButton" name="calibrateButton">
-            <property name="text">
-             <string>Calibrate</string>
-            </property>
-            <property name="primaryButton" stdset="0">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </item>
        </layout>
       </widget>
       <widget class="QWidget" name="Classification">
+       <property name="accessibleName">
+        <string>Segmentation</string>
+       </property>
        <attribute name="title">
         <string>Segmentation</string>
        </attribute>
-       <layout class="QVBoxLayout" name="classificationLayout">
+       <layout class="QHBoxLayout" name="classificationLayout">
+        <property name="spacing">
+         <number>10</number>
+        </property>
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
         <item>
-         <layout class="QHBoxLayout" name="classificationViewerRow">
-          <property name="spacing">
-           <number>10</number>
-          </property>
-          <item>
-           <widget class="HSIViewer" name="classificationViewer">
-            <property name="layoutDirection">
-             <enum>Qt::LayoutDirection::LeftToRight</enum>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="ClassificationLayerPanel" name="classificationLayerPanel">
-            <property name="minimumSize">
-             <size>
-              <width>236</width>
-              <height>0</height>
-             </size>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <widget class="QLabel" name="classificationFilePath">
-          <property name="text">
-           <string>File Loaded: </string>
+         <widget class="HSIViewer" name="classificationViewer">
+          <property name="layoutDirection">
+           <enum>Qt::LayoutDirection::LeftToRight</enum>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QGroupBox" name="classificationControls">
-          <property name="maximumSize">
+         <widget class="ClassificationLayerPanel" name="classificationLayerPanel">
+          <property name="minimumSize">
            <size>
-            <width>16777215</width>
-            <height>118</height>
+            <width>236</width>
+            <height>0</height>
            </size>
           </property>
-          <property name="title">
-           <string/>
-          </property>
-          <layout class="QVBoxLayout" name="classificationControlsLayout">
-           <property name="leftMargin">
-            <number>0</number>
-           </property>
-           <property name="topMargin">
-            <number>0</number>
-           </property>
-           <property name="rightMargin">
-            <number>0</number>
-           </property>
-           <property name="bottomMargin">
-            <number>0</number>
-           </property>
-           <item>
-            <widget class="QTabWidget" name="classificationModeTabs">
-             <property name="currentIndex">
-              <number>1</number>
-             </property>
-             <widget class="QWidget" name="unsupervisedClassificationTab">
-              <attribute name="title">
-               <string>Unsupervised</string>
-              </attribute>
-              <layout class="QGridLayout" name="classificationGridLayout">
-               <property name="leftMargin">
-                <number>9</number>
-               </property>
-               <property name="topMargin">
-                <number>6</number>
-               </property>
-               <property name="rightMargin">
-                <number>9</number>
-               </property>
-               <property name="bottomMargin">
-                <number>6</number>
-               </property>
-               <property name="verticalSpacing">
-                <number>4</number>
-               </property>
-               <item row="0" column="0">
-                <widget class="QLabel" name="numOfClassesLabel">
-                 <property name="text">
-                  <string>Num of Classes:</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="1">
-                <widget class="QLineEdit" name="numOfClassesEdit">
-                 <property name="placeholderText">
-                  <string>e.g. 5</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="2">
-                <widget class="QLabel" name="maxIterationsLabel">
-                 <property name="text">
-                  <string>Max Iterations:</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="3">
-                <widget class="QLineEdit" name="maxIterationsEdit">
-                 <property name="placeholderText">
-                  <string>e.g. 20</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="4">
-                <widget class="QPushButton" name="unsupervisedClassifyButton">
-                 <property name="enabled">
-                  <bool>false</bool>
-                 </property>
-                 <property name="minimumSize">
-                  <size>
-                   <width>110</width>
-                   <height>0</height>
-                  </size>
-                 </property>
-                 <property name="text">
-                  <string>Classify</string>
-                 </property>
-                 <property name="primaryButton" stdset="0">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </widget>
-             <widget class="QWidget" name="supervisedClassificationTab">
-              <attribute name="title">
-               <string>Supervised</string>
-              </attribute>
-              <layout class="QGridLayout" name="supervisedClassificationGridLayout">
-               <property name="leftMargin">
-                <number>9</number>
-               </property>
-               <property name="topMargin">
-                <number>6</number>
-               </property>
-               <property name="rightMargin">
-                <number>9</number>
-               </property>
-               <property name="bottomMargin">
-                <number>6</number>
-               </property>
-               <property name="verticalSpacing">
-                <number>4</number>
-               </property>
-               <item row="0" column="0">
-                <widget class="QPushButton" name="pushButton">
-                 <property name="text">
-                  <string>Groundtruth File</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="1">
-                <widget class="QLineEdit" name="lineEdit">
-                 <property name="readOnly">
-                  <bool>true</bool>
-                 </property>
-                 <property name="placeholderText">
-                  <string>Select groundtruth file</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="0">
-                <widget class="QPushButton" name="hyperspectralImageButton">
-                 <property name="text">
-                  <string>Hyperspectral Image</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="1">
-                <widget class="QLineEdit" name="hyperspectralImageEdit">
-                 <property name="readOnly">
-                  <bool>true</bool>
-                 </property>
-                 <property name="placeholderText">
-                  <string>Select hyperspectral image</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="2">
-                <widget class="QLabel" name="classifierLabel">
-                 <property name="text">
-                  <string>Classifier:</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="3">
-                <widget class="QComboBox" name="comboBox">
-                 <property name="toolTip">
-                  <string>Select a classifier</string>
-                 </property>
-                 <property name="accessibleName">
-                  <string>Classifier</string>
-                 </property>
-                 <property name="sizeAdjustPolicy">
-                  <enum>QComboBox::SizeAdjustPolicy::AdjustToContents</enum>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="4">
-                <widget class="QPushButton" name="pushButton_2">
-                 <property name="enabled">
-                  <bool>false</bool>
-                 </property>
-                 <property name="minimumSize">
-                  <size>
-                   <width>110</width>
-                   <height>0</height>
-                  </size>
-                 </property>
-                 <property name="text">
-                  <string>Classify</string>
-                 </property>
-                 <property name="primaryButton" stdset="0">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="4">
-                <widget class="QPushButton" name="separateLeavesButton">
-                 <property name="enabled">
-                  <bool>false</bool>
-                 </property>
-                 <property name="minimumSize">
-                  <size>
-                   <width>110</width>
-                   <height>0</height>
-                  </size>
-                 </property>
-                 <property name="text">
-                  <string>Separate Leaves</string>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </widget>
-            </widget>
-           </item>
-          </layout>
          </widget>
-        </item>
-       </layout>
-      </widget>
-      <widget class="QWidget" name="Batch">
-       <attribute name="title">
-        <string>Batch</string>
-       </attribute>
-       <layout class="QHBoxLayout" name="batchLayout">
-        <item>
-         <layout class="QVBoxLayout" name="batchFilesColumn">
-          <item>
-           <widget class="QLabel" name="batchFilesLabel">
-            <property name="text">
-             <string>Input files</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QListWidget" name="batchFileList">
-            <property name="selectionMode">
-             <enum>QAbstractItemView::SelectionMode::ExtendedSelection</enum>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="batchFileButtonsRow">
-            <item>
-             <widget class="QPushButton" name="batchAddFilesButton">
-              <property name="text">
-               <string>Add Files…</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="batchAddFolderButton">
-              <property name="text">
-               <string>Add Folder…</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="batchRemoveButton">
-              <property name="text">
-               <string>Remove Selected</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="batchClearButton">
-              <property name="text">
-               <string>Clear</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <widget class="QLabel" name="batchResultsLabel">
-            <property name="text">
-             <string>Results</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QListWidget" name="batchResultsList"/>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <layout class="QVBoxLayout" name="batchOptionsColumn">
-          <item>
-           <widget class="QGroupBox" name="batchStagesGroup">
-            <property name="title">
-             <string>Stages</string>
-            </property>
-            <layout class="QVBoxLayout" name="batchStagesLayout">
-             <item>
-              <widget class="QCheckBox" name="batchCalibrateCheck">
-               <property name="text">
-                <string>Calibrate (auto-resolve dark/bright frames per file)</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QCheckBox" name="batchSuperResolveCheck">
-               <property name="text">
-                <string>Super-Resolution (2×)</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QCheckBox" name="batchClassifyCheck">
-               <property name="text">
-                <string>Classify</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QTabWidget" name="batchClassifyModeTabs">
-               <property name="enabled">
-                <bool>false</bool>
-               </property>
-               <property name="currentIndex">
-                <number>0</number>
-               </property>
-               <widget class="QWidget" name="batchUnsupervisedTab">
-                <attribute name="title">
-                 <string>Unsupervised</string>
-                </attribute>
-                <layout class="QGridLayout" name="batchUnsupervisedLayout">
-                 <item row="0" column="0">
-                  <widget class="QLabel" name="batchNumClassesLabel">
-                   <property name="text">
-                    <string>Num of Classes:</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="0" column="1">
-                  <widget class="QLineEdit" name="batchNumClassesEdit">
-                   <property name="placeholderText">
-                    <string>e.g. 5</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="1" column="0">
-                  <widget class="QLabel" name="batchMaxIterationsLabel">
-                   <property name="text">
-                    <string>Max Iterations:</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="1" column="1">
-                  <widget class="QLineEdit" name="batchMaxIterationsEdit">
-                   <property name="placeholderText">
-                    <string>e.g. 20</string>
-                   </property>
-                  </widget>
-                 </item>
-                </layout>
-               </widget>
-               <widget class="QWidget" name="batchSupervisedTab">
-                <attribute name="title">
-                 <string>Supervised</string>
-                </attribute>
-                <layout class="QGridLayout" name="batchSupervisedLayout">
-                 <item row="0" column="0">
-                  <widget class="QPushButton" name="batchGroundtruthButton">
-                   <property name="text">
-                    <string>Groundtruth File</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="0" column="1">
-                  <widget class="QLineEdit" name="batchGroundtruthEdit">
-                   <property name="readOnly">
-                    <bool>true</bool>
-                   </property>
-                   <property name="placeholderText">
-                    <string>Select groundtruth file</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="1" column="0">
-                  <widget class="QPushButton" name="batchTrainingCubeButton">
-                   <property name="text">
-                    <string>Hyperspectral Image</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="1" column="1">
-                  <widget class="QLineEdit" name="batchTrainingCubeEdit">
-                   <property name="readOnly">
-                    <bool>true</bool>
-                   </property>
-                   <property name="placeholderText">
-                    <string>Select hyperspectral image</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="2" column="0">
-                  <widget class="QLabel" name="batchClassifierLabel">
-                   <property name="text">
-                    <string>Classifier:</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="2" column="1">
-                  <widget class="QComboBox" name="batchClassifierCombo">
-                   <property name="toolTip">
-                    <string>Select a classifier</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item row="3" column="0" colspan="2">
-                  <widget class="QCheckBox" name="batchSeparateLeavesCheck">
-                   <property name="text">
-                    <string>Separate leaves into individual classes</string>
-                   </property>
-                  </widget>
-                 </item>
-                </layout>
-               </widget>
-              </widget>
-             </item>
-            </layout>
-           </widget>
-          </item>
-          <item>
-           <widget class="QGroupBox" name="batchOutputGroup">
-            <property name="title">
-             <string>Output</string>
-            </property>
-            <layout class="QGridLayout" name="batchOutputLayout">
-             <item row="0" column="0">
-              <widget class="QPushButton" name="batchOutputDirButton">
-               <property name="text">
-                <string>Output Folder</string>
-               </property>
-              </widget>
-             </item>
-             <item row="0" column="1">
-              <widget class="QLineEdit" name="batchOutputDirEdit">
-               <property name="readOnly">
-                <bool>true</bool>
-               </property>
-               <property name="placeholderText">
-                <string>Select output folder</string>
-               </property>
-              </widget>
-             </item>
-             <item row="1" column="0">
-              <widget class="QLabel" name="batchFormatLabel">
-               <property name="text">
-                <string>Format:</string>
-               </property>
-              </widget>
-             </item>
-             <item row="1" column="1">
-              <widget class="QComboBox" name="batchFormatCombo"/>
-             </item>
-             <item row="2" column="0" colspan="2">
-              <widget class="QCheckBox" name="batchOverwriteCheck">
-               <property name="text">
-                <string>Overwrite existing files</string>
-               </property>
-              </widget>
-             </item>
-             <item row="3" column="0" colspan="2">
-              <widget class="QCheckBox" name="batchExportCsvCheck">
-               <property name="text">
-                <string>Export summary CSV per file</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="batchRunButton">
-            <property name="enabled">
-             <bool>false</bool>
-            </property>
-            <property name="text">
-             <string>Run Batch</string>
-            </property>
-            <property name="primaryButton" stdset="0">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QProgressBar" name="batchProgressBar">
-            <property name="value">
-             <number>0</number>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLabel" name="batchStatusLabel">
-            <property name="text">
-             <string>Select files to begin</string>
-            </property>
-            <property name="statusMessage" stdset="0">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="batchOptionsSpacer">
-            <property name="orientation">
-             <enum>Qt::Orientation::Vertical</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>20</width>
-              <height>40</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-         </layout>
         </item>
        </layout>
       </widget>
@@ -1022,7 +165,4 @@
   <include location="Resources/icon_resources.qrc"/>
  </resources>
  <connections/>
- <buttongroups>
-  <buttongroup name="modeButtons"/>
- </buttongroups>
 </ui>

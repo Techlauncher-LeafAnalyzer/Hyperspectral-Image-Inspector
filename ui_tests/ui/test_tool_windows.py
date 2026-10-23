@@ -31,13 +31,17 @@ def test_stripe_sits_on_the_left_edge_with_both_tools(shown_window):
     assert window.toolBarArea(stripe) == QtCore.Qt.ToolBarArea.LeftToolBarArea
     assert stripe.mapTo(window, QtCore.QPoint()).x() == 0
     assert [tool.button.text() for tool in stripe.tool_windows] == ["Spectrum"]
-    # Logo, then the view toggles, a divider, then tool windows — top to bottom.
+    # Logo, File, a divider, the view toggles, a divider, then tool windows
+    # — top to bottom.
     def top(widget):
         return widget.mapTo(window, QtCore.QPoint()).y()
 
-    divider = stripe.findChild(QtWidgets.QFrame, "toolWindowStripeDivider")
-    order = [stripe.logo, window.superResolutionSwitch, window.calibrationSwitch,
-             divider, window.spectrumTool.button]
+    file_divider, tools_divider = stripe.findChildren(
+        QtWidgets.QFrame, "toolWindowStripeDivider"
+    )
+    order = [stripe.logo, window.fileMenuButton, file_divider,
+             window.superResolutionSwitch, window.calibrationSwitch,
+             tools_divider, window.spectrumTool.button]
     assert [top(w) for w in order] == sorted(top(w) for w in order)
     assert len({top(w) for w in order}) == len(order)
     assert window.findChild(QtWidgets.QDockWidget, "imageViewDock") is None
@@ -183,7 +187,7 @@ def test_popped_out_window_remembers_its_size(shown_window, qtbot):
     assert tool.window.size() == QtCore.QSize(700, 500)
 
 
-def test_stripe_matches_tab_row_and_fills_space_left_of_the_image(shown_window, qtbot):
+def test_stripe_fills_space_left_of_the_image(shown_window, qtbot):
     from ui.tool_windows import STRIPE_GAP
 
     window = shown_window
@@ -191,14 +195,13 @@ def test_stripe_matches_tab_row_and_fills_space_left_of_the_image(shown_window, 
     qtbot.wait(50)  # let the deferred stripe sync and relayout run
     window._sync_stripe_geometry()
     qtbot.wait(20)
-    tab_bar = window.tabWidget.tabBar()
 
-    # Logo centred on the tab row's midpoint.
+    # Logo at the top, level with the top of the image pane.
     logo = stripe.logo
     assert not logo.pixmap().isNull()
-    logo_mid = logo.mapToGlobal(logo.rect().center()).y()
-    tab_mid = tab_bar.mapToGlobal(tab_bar.tabRect(0).center()).y()
-    assert abs(logo_mid - tab_mid) <= 1
+    logo_top = logo.mapTo(window, QtCore.QPoint()).y()
+    assert logo_top == STRIPE_GAP
+    assert window.tabWidget.mapTo(window, QtCore.QPoint()).y() == STRIPE_GAP
 
     # Buttons: an even gap to the window edge and to the image area.
     button = window.superResolutionSwitch
@@ -208,11 +211,11 @@ def test_stripe_matches_tab_row_and_fills_space_left_of_the_image(shown_window, 
     assert button_left == STRIPE_GAP
     assert image_left - button_right == STRIPE_GAP
     # Toggles sit below the logo row, larger than the old 36px buttons.
-    assert button.mapTo(window, QtCore.QPoint()).y() > logo.mapTo(window, QtCore.QPoint()).y() + logo.height()
+    assert button.mapTo(window, QtCore.QPoint()).y() > logo_top + logo.height()
     assert button.width() == button.height() > 36
 
-    # Same painted ground colour as the tab row beside it (with the app theme;
-    # the test app runs unstyled by default).
+    # Same painted ground colour as the window chrome above the image (with
+    # the app theme; the test app runs unstyled by default).
     from PyQt6.QtWidgets import QApplication
     from ui.theme import apply_theme
 
@@ -222,7 +225,6 @@ def test_stripe_matches_tab_row_and_fills_space_left_of_the_image(shown_window, 
     qtbot.wait(20)
     image = window.grab().toImage()
     app.setStyleSheet(previous)
-    stripe_pixel = image.pixelColor(2, window.height() - 40).name()
-    tab_row_y = tab_bar.mapTo(window, QtCore.QPoint()).y() + 2
-    tab_row_pixel = image.pixelColor(window.width() - 300, tab_row_y).name()
-    assert stripe_pixel == tab_row_pixel == "#edf2f1"
+    stripe_pixel = image.pixelColor(2, window.height() - 60).name()
+    chrome_pixel = image.pixelColor(image_left + 40, 1).name()
+    assert stripe_pixel == chrome_pixel == "#edf2f1"
