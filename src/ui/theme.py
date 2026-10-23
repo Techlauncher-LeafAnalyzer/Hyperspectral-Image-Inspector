@@ -463,6 +463,7 @@ QMenu#fileMenu::icon {
 }
 
 QMenu#viewerContextMenu,
+QMenu#viewerSpectrumMenu,
 QMenu#viewerIndexMenu {
     background: #fbfdfc;
     color: #263735;
@@ -472,6 +473,7 @@ QMenu#viewerIndexMenu {
 }
 
 QMenu#viewerContextMenu::item,
+QMenu#viewerSpectrumMenu::item,
 QMenu#viewerIndexMenu::item {
     min-height: 22px;
     padding: 8px 38px 8px 38px;
@@ -483,6 +485,7 @@ QMenu#viewerIndexMenu::item {
 }
 
 QMenu#viewerContextMenu::item:selected,
+QMenu#viewerSpectrumMenu::item:selected,
 QMenu#viewerIndexMenu::item:selected {
     background: #e3f1ee;
     color: #173f39;
@@ -490,6 +493,7 @@ QMenu#viewerIndexMenu::item:selected {
 }
 
 QMenu#viewerContextMenu::item:pressed,
+QMenu#viewerSpectrumMenu::item:pressed,
 QMenu#viewerIndexMenu::item:pressed {
     background: #d5eae5;
     color: #123e37;
@@ -497,6 +501,7 @@ QMenu#viewerIndexMenu::item:pressed {
 }
 
 QMenu#viewerContextMenu::item:checked,
+QMenu#viewerSpectrumMenu::item:checked,
 QMenu#viewerIndexMenu::item:checked {
     background: #edf7f4;
     color: #126f62;
@@ -504,6 +509,7 @@ QMenu#viewerIndexMenu::item:checked {
 }
 
 QMenu#viewerContextMenu::item:checked:selected,
+QMenu#viewerSpectrumMenu::item:checked:selected,
 QMenu#viewerIndexMenu::item:checked:selected {
     background: #d9ede8;
     color: #105f55;
@@ -511,6 +517,7 @@ QMenu#viewerIndexMenu::item:checked:selected {
 }
 
 QMenu#viewerContextMenu::item:disabled,
+QMenu#viewerSpectrumMenu::item:disabled,
 QMenu#viewerIndexMenu::item:disabled {
     background: transparent;
     color: #9ba9a6;
@@ -518,6 +525,7 @@ QMenu#viewerIndexMenu::item:disabled {
 }
 
 QMenu#viewerContextMenu::separator,
+QMenu#viewerSpectrumMenu::separator,
 QMenu#viewerIndexMenu::separator {
     height: 1px;
     background: #dbe5e2;
@@ -525,6 +533,7 @@ QMenu#viewerIndexMenu::separator {
 }
 
 QMenu#viewerContextMenu::icon,
+QMenu#viewerSpectrumMenu::icon,
 QMenu#viewerIndexMenu::icon {
     left: 11px;
     width: 18px;
@@ -532,6 +541,7 @@ QMenu#viewerIndexMenu::icon {
 }
 
 QMenu#viewerContextMenu::indicator,
+QMenu#viewerSpectrumMenu::indicator,
 QMenu#viewerIndexMenu::indicator {
     left: 12px;
     width: 16px;
@@ -539,11 +549,13 @@ QMenu#viewerIndexMenu::indicator {
 }
 
 QMenu#viewerContextMenu::indicator:checked,
+QMenu#viewerSpectrumMenu::indicator:checked,
 QMenu#viewerIndexMenu::indicator:checked {
     image: url(__MENU_CHECK__);
 }
 
 QMenu#viewerContextMenu::right-arrow,
+QMenu#viewerSpectrumMenu::right-arrow,
 QMenu#viewerIndexMenu::right-arrow {
     image: url(__MENU_CHEVRON__);
     width: 6px;
