@@ -55,8 +55,20 @@ from .classification_layer_model import (
     ClassificationLayerComposite,
     ClassificationLayerModel,
 )
+from .custom_index import (
+    CUSTOM_INDEX_FUNCTIONS,
+    CustomIndexError,
+    CustomIndexFormula,
+    ResolvedBand,
+    parse_custom_index,
+)
 from .leaf_labels import LeafLabel, draw_leaf_labels, place_leaf_labels
-from .leaf_separation import LeafSeparationResult, separate_leaves
+from .leaf_separation import (
+    LeafClusters,
+    LeafSeparationResult,
+    leaf_clusters,
+    separate_leaves,
+)
 from .classification_export_model import ExportRegion, export_class_summary_csv
 from .annotation_region import RegionMeasurement, measure_region, region_mask
 from .hsi_data import Functionality, HSIData, ImageFormat
@@ -77,6 +89,7 @@ from .visualization_model import (
     DisplayStretch,
     HypercubeData,
     HypercubeViewData,
+    ON_DEMAND_VISUALIZATION_MODES,
     OPTIONAL_VISUALIZATION_MODES,
     SpectrumResult,
     VisualizationMode,
@@ -116,14 +129,19 @@ __all__ = [
     "ClassificationLayer",
     "ClassificationLayerComposite",
     "ClassificationLayerModel",
+    "LeafClusters",
     "LeafLabel",
     "LeafSeparationResult",
     "draw_leaf_labels",
+    "leaf_clusters",
     "place_leaf_labels",
     "separate_leaves",
     "ClassificationService",
     "ClassIndexStatistics",
     "ClassVisualizationMean",
+    "CUSTOM_INDEX_FUNCTIONS",
+    "CustomIndexError",
+    "CustomIndexFormula",
     "DisplayStretch",
     "ExportRegion",
     "Functionality",
@@ -138,10 +156,13 @@ __all__ = [
     "ImageFormat",
     "ImageExportFormat",
     "Masked",
+    "ON_DEMAND_VISUALIZATION_MODES",
     "OPTIONAL_VISUALIZATION_MODES",
+    "parse_custom_index",
     "polygon_mask",
     "RegionMeasurement",
     "RegionSpectrum",
+    "ResolvedBand",
     "SimilarityResult",
     "SpectralAnalysisService",
     "SpectrumTransform",

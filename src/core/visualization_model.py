@@ -16,6 +16,7 @@ from matplotlib import colormaps
 import numpy as np
 from spectral import get_rgb
 
+from .custom_index import parse_custom_index
 from .errors import CancelledError, VisualizationError, WavelengthError
 from .hsi_data import HSIData
 from .roi import roi_boundary
@@ -39,11 +40,19 @@ class VisualizationMode(StrEnum):
     PRI = "PRI"
     NDWI = "NDWI"
     NDMI = "NDMI"
+    CUSTOM = "CUSTOM"
+    BRIGHTNESS = "BRIGHTNESS"
 
 
 # Modes that only make sense for some cameras (e.g. Specim FX17's SWIR-only
 # range); UI code hides their controls instead of merely disabling them.
 OPTIONAL_VISUALIZATION_MODES = frozenset({VisualizationMode.NDWI, VisualizationMode.NDMI})
+
+# Modes the user configures or that read the whole cube; Controllers render
+# them on demand instead of with the eagerly cached vegetation indices.
+ON_DEMAND_VISUALIZATION_MODES = frozenset(
+    {VisualizationMode.CUSTOM, VisualizationMode.BRIGHTNESS}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,14 +75,24 @@ class DisplayStretch:
 class VisualizationRequest:
     """Immutable visualization command constructed by a Controller.
 
-    ``band_index`` is required only for ``BAND``. ``colormap`` applies to
-    vegetation indices and must name a Matplotlib colormap; ``None`` selects
+    ``band_index`` is required only for ``BAND`` and ``formula`` only for
+    ``CUSTOM`` (see :mod:`core.custom_index` for its syntax). ``colormap``
+    applies to indices and must name a Matplotlib colormap; ``None`` selects
     the Model default.
+
+    ``BRIGHTNESS`` normalizes the summed spectrum over the whole image unless
+    ``segments`` is given: an integer label raster matching the image, whose
+    every label ``>= 0`` is normalized on its own and whose negative labels
+    are left as no-data. ``band_sum`` may carry a raster previously returned
+    by :meth:`VisualizationService.band_sum` to skip re-reading the cube.
     """
     mode: VisualizationMode | str
     band_index: int | None = None
     stretch: DisplayStretch = DisplayStretch()
     colormap: str | None = None
+    formula: str | None = None
+    segments: np.ndarray | None = None
+    band_sum: np.ndarray | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,8 +209,13 @@ class VisualizationService:
             VisualizationMode.PRI: "Spectral",
             VisualizationMode.NDWI: "BrBG",
             VisualizationMode.NDMI: "BrBG",
+            VisualizationMode.CUSTOM: "viridis",
+            VisualizationMode.BRIGHTNESS: "inferno",
         }
     )
+    # Bands summed per read when computing BRIGHTNESS, bounding peak memory
+    # to this many full-frame float32 planes.
+    BAND_SUM_CHUNK = 16
 
     @property
     def supported_modes(self) -> tuple[VisualizationMode, ...]:
@@ -203,6 +227,9 @@ class VisualizationService:
         if not data.is_loaded():
             return "Load an image first."
         mode = self._coerce_mode(mode)
+        if mode in ON_DEMAND_VISUALIZATION_MODES:
+            # CUSTOM bands are checked per formula when it is rendered.
+            return None
         if mode not in (VisualizationMode.RGB, VisualizationMode.BAND):
             try:
                 self._index_band_indices(data, mode)
@@ -239,11 +266,75 @@ class VisualizationService:
             if request.band_index is None:
                 raise VisualizationError("BAND mode requires band_index.")
             result = self._render_band(data, request.band_index, request.stretch)
+        elif mode is VisualizationMode.CUSTOM:
+            result = self._render_custom(data, request)
+        elif mode is VisualizationMode.BRIGHTNESS:
+            result = self._render_brightness(data, request, progress, is_cancelled)
         else:
             result = self._render_index(data, mode, request)
         self._check_cancelled(is_cancelled)
         self._emit(progress, 100, f"{mode.value} complete")
         return result
+
+    def band_sum(
+        self,
+        data: HSIData,
+        *,
+        progress: ProgressCallback | None = None,
+        is_cancelled: CancellationCheck | None = None,
+    ) -> np.ndarray:
+        """Return every pixel's spectrum summed over all bands, as ``float64``.
+
+        Bands are read in chunks of :attr:`BAND_SUM_CHUNK`, so memory stays
+        bounded however many bands the cube has. Pixels outside a polygon
+        crop are NaN. The result can be passed back as
+        ``VisualizationRequest.band_sum`` to re-normalize without new reads.
+        """
+
+        total = np.zeros((data.rows, data.columns), dtype=np.float64)
+        for start in range(0, data.bands, self.BAND_SUM_CHUNK):
+            stop = min(start + self.BAND_SUM_CHUNK, data.bands)
+            self._check_cancelled(is_cancelled)
+            self._emit(
+                progress,
+                round(90 * start / data.bands),
+                f"Summing bands {start + 1}-{stop} of {data.bands}",
+            )
+            chunk = data.read_bands(range(start, stop))
+            total += np.nan_to_num(chunk, nan=0.0, posinf=0.0, neginf=0.0).sum(
+                axis=2, dtype=np.float64
+            )
+        return data.masked(total).fill()
+
+    @staticmethod
+    def normalize_by_segment(
+        values: np.ndarray, segments: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Min-max scale ``values`` to 0..1, per segment label when given.
+
+        Each label ``>= 0`` in ``segments`` is scaled using only its own
+        finite pixels; negative labels and non-finite inputs become NaN. A
+        region of constant value maps to 0.
+        """
+
+        values = np.asarray(values, dtype=np.float64)
+        normalized = np.full(values.shape, np.nan, dtype=np.float32)
+        if segments is None:
+            labels = np.zeros(values.shape, dtype=np.int64)
+        else:
+            labels = np.asarray(segments)
+            if labels.shape != values.shape:
+                raise VisualizationError(
+                    f"Segment map shape {labels.shape} does not match the "
+                    f"{values.shape} image."
+                )
+        valid = np.isfinite(values) & (labels >= 0)
+        for label in np.unique(labels[valid]):
+            region = valid & (labels == label)
+            low = values[region].min()
+            span = values[region].max() - low
+            normalized[region] = (values[region] - low) / span if span > 0 else 0.0
+        return normalized
 
     def spectrum(self, data: HSIData, row: int, column: int) -> SpectrumResult:
         """Read the spectrum at a zero-based source-image coordinate.
@@ -565,6 +656,86 @@ class VisualizationService:
             colormap=colormap,
             display_limits=limits,
         )
+
+    def _render_custom(
+        self, data: HSIData, request: VisualizationRequest
+    ) -> VisualizationResult:
+        if not request.formula:
+            raise VisualizationError("CUSTOM mode requires a formula.")
+        formula = parse_custom_index(request.formula)
+        resolved = formula.resolve(data.wavelengths_nm)
+        cube = data.read_bands([band.band_index for band in resolved])
+        values = formula.evaluate(
+            {band.requested_nm: cube[:, :, position] for position, band in enumerate(resolved)}
+        )
+        # Same treatment as the built-in indices: arithmetic artefacts become
+        # 0 and only ROI-excluded pixels remain NaN.
+        values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+        values = data.masked(values).fill()
+        normalized, value_range, limits = self._percentile_stretch(values, request.stretch)
+        colormap = request.colormap or self.DEFAULT_COLORMAPS[VisualizationMode.CUSTOM]
+        return VisualizationResult(
+            mode=VisualizationMode.CUSTOM,
+            display_rgb=self._apply_colormap(normalized, colormap),
+            values=values,
+            title=f"Custom index: {formula.text}",
+            value_range=value_range,
+            band_indices=MappingProxyType({band.token: band.band_index for band in resolved}),
+            band_wavelengths_nm=MappingProxyType(
+                {band.token: band.wavelength_nm for band in resolved}
+            ),
+            colormap=colormap,
+            display_limits=limits,
+        )
+
+    def _render_brightness(
+        self,
+        data: HSIData,
+        request: VisualizationRequest,
+        progress: ProgressCallback | None,
+        is_cancelled: CancellationCheck | None,
+    ) -> VisualizationResult:
+        total = request.band_sum
+        if total is None:
+            total = self.band_sum(data, progress=progress, is_cancelled=is_cancelled)
+        elif total.shape != (data.rows, data.columns):
+            raise VisualizationError("The supplied band sum does not match the image.")
+        segments = request.segments
+        if segments is not None and data.roi_mask is not None:
+            segments = np.where(data.roi_mask, segments, -1)
+        values = self.normalize_by_segment(data.masked(total).fill(), segments)
+        colormap = request.colormap or self.DEFAULT_COLORMAPS[VisualizationMode.BRIGHTNESS]
+        finite = values[np.isfinite(values)]
+        if segments is None:
+            scope = "whole image"
+        else:
+            count = np.unique(segments[segments >= 0]).size
+            scope = f"per cluster, {count} cluster{'s' if count != 1 else ''}"
+        ends = {"first": 0, "last": data.bands - 1}
+        return VisualizationResult(
+            mode=VisualizationMode.BRIGHTNESS,
+            display_rgb=self._apply_colormap(values, colormap),
+            values=values,
+            title=f"Brightness (sum of {data.bands} bands, {scope})",
+            value_range=(
+                (float(finite.min()), float(finite.max())) if finite.size else (0.0, 0.0)
+            ),
+            band_indices=MappingProxyType(ends),
+            band_wavelengths_nm=MappingProxyType(self._wavelength_map(data, ends)),
+            colormap=colormap,
+            display_limits=(0.0, 1.0),
+        )
+
+    @staticmethod
+    def _apply_colormap(normalized: np.ndarray, colormap: str) -> np.ndarray:
+        try:
+            cmap = colormaps[colormap]
+        except KeyError as exc:
+            raise VisualizationError(f"Unknown Matplotlib colormap: {colormap}") from exc
+        # NaN (no-data) pixels must be finite before the uint8 cast.
+        return np.round(
+            cmap(np.nan_to_num(normalized, nan=0.0))[..., :3] * 255
+        ).astype(np.uint8)
 
     def _index_band_indices(self, data: HSIData, mode: VisualizationMode) -> dict[str, int]:
         """Share exact target/tolerance rules between rendering and UI gating."""

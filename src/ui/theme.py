@@ -569,6 +569,108 @@ QDialog#indexMeanDialog {
     background: #ffffff;
 }
 
+QDialog#customIndexDialog {
+    background: #ffffff;
+}
+
+QLabel#customIndexHeading {
+    color: #123e37;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QLabel#customIndexSubtitle,
+QLabel#customIndexHint,
+QLabel#customIndexNearestBand {
+    color: #667673;
+    font-size: 12px;
+}
+
+QLabel#customIndexRange {
+    color: #1f302e;
+    background: #edf5f3;
+    border: 1px solid #d6e4e0;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+QLineEdit#customIndexFormulaEdit {
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 15px;
+    padding: 9px 10px;
+}
+
+QToolButton#customIndexPaletteButton,
+QToolButton#customIndexExamplesButton {
+    background: #ffffff;
+    color: #263735;
+    border: 1px solid #cddad6;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QToolButton#customIndexPaletteButton:hover,
+QToolButton#customIndexExamplesButton:hover {
+    background: #f0f7f5;
+    border-color: #8fbcb4;
+}
+
+QToolButton#customIndexPaletteButton:pressed {
+    background: #dcefeb;
+    border-color: #1f9d8a;
+}
+
+QLabel#customIndexPreview {
+    color: #8a9c98;
+    background: #f3faf8;
+    border: 1px solid #d8ece7;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+QLabel#customIndexStatus[state="ok"] {
+    color: #1d5c52;
+}
+
+QLabel#customIndexStatus[state="error"] {
+    color: #a4372b;
+}
+
+QLabel#visualizationModeCaption {
+    color: #1f302e;
+    background: #edf5f3;
+    border: 1px solid #d6e4e0;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
+QLabel#visualizationModeCaption[state="warning"] {
+    color: #7a4b12;
+    background: #fbf3e4;
+    border-color: #ecd7ae;
+}
+
+QToolButton#editCustomIndexButton {
+    background: transparent;
+    color: #168b7b;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 2px 6px;
+    font-weight: 600;
+}
+
+QToolButton#editCustomIndexButton:hover {
+    background: #f0f7f5;
+    border-color: #8fbcb4;
+}
+
+QToolButton#editCustomIndexButton:disabled {
+    color: #9ba9a6;
+}
+
 QLabel#indexMeanHeading {
     color: #123e37;
     font-size: 16px;

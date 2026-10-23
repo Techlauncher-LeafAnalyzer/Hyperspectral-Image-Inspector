@@ -34,6 +34,7 @@ from core import (
     HSIError,
     HSIReader,
     HSI_FILE_FILTER,
+    LeafClusters,
     SupervisedClassificationRequest,
     SupervisedClassificationResult,
     SupervisedClassifierType,
@@ -45,6 +46,7 @@ from core import (
     VisualizationResult,
     export_class_summary_csv,
     draw_leaf_labels,
+    leaf_clusters,
     measure_region,
     region_mask,
     place_leaf_labels,
@@ -101,6 +103,7 @@ class _ClassificationSlot:
     # Each separated leaf's number, drawn beneath it on the canvas and in
     # saved images; empty until leaves are separated.
     leaf_labels: tuple[LeafLabel, ...] = ()
+    clusters: Optional[LeafClusters] = None
 
 
 @dataclass
@@ -284,6 +287,8 @@ class ClassificationController(QObject):
 
     readyToClose = QtCore.pyqtSignal()
     runningChanged = QtCore.pyqtSignal(bool)
+    # The supervised result behind `brightness_clusters()` changed.
+    segmentationChanged = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -470,6 +475,21 @@ class ClassificationController(QObject):
             )
         return (data, regions) if regions else None
 
+    def brightness_clusters(self) -> Optional[LeafClusters]:
+        """Leaf clusters of the displayed supervised result, if there is one.
+
+        Leaves are split for this purpose even when the user has not pressed
+        Separate Leaves; the layer panel is left untouched. Computed once per
+        result.
+        """
+
+        slot = self._current_slot
+        if not isinstance(slot.result, SupervisedClassificationResult):
+            return None
+        if slot.clusters is None:
+            slot.clusters = leaf_clusters(slot.result, separated=slot.leaves_separated)
+        return slot.clusters
+
     def is_running(self) -> bool:
         return self._thread is not None
 
@@ -490,6 +510,7 @@ class ClassificationController(QObject):
         self._layer_panel.clear()
         self._sync_annotations()
         self._update_separate_leaves_button()
+        self.segmentationChanged.emit()
 
     def set_visualization_results(
         self, results: Mapping[VisualizationMode, VisualizationResult]
@@ -520,6 +541,7 @@ class ClassificationController(QObject):
         self._slots[True] = _ClassificationSlot()
         self._calibrated_slots[True] = _ClassificationSlot()
         self._update_separate_leaves_button()
+        self.segmentationChanged.emit()
 
     def refresh_display(self) -> None:
         """Show the layer panel for whichever classification result is active.
@@ -938,9 +960,11 @@ class ClassificationController(QObject):
         slot.leaves_separated = False
         slot.fixed_colors = {}
         slot.leaf_labels = ()
+        slot.clusters = None
         if slot_key == self._is_super_resolution_active():
             self._populate_layer_panel(slot)
             self._show_result()
+        self.segmentationChanged.emit()
         populated = int(np.count_nonzero(result.class_pixel_counts))
         operation = (
             result.classifier.value
@@ -1019,9 +1043,11 @@ class ClassificationController(QObject):
         slot.means = None
         slot.leaves_separated = True
         slot.leaf_labels = place_leaf_labels(result.class_map, separation.leaf_numbers)
+        slot.clusters = None
         self._populate_layer_panel(slot)
         self._show_result()
         self._update_separate_leaves_button()
+        self.segmentationChanged.emit()
         self._statusbar.showMessage(
             f"Separated the plant into {separation.leaf_count} leaf classes", 8000
         )
