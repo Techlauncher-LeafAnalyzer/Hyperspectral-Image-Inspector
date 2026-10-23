@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,12 @@ from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QPushButton, QWidg
 
 from core import HypercubeViewData
 from core.roi import roi_boundary
+
+LOGGER = logging.getLogger(__name__)
+
+GL_UNAVAILABLE_MESSAGE = (
+    "3D hypercube view unavailable: this system's OpenGL could not render it."
+)
 
 
 _BRIGHT_SPECTRAL_COLORS = np.array(
@@ -90,6 +97,7 @@ class HypercubeWidget(QOpenGLWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self._gl_failed = False
         fmt = QSurfaceFormat()
         fmt.setDepthBufferSize(24)
         self.setFormat(fmt)
@@ -140,6 +148,9 @@ class HypercubeWidget(QOpenGLWidget):
         self.update()
 
     def set_status_message(self, message: Optional[str]) -> None:
+        if not message and self._gl_failed:
+            # Keep explaining why the cube is blank once GL has failed.
+            message = GL_UNAVAILABLE_MESSAGE
         if message:
             self._status_label.setText(message)
             self._status_label.adjustSize()
@@ -167,7 +178,42 @@ class HypercubeWidget(QOpenGLWidget):
     # QOpenGLWidget overrides                                              #
     # ------------------------------------------------------------------ #
 
+    # ------------------------------------------------------------------ #
+    # OpenGL availability                                                 #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def gl_available(self) -> bool:
+        """False once OpenGL has failed; the widget then stops drawing."""
+
+        return not self._gl_failed
+
+    def _disable_gl(self, stage: str, exc: BaseException) -> None:
+        """Stop all GL work after a failure and say so in the status label.
+
+        An exception escaping a Qt virtual method (initializeGL, resizeGL,
+        paintGL) can abort the whole process, so every GL entry point is
+        guarded and funnels here. Missing GL functions (NullFunctionError),
+        no usable context (e.g. the offscreen platform) and GL errors are all
+        handled the same way: the 3D view is unavailable, the app carries on.
+        """
+
+        if self.gl_available:
+            LOGGER.warning("Hypercube OpenGL %s failed; disabling 3D view: %s", stage, exc)
+        self._gl_failed = True
+        self._export_button.setEnabled(False)
+        self._export_button.setToolTip(GL_UNAVAILABLE_MESSAGE)
+        self.set_status_message(GL_UNAVAILABLE_MESSAGE)
+
     def initializeGL(self) -> None:
+        if not self.gl_available:
+            return
+        try:
+            self._initialize_gl()
+        except Exception as exc:  # noqa: BLE001 - see _disable_gl
+            self._disable_gl("initialisation", exc)
+
+    def _initialize_gl(self) -> None:
         import OpenGL.GL as gl
 
         gl.glEnable(gl.GL_TEXTURE_2D)
@@ -177,6 +223,14 @@ class HypercubeWidget(QOpenGLWidget):
         gl.glShadeModel(gl.GL_FLAT)
 
     def resizeGL(self, width: int, height: int) -> None:
+        if not self.gl_available:
+            return
+        try:
+            self._resize_gl(width, height)
+        except Exception as exc:  # noqa: BLE001 - see _disable_gl
+            self._disable_gl("resize", exc)
+
+    def _resize_gl(self, width: int, height: int) -> None:
         import OpenGL.GL as gl
 
         gl.glViewport(0, 0, max(width, 1), max(height, 1))
@@ -186,13 +240,30 @@ class HypercubeWidget(QOpenGLWidget):
         gl.glMatrixMode(gl.GL_MODELVIEW)
 
     def paintGL(self) -> None:
-        import OpenGL.GL as gl
+        if not self.gl_available:
+            return
+        try:
+            self._paint_gl()
+        except Exception as exc:  # noqa: BLE001 - see _disable_gl
+            self._disable_gl("paint", exc)
 
+    def _paint_gl(self) -> None:
         # Qt requires raw OpenGL commands to be enclosed by
         # beginNativePainting/endNativePainting when they are mixed with a
         # QPainter overlay on a QOpenGLWidget.  The painter then renders the
         # axis text reliably after the 3D scene has completed.
         painter = QPainter(self)
+        try:
+            self._paint_scene(painter)
+        finally:
+            # Never leave the painter active: a QPainter destroyed while
+            # still painting on the widget makes Qt warn or crash.
+            if painter.isActive():
+                painter.end()
+
+    def _paint_scene(self, painter: QPainter) -> None:
+        import OpenGL.GL as gl
+
         painter.beginNativePainting()
         axis_overlay = None
         try:
@@ -228,7 +299,6 @@ class HypercubeWidget(QOpenGLWidget):
 
         if axis_overlay is not None:
             self._draw_axis_labels(painter, *axis_overlay)
-        painter.end()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

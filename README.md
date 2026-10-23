@@ -88,12 +88,12 @@ python src/main.py
 - **Cropping:** rectangle and polygon region-of-interest tools with undo/redo.
 - **Export:** save the current rendered view as an image.
 - **Formats:** ENVI `.bil`/`.hdr` and PSI headers (converted automatically on load).
-- **Live resource monitor:** CPU and RAM usage shown in the header.
+- **Live resource monitor:** CPU and RAM usage shown in the status bar.
 
 ## Usage
 
-1. Click **Load Image** and select a `.bil` file (its `.hdr` header must sit alongside it).
-2. Explore the tabs: **Visualization**, **Super-Resolution**, **Calibration** and **Classification**.
+1. Open the **File** menu (folder icon, top of the left sidebar) → **Load Image** and select a `.bil` file (its `.hdr` header must sit alongside it).
+2. Use the panels in the right sidebar: **Visualize**, **Super-Res**, **Calibrate**, **Segment** and **Batch**. Opening one shows its view of the image; each panel can be popped out into its own window (⧉) and docked back (⇤).
 3. Right-click the image for spectrum plots, pixel values, index means and crop tools.
 4. Export the displayed result with the save button.
 

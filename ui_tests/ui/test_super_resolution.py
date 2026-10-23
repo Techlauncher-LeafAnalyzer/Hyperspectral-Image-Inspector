@@ -61,9 +61,9 @@ def test_run_disabled_for_missing_input_or_incompatible_camera(window, synthetic
 
 
 def test_processed_selection_without_result_does_not_show_original(loaded_window):
-    loaded_window.highResButton.setChecked(True)
+    loaded_window._set_high_resolution_selected(True)
     assert not loaded_window.superResViewer.has_photo()
-    loaded_window.lowResButton.setChecked(True)
+    loaded_window._set_high_resolution_selected(False)
     assert loaded_window.superResViewer.has_photo()
 
 
@@ -75,21 +75,21 @@ def test_canvas_resolution_switches_follow_the_toggle(loaded_window, stub_sr, qt
 
     # Checking high-res before a result exists changes nothing: there is
     # still no Super-Resolution data to view.
-    window.highResButton.setChecked(True)
+    window._set_high_resolution_selected(True)
     assert all(not switch.isEnabled() for switch in switches)
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
 
     stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
     assert all(switch.isEnabled() and switch.isChecked() for switch in switches)
 
     switches[0].click()
-    assert window.lowResButton.isChecked()
+    assert not window._high_resolution_selected
     assert all(not switch.isChecked() for switch in switches)
     switches[0].click()
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
     assert all(switch.isChecked() for switch in switches)
 
 
@@ -164,8 +164,8 @@ def test_calibrating_with_raw_sr_calibrates_both_resolutions_without_prompt(
         staticmethod(lambda *a: pytest.fail("calibration must not ask to discard SR")),
     )
 
-    for view in (window.lowResButton, window.highResButton):
-        view.setChecked(True)
+    for high in (False, True):
+        window._set_high_resolution_selected(high)
         window.calibrateButton.click()
         qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
         controller = window._calibration_controller
@@ -194,7 +194,7 @@ def test_calibrating_super_resolution_image_interpolates_references(
     window.runSuperResButton.click()
     finish(qtbot, window)
     sr = window._super_res_result
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
 
     window.calibrateButton.click()
     qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
@@ -222,7 +222,7 @@ def test_super_resolution_clears_crop_history(loaded_window, stub_sr, qtbot):
     finish(qtbot, window)
     assert not window._crop_undo_stack
     assert not window._crop_redo_stack
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     window._undo_crop()
     assert window._hsi_data.shape[:2] == (6, 6)
 
@@ -244,7 +244,7 @@ def test_background_run_comparison_and_export(loaded_window, stub_sr, qtbot, fil
     stub_sr.release.set()
     finish(qtbot, window)
     timer.stop()
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
     assert window.superResProgressBar.value() == 100
     assert window.superResViewer.rgb.shape == (16, 16, 3)
     assert window._super_res_result.data.shape == (16, 16, 8)
@@ -255,11 +255,11 @@ def test_background_run_comparison_and_export(loaded_window, stub_sr, qtbot, fil
     for viewer in (window.viewer, window.calibrationViewer, window.classificationViewer):
         assert viewer.rgb.shape == (16, 16, 3)
     assert window._visualization_results[VisualizationMode.RGB].display_rgb.shape == (16, 16, 3)
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     assert window.superResViewer.rgb.shape == (8, 8, 3)
     for viewer in (window.viewer, window.calibrationViewer, window.classificationViewer):
         assert viewer.rgb.shape == (8, 8, 3)
-    window.highResButton.setChecked(True)
+    window._set_high_resolution_selected(True)
     window.modeNDVI.setChecked(True)
     assert window.superResViewer.rgb.shape == (16, 16, 3)
     assert window.viewer.rgb.shape == (16, 16, 3)
@@ -305,7 +305,7 @@ def test_error_restores_controls_and_retains_previous_result(loaded_window, stub
     finish(qtbot, window)
     assert "Invalid checkpoint" in dialogs.critical[-1][-1]
     assert window._super_res_result is previous
-    assert window.lowResButton.isEnabled() and window.runSuperResButton.isEnabled()
+    assert window.runSuperResButton.isEnabled()
     assert "failed" in window.superResStatusText.text()
 
 
@@ -316,13 +316,13 @@ def test_crop_and_new_load_invalidate_sr(loaded_window, stub_sr, qtbot, syntheti
     finish(qtbot, window)
     window.superResViewer.cropRequested.emit(QtCore.QRectF(0, 0, 3, 3))
     assert window._hsi_data.shape == (8, 8, 8)  # HR coordinates cannot crop LR.
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     window._on_crop_requested(QtCore.QRectF(0, 0, 3, 3))
     assert window._super_res_result is None
     window.runSuperResButton.click()
     finish(qtbot, window)
     window.load_image_from_path(synthetic_cube_path)
-    assert window._super_res_result is None and window.lowResButton.isChecked()
+    assert window._super_res_result is None and not window._high_resolution_selected
 
 
 def test_close_cancels_without_destroying_running_thread(loaded_window, stub_sr, qtbot, monkeypatch):
@@ -368,7 +368,7 @@ def test_sr_tab_transfers_view_coordinates_unscaled_when_resolutions_match(
 
     # Switching back to Original affects both tabs identically, so the
     # transfer still needs no rescale.
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     window._active_viewer = window.viewer
     window._on_tab_changed(1)
     assert received[-1] == (4.0, QtCore.QPointF(3, 5))
@@ -379,8 +379,8 @@ def test_sr_pixel_tiles_use_the_displayed_image(loaded_window, stub_sr, qtbot):
     stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
-    for button, row, column in ((window.highResButton, 14, 15), (window.lowResButton, 6, 7)):
-        button.setChecked(True)
+    for high, row, column in ((True, 14, 15), (False, 6, 7)):
+        window._set_high_resolution_selected(high)
         entries = window.superResViewer.pixel_value_provider(row, column)
         color = tuple(int(value) for value in window.superResViewer.rgb[row, column])
         assert entries == {"RGB": PixelValueEntry(value=color, color=color)}
@@ -400,10 +400,10 @@ def test_sr_comparison_preserves_framing_when_toggling_resolution(loaded_window,
     qtbot.waitExposed(window)
     qtbot.wait(50)
     window.superResViewer.set_view_state((4.0, QtCore.QPointF(8, 8)))
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     qtbot.wait(50)
     assert window.superResViewer.get_view_state()[0] == pytest.approx(8.0)
-    window.highResButton.setChecked(True)
+    window._set_high_resolution_selected(True)
     qtbot.wait(50)
     assert window.superResViewer.get_view_state()[0] == pytest.approx(4.0)
 
@@ -429,7 +429,7 @@ def test_visualization_view_maps_framing_between_resolutions(
     monkeypatch.setattr(window.viewer, "queue_view_state", record_view_state)
     window.viewer.set_view_state((2.5, QtCore.QPointF(8, 8)))
     high_state = window.viewer.get_view_state()
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     qtbot.wait(50)
     assert window.viewer.get_view_state()[0] == pytest.approx(5.0)
     assert captured[-1][0] == pytest.approx(5.0)
@@ -437,13 +437,13 @@ def test_visualization_view_maps_framing_between_resolutions(
     assert captured[-1][1].y() == pytest.approx(high_state[1].y() / 2)
     window.viewer.set_view_state((4.0, QtCore.QPointF(4, 4)))
     low_state = window.viewer.get_view_state()
-    window.highResButton.setChecked(True)
+    window._set_high_resolution_selected(True)
     qtbot.wait(50)
     assert window.viewer.get_view_state()[0] == pytest.approx(2.0)
     assert captured[-1][0] == pytest.approx(2.0)
     assert captured[-1][1].x() == pytest.approx(low_state[1].x() * 2)
     assert captured[-1][1].y() == pytest.approx(low_state[1].y() * 2)
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     qtbot.wait(50)
     assert window.viewer.get_view_state()[0] == pytest.approx(4.0)
 
@@ -479,7 +479,7 @@ def test_high_res_switch_shown_without_notice_when_switching_to_visualization(lo
     window.tabWidget.setCurrentWidget(window.SuperResolution)
     window.runSuperResButton.click()
     finish(qtbot, window)
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
     assert not dialogs.information
 
     window.tabWidget.setCurrentWidget(window.Visualization)
@@ -521,7 +521,7 @@ def test_super_resolution_clears_prior_classification_results(
     # High-res has never been classified: the layer panel is empty and the
     # viewer falls back to the plain Super-Resolution image, exactly like
     # Visualization's own low/high toggle falls back to the plain photo.
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
     assert len(window.classificationLayerPanel._rows) == 0
     assert window.classificationViewer.rgb.shape == (16, 16, 3)
 
@@ -534,10 +534,10 @@ def test_super_resolution_clears_prior_classification_results(
 
     # The pre-SR low-res classification is obsolete, while the classification
     # made after SR remains available on the high-res result.
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     assert len(window.classificationLayerPanel._rows) == 0
 
-    window.highResButton.setChecked(True)
+    window._set_high_resolution_selected(True)
     assert len(window.classificationLayerPanel._rows) == 2
     assert window.classificationLayerPanel._rows[1]._toggle.isChecked()
     assert window.classificationViewer._photo.pixmap().toImage() == high_res_image
@@ -557,7 +557,7 @@ def test_supervised_high_res_classification_has_no_resolution_popup(
     stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
 
     window.pushButton_2.click()
     qtbot.waitUntil(
@@ -579,13 +579,13 @@ def test_rerunning_super_resolution_discards_the_stale_high_res_classification(
     stub_sr.release.set()
     window.runSuperResButton.click()
     finish(qtbot, window)
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
 
     window.unsupervisedClassifyButton.click()
     qtbot.waitUntil(lambda: not window._classification_controller.is_running(), timeout=5000)
     assert len(window.classificationLayerPanel._rows) == 2
 
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     stub_sr.release.clear()
     stub_sr.started.clear()
     window.runSuperResButton.click()
@@ -594,9 +594,9 @@ def test_rerunning_super_resolution_discards_the_stale_high_res_classification(
     finish(qtbot, window)
 
     # Rerunning SR must discard the classification made against the old SR
-    # result: `highResButton` flips back on completion, revealing an empty
+    # result: high resolution is selected again on completion, revealing an empty
     # (not stale) layer panel for the new high-res data.
-    assert window.highResButton.isChecked()
+    assert window._high_resolution_selected
     assert len(window.classificationLayerPanel._rows) == 0
 
 
@@ -609,7 +609,7 @@ def test_index_mean_dialog_remains_available_for_original_after_sr(loaded_window
     window.superResViewer.meanIndexRequested.emit("NDVI")
     assert not window.findChildren(IndexMeanDialog)
     assert "original image" in window.statusbar.currentMessage()
-    window.lowResButton.setChecked(True)
+    window._set_high_resolution_selected(False)
     window.superResViewer.meanIndexRequested.emit("NDVI")
     dialog = window.findChild(IndexMeanDialog)
     assert dialog is not None and dialog.isVisible()

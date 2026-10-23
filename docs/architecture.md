@@ -33,13 +33,15 @@ src/
     ├── calibration_worker.py      Calibration/reference I/O + RGB worker
     ├── main_window.py             MainWindowController (tab-based)
     └── generated/
-        └── MainWindow.py          Build artifact — never hand-edited
+        ├── MainWindow.py          Build artifact — never hand-edited
+        └── WorkflowPanels.py      Build artifact — never hand-edited
 ```
 
-UI files live in `src/qt/` (just `MainWindow.ui` now — it defines every tab's controls directly). Regenerate `ui/generated/MainWindow.py` after editing it:
+UI files live in `src/qt/`: `MainWindow.ui` (the canvas pages and status bar) and `WorkflowPanels.ui` (the five right-sidebar panels). Regenerate after editing either:
 
 ```bash
 python -m PyQt6.uic.pyuic src/qt/MainWindow.ui -o src/ui/generated/MainWindow.py
+python -m PyQt6.uic.pyuic src/qt/WorkflowPanels.ui -o src/ui/generated/WorkflowPanels.py
 ```
 
 ---
@@ -246,10 +248,22 @@ def _configure_tabs(self) -> None:
     _TabTransitionController to each for the slide/fade animation."""
 
 def _configure_file_menu(self) -> None:
-    """Build a File dropdown (Load Image / Save Image) and install it as
-    tabWidget's top-left corner widget, so it sits in the same row as the
-    Visualization/Super-Resolution/Calibration/Classification tabs instead
-    of a separate QMenuBar row."""
+    """Build the File menu (Load Image / Save Image), opened from the left
+    stripe's File button (StripeMenuButton). The actions are also added to
+    the window so Ctrl+O / Ctrl+S work while the menu is closed."""
+
+def _setup_workflow_panels_form(self) -> None:
+    """Run Ui_WorkflowPanels.setupUi and expose its widgets as window
+    attributes (like Ui_MainWindow's), before the controllers are built."""
+
+def _configure_status_bar(self) -> None:
+    """Add the loaded-file label (imageFilePath: name only, full path in its
+    tooltip) and the CPU/RAM monitor to the status bar."""
+
+def _configure_workflow_panels(self) -> None:
+    """Build the right workflow stripe that replaces the main tabs (see
+    ui/tool_windows.py below): one ToolWindow per WorkflowPanels.ui panel,
+    and hide tabWidget's tab bar."""
 
 def _connect_signals(self) -> None:
     """Wires: actionLoadImage -> _load_image, actionSaveImage -> _save_image,
@@ -289,18 +303,19 @@ New private helper class (not present in the previous design). Gives a `QTabWidg
 
 ## Removed: `ui/panels/` (historical)
 
-The original design swapped a single `FeaturePanel` subclass (`base_panel.py`, plus `calibration_panel.py`/`classification_panel.py`/`super_resolution_panel.py`/`visualization_panel.py`) in and out of a named `panelContainer`, selected via a sidebar + `Functionality` dispatch. After the pivot to the static `QTabWidget` layout (PRs #5–#11), none of these classes were instantiated anywhere — `main_window.py` kept only their imports. That dead code, along with the four per-panel `.ui` files (`src/qt/Visualization.ui`, `Calibration.ui`, `Classification.ui`, `Super-resolution.ui`), has since been deleted; `src/qt/` now contains only `MainWindow.ui`.
+The original design swapped a single `FeaturePanel` subclass (`base_panel.py`, plus `calibration_panel.py`/`classification_panel.py`/`super_resolution_panel.py`/`visualization_panel.py`) in and out of a named `panelContainer`, selected via a sidebar + `Functionality` dispatch. After the pivot to the static `QTabWidget` layout (PRs #5–#11), none of these classes were instantiated anywhere — `main_window.py` kept only their imports. That dead code, along with the four per-panel `.ui` files (`src/qt/Visualization.ui`, `Calibration.ui`, `Classification.ui`, `Super-resolution.ui`), has since been deleted; `src/qt/` then contained only `MainWindow.ui` (`WorkflowPanels.ui` was added with the right sidebar).
 
 ---
 
-## `ui/tool_windows.py` — left tool-window stripe
+## `ui/tool_windows.py` — tool-window stripes (left and right)
 
 JetBrains-style tool windows. `ToolWindowStripe` is a fixed vertical
-`QToolBar` in the left toolbar area (outside the dock area, so it stays on the
-window edge). Each `ToolWindow` binds a `ToolStripeButton` to a panel (compact
-title bar with ⧉ pop out / ⇤ dock and – hide, plus the content) that lives in
-exactly one container: a fixed left `QDockWidget`, or a normal top-level
-`_PoppedOutWindow` with a system title bar.
+`QToolBar` in the left or right toolbar area (`edge=`; outside the dock area,
+so it stays on the window edge). Each `ToolWindow` binds a `ToolStripeButton`
+to a panel (compact title bar with ⧉ pop out / ⇤ dock and – hide, plus the
+content) that lives in exactly one container: a fixed `QDockWidget` beside
+its stripe, or a normal top-level `_PoppedOutWindow` with a system title bar.
+One tool window is docked per side at a time; popped-out ones are independent.
 
 **Why not Qt floating docks:** a floating/dragged `QDockWidget` is moved by a
 client-side mouse grab, which Wayland refuses ("This plugin supports grabbing
@@ -315,48 +330,63 @@ window (system ✕) hides the tool; it reopens popped out, at its last size.
 | Not selected | window hidden | no background (faint tint on hover) |
 | Disabled | nothing to show (`ToolWindow.set_available(False, reason)`) | gray icon; tooltip gives the reason |
 
-The stripe has two parts:
+The **left stripe** has, top to bottom: the logo, the **File** menu button
+(`StripeMenuButton`), then:
 
-- **View toggles** (top) — `ViewToggleButton`s for **Super-Resolution** and
+- **View toggles** — `ViewToggleButton`s for **Super-Resolution** and
   **Calibration**, driven by `resolution_toggle.ResolutionSwitchGroup`. Each
   switches *every* tab between two image versions: highlighted while the
   second version (High Res / After Calibration) is shown, plain for the first,
   gray while there is nothing to compare (tooltip says what to run).
   Clicks go through `MainWindowController._select_canvas_resolution` /
   `_select_canvas_calibration`, so busy-pipeline guards still apply. These
-  replaced the per-tab pill rails and the later "Image view" tool window. The stripe also shows the app logo, centred on the tab row; buttons sit an even `STRIPE_GAP` from the window edge and from the image area (pages have no left margin, so this holds on every tab).
+  replaced the per-tab pill rails and the later "Image view" tool window.
+  Buttons sit an even `STRIPE_GAP` from the window edge and from the image
+  area (pages have no side margins, so this holds in every view; with a panel
+  docked, the gap is to the dock).
 - **Tool windows** (below a divider) — currently **Spectrum**, the Spectrum
   Inspector (see `docs/model_spectral_analysis_api.md`). Gray until an image
   is loaded; the Spectra list stacks under the plot while docked and sits
   beside it when popped out.
 
+The **right stripe** (`workflowStripe`) replaced the main tab row. Its buttons
+are captioned "pills" (`ToolStripeButton(caption=...)`): **Visualize**,
+**Super-Res**, **Calibrate**, **Segment**, **Batch**. Each opens a
+`ToolSettingsPanel` (a scroll area) around a panel from `WorkflowPanels.ui`
+(index radios, Run Super-Resolution, dark/white references, classifier
+settings, the whole batch form). `tabWidget` remains as the canvas's page
+stack with its tab bar hidden, so the pan/zoom hand-off and fade on view
+change are unchanged. The first four panels are bound to a view: when one is
+*activated* (`ToolWindow.activated` — opened, its popped-out window
+activated, or focus moved into it) the canvas switches to that page, and that
+pill gets an accent bar (`set_current`) even while its panel is closed. Batch
+has no view and leaves the canvas alone. Visualization opens docked at
+startup. The Segmentation class-layer inspector stays beside its canvas.
+
 ---
 
 ## `ui/theme.py`
 
-New module, applied once from `main.py` via `apply_theme(app: QApplication) -> None`. Loads bundled fonts through `QFontDatabase` and applies a single global QSS stylesheet (`APP_QSS`) covering the main window background, the (now-removed) `#navigationPanel`/`#panelContainer` selectors left over from the sidebar design, tab bars, buttons, and form controls. `main_window.py` has no other styling code — all colours/spacing are centralized here.
+New module, applied once from `main.py` via `apply_theme(app: QApplication) -> None`. Loads bundled fonts through `QFontDatabase` and applies a single global QSS stylesheet (`APP_QSS`) covering the main window background, tool-window stripes and panels, tab bars, buttons, and form controls. `main_window.py` has no other styling code — all colours/spacing are centralized here.
 
 ---
 
 ## `ui/generated/MainWindow.py`
 
-Auto-generated by `pyuic6` from `qt/MainWindow.ui`. **Never edit manually** — changes will be overwritten on next regeneration.
+Auto-generated by `pyuic6` from `qt/MainWindow.ui` (and `WorkflowPanels.py` from `qt/WorkflowPanels.ui`). **Never edit manually** — changes will be overwritten on next regeneration.
 
-Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as instance attributes. Current top-level structure: one `tabWidget` with four tabs — `Visualization`, `SuperResolution`, `Calibration`, `Classification` — each hosting its own `HSIViewer`. There is no sidebar and no `panelContainer` anymore.
+`Ui_MainWindow` creates the canvas: one `tabWidget` (tab bar hidden at runtime) with four pages — `Visualization`, `SuperResolution`, `Calibration`, `Classification` — each holding only its `HSIViewer` (plus the class-layer inspector on `Classification`). `Ui_WorkflowPanels` creates the sidebar panels' controls listed below. The low/high-resolution choice is the controller's `_high_resolution_selected` flag, set through `_set_high_resolution_selected`; there are no radio buttons for it.
 
 | Attribute | Type | Purpose |
 |-----------|------|---------|
-| `tabWidget` | `QTabWidget` | Top-level section selector (replaces the old sidebar buttons) |
-| `viewer` | `HSIViewer` | Visualization tab's image display |
-| `imageFilePath` | `QLabel` | Loaded file path, Visualization tab |
-| `superResViewer` | `HSIViewer` | Super-Resolution tab's image display |
-| `superResFilePath` | `QLabel` | Loaded file path, Super-Resolution tab |
-| `calibrationViewer` | `HSIViewer` | Calibration tab's image display |
+| `tabWidget` | `QTabWidget` | Canvas page stack; pages are switched by the right-sidebar panels |
+| `viewer` | `HSIViewer` | Visualization view's image display |
+| `superResViewer` | `HSIViewer` | Super-Resolution view's image display |
+| `calibrationViewer` | `HSIViewer` | Calibration view's image display |
 | `darkFileButton` / `darkFileEdit` | `QPushButton` / `QLineEdit` | Dark-frame file picker |
 | `referenceFileButton` / `referenceFileEdit` | `QPushButton` / `QLineEdit` | Reference-frame file picker |
 | `calibrateButton` | `QPushButton` | Starts/cancels calibration after source and references are selected |
-| `classificationViewer` | `HSIViewer` | Classification tab's image display |
-| `classificationFilePath` | `QLabel` | Loaded file path, Classification tab |
+| `classificationViewer` | `HSIViewer` | Segmentation view's image display |
 | `classificationModeTabs` | `QTabWidget` | Nested Unsupervised / Supervised sub-tabs |
 | `numOfClassesEdit`, `maxIterationsEdit` | `QLineEdit` | Unsupervised tab inputs (K-means params) |
 | `unsupervisedClassifyButton` | `QPushButton` | Starts/cancels worker-thread SPy K-means after image load |
@@ -367,7 +397,7 @@ Defines `Ui_MainWindow` with `setupUi(self)`, which creates all named widgets as
 | `actionLoadImage` | `QAction` | File dropdown — load |
 | `actionSaveImage` | `QAction` | File dropdown — save |
 
-There is no `menubar`/`menuFile` anymore — `MainWindow.ui` no longer declares a `QMenuBar`. `_configure_file_menu` (in `main_window.py`) builds the File `QMenu` from the two actions above at runtime and installs it as a `QToolButton` in `tabWidget`'s top-left corner (see below).
+There is no `menubar`/`menuFile` anymore — `MainWindow.ui` no longer declares a `QMenuBar`. `_configure_file_menu` (in `main_window.py`) builds the File `QMenu` from the two actions above at runtime; it opens from the File button on the left tool-window stripe.
 
 Classification layer UI should be backed by one
 `core.ClassificationLayerModel` per current classification result. The
@@ -399,7 +429,7 @@ The original design swapped a single `FeaturePanel` subclass in and out of a nam
 
 ### File menu → ribbon-style corner dropdown (`LEAF-121`)
 
-The `QMenuBar`/`menuFile` row above the tabs has been removed from `MainWindow.ui`; `actionLoadImage`/`actionSaveImage` are still declared as standalone `QAction`s but are no longer attached to a menu bar in the `.ui` file. `MainWindowController._configure_file_menu` builds the `QMenu` from those actions at runtime and sets it on a `QToolButton` installed via `tabWidget.setCornerWidget(..., Qt.Corner.TopLeftCorner)`, so "File" reads left-to-right with the other tabs in one row (Word ribbon-style) instead of a separate row above them.
+The `QMenuBar`/`menuFile` row above the tabs has been removed from `MainWindow.ui`; `actionLoadImage`/`actionSaveImage` are still declared as standalone `QAction`s but are no longer attached to a menu bar in the `.ui` file. `MainWindowController._configure_file_menu` builds the `QMenu` from those actions at runtime; it opens from the File button at the top of the left tool-window stripe (the tab row it used to share is gone).
 
 ### `HSIData` consolidates scattered state
 

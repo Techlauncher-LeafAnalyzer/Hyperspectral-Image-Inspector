@@ -56,19 +56,20 @@ class ResourceUsageWidget(QtWidgets.QWidget):
         self.ram_label.setObjectName("ramUsageLabel")
         self.ram_label.setAccessibleName("Program RAM usage")
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(6)
         self.cpu_label.setFixedWidth(64)
         self.ram_label.setFixedWidth(112)
         for label in (self.cpu_label, self.ram_label):
-            label.setFixedHeight(28)
+            label.setFixedHeight(20)
             label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(label)
-        self.setFixedSize(198, 40)
+        # Compact enough to sit in the status bar.
+        self.setFixedSize(190, 24)
         self.setStyleSheet(
             "QWidget#resourceUsageWidget { background: transparent; }"
             "QLabel { color: #49635d; background: #e2ece9; border: 1px solid #cdded8; "
-            "border-radius: 6px; padding: 4px 2px; font-size: 12px; font-weight: 600; }"
+            "border-radius: 5px; padding: 0 2px; font-size: 11px; font-weight: 600; }"
         )
         self.cpu_label.setToolTip("System-wide CPU usage; waiting for the first sample")
         self.ram_label.setToolTip("Program RAM usage; waiting for the first sample")
@@ -77,7 +78,7 @@ class ResourceUsageWidget(QtWidgets.QWidget):
         self._timer.timeout.connect(self.refresh)
 
     def sizeHint(self) -> QtCore.QSize:
-        # QTabWidget places corner widgets using their hint, not their fixed size.
+        # Layouts place the monitor by its hint; keep it at the fixed size.
         return self.size()
 
     @QtCore.pyqtSlot()

@@ -146,22 +146,22 @@ def test_timer_only_samples_while_visible_and_reprimes_on_show(qtbot):
     assert not widget._timer.isActive()
 
 
-def test_monitor_stays_in_header_across_pages_and_stops_on_close(window, qtbot):
-    widget = window.tabWidget.cornerWidget(QtCore.Qt.Corner.TopRightCorner)
-    assert widget is window._resource_usage
+def test_monitor_stays_in_status_bar_across_views_and_stops_on_close(window, qtbot):
+    widget = window._resource_usage
+    assert window.statusbar.isAncestorOf(widget)
     window.resize(960, 760)
     window.show()
     qtbot.waitExposed(window)
-    header_pos = widget.pos()
+    position = widget.mapTo(window, QtCore.QPoint())
     for page in (window.Calibration, window.Classification, window.SuperResolution,
                  window.Visualization):
         window.tabWidget.setCurrentWidget(page)
         assert widget.isVisible()
-        assert widget.pos() == header_pos
+        assert widget.mapTo(window, QtCore.QPoint()) == position
         assert widget._timer.isActive()
-        assert widget.geometry().left() > window.tabWidget.tabBar().geometry().right()
+    # Pinned to the bottom-right corner as the window grows.
     window.resize(window.width() + 200, window.height() + 40)
-    qtbot.waitUntil(lambda: widget.pos().x() > header_pos.x())
-    assert widget.pos().y() == header_pos.y()
+    qtbot.waitUntil(lambda: widget.mapTo(window, QtCore.QPoint()).x() > position.x())
+    assert widget.mapTo(window, QtCore.QPoint()).y() > position.y()
     window.close()
     assert not widget._timer.isActive()
