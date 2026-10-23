@@ -338,6 +338,13 @@ reclassification. See `docs/model_classification_api.md` for the integration
 contract and `docs/classification_layer_api.md` for the detailed PyQt6
 handoff.
 
+A fifth top-level tab, `Batch`, hosts an independent multi-file workflow — a
+file list (`batchFileList`), stage checkboxes (Calibrate/Super-Resolution/
+Classify), an output folder/format, and a results list — owned entirely by
+`ui.batch_controller.BatchController` via `ui.batch_worker.BatchWorker` and
+`core.BatchService`. It does not share `HSIData`, the four `HSIViewer`
+instances, or any other tab's state; see `docs/model_batch_api.md`.
+
 ---
 
 ## Design Decisions

@@ -2,6 +2,7 @@
 
 from .errors import (
     AnnotationError,
+    BatchError,
     CalibrationError,
     CancelledError,
     ClassificationError,
@@ -12,6 +13,14 @@ from .errors import (
     VisualizationError,
     VisualizationExportError,
     WavelengthError,
+)
+from .batch_model import (
+    BatchClassificationMode,
+    BatchClassificationOptions,
+    BatchFileResult,
+    BatchRequest,
+    BatchResult,
+    BatchService,
 )
 from .annotation_model import (
     AnnotationKind,
@@ -80,6 +89,13 @@ __all__ = [
     "AnnotationLayer",
     "AnnotationLayerModel",
     "AnnotationStyle",
+    "BatchClassificationMode",
+    "BatchClassificationOptions",
+    "BatchError",
+    "BatchFileResult",
+    "BatchRequest",
+    "BatchResult",
+    "BatchService",
     "CalibrationError",
     "CalibrationFramePair",
     "CalibrationFrameResolver",
