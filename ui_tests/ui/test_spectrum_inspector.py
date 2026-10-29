@@ -11,6 +11,8 @@ from core import SpectrumTransform
 def inspector(loaded_window):
     controller = loaded_window._spectrum_controller
     controller.show()
+    # Follow cursor starts off; most tests exercise the live trace.
+    controller.inspector._follow_check.setChecked(True)
     return controller.inspector
 
 
@@ -28,6 +30,70 @@ def test_hover_updates_live_trace_from_any_viewer(loaded_window, inspector):
         np.testing.assert_array_equal(inspector._live.values, data.read_pixel(3, 5))
         viewer.pixelHovered.emit(1, 2)
         np.testing.assert_array_equal(inspector._live.values, data.read_pixel(1, 2))
+
+
+def test_follow_cursor_starts_off(loaded_window):
+    controller = loaded_window._spectrum_controller
+    controller.show()
+    assert not controller.inspector.is_following()
+    loaded_window.viewer.pixelHovered.emit(3, 5)
+    assert controller.inspector._live is None
+
+
+def _send_ctrl(viewer, kind):
+    from PyQt6 import QtGui, QtWidgets
+
+    QtWidgets.QApplication.sendEvent(viewer, QtGui.QKeyEvent(
+        kind, QtCore.Qt.Key.Key_Control, QtCore.Qt.KeyboardModifier.ControlModifier
+    ))
+
+
+def test_holding_ctrl_follows_the_cursor_while_the_panel_is_open(loaded_window):
+    controller = loaded_window._spectrum_controller
+    inspector = controller.inspector
+    viewer = loaded_window.viewer
+    controller.show()
+    _send_ctrl(viewer, QtCore.QEvent.Type.KeyPress)
+    assert inspector.is_following() and not inspector._follow_check.isChecked()
+    viewer.pixelHovered.emit(3, 5)
+    assert (inspector._live.row, inspector._live.column) == (3, 5)
+    assert inspector._live_line is not None
+
+    _send_ctrl(viewer, QtCore.QEvent.Type.KeyRelease)
+    assert not inspector.is_following()
+    assert inspector._live_line is None
+    viewer.pixelHovered.emit(1, 2)
+    assert (inspector._live.row, inspector._live.column) == (3, 5)
+
+    # Leaving the image counts as a release (the key-up may go elsewhere).
+    _send_ctrl(viewer, QtCore.QEvent.Type.KeyPress)
+    assert inspector.is_following()
+    viewer.leaveEvent(QtCore.QEvent(QtCore.QEvent.Type.Leave))
+    assert not inspector.is_following()
+
+    # A closed panel ignores Ctrl.
+    loaded_window.spectrumTool.hide()
+    _send_ctrl(viewer, QtCore.QEvent.Type.KeyPress)
+    assert not inspector.is_following()
+    _send_ctrl(viewer, QtCore.QEvent.Type.KeyRelease)
+
+
+def test_viewer_shows_a_pointer_while_following(loaded_window, inspector):
+    viewer = loaded_window.viewer
+    viewer.resize(400, 400)
+    viewer.fit_in_view()
+    viewer._pointer_view_pos = viewer.mapFromScene(QtCore.QPointF(5.5, 3.5))
+    viewer._apply_idle_cursor()
+    assert viewer.viewport().cursor().shape() == QtCore.Qt.CursorShape.PointingHandCursor
+
+    inspector._follow_check.setChecked(False)
+    viewer._apply_idle_cursor()
+    assert viewer.viewport().cursor().shape() == QtCore.Qt.CursorShape.OpenHandCursor
+
+    inspector._follow_check.setChecked(True)
+    loaded_window.spectrumTool.hide()
+    viewer._apply_idle_cursor()
+    assert viewer.viewport().cursor().shape() == QtCore.Qt.CursorShape.OpenHandCursor
 
 
 def test_hover_is_ignored_when_inspector_hidden_or_frozen(loaded_window, inspector):
@@ -297,13 +363,11 @@ def test_unfollowing_hides_the_cursor_line_and_following_restores_it(loaded_wind
     loaded_window.viewer.pixelHovered.emit(3, 5)
     assert inspector._live_line is not None
     assert "Cursor" in inspector._series()
-    assert inspector._pin_button.isEnabled()
 
     inspector._follow_check.setChecked(False)
     assert inspector._live_line is None
     assert "Cursor" not in inspector._series()  # nor in the CSV export
     assert "Cursor" not in inspector._axes.get_legend_handles_labels()[1]
-    assert not inspector._pin_button.isEnabled()
 
     # Pinning still works without bringing the cursor line back.
     loaded_window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(1, 6))

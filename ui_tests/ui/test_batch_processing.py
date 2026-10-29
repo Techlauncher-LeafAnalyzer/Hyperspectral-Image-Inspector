@@ -7,7 +7,7 @@ import numpy as np
 from PyQt6.QtWidgets import QFileDialog
 from spectral.io import envi
 
-from conftest import SYNTHETIC_WAVELENGTHS_NM
+from conftest import SYNTHETIC_WAVELENGTHS_NM, write_marker_cube
 
 
 def _write_cube(directory: Path, name: str, seed: int, rows: int = 6, columns: int = 6) -> Path:
@@ -138,25 +138,12 @@ def test_batch_saves_raw_preview_for_every_file(window, tmp_path, monkeypatch, q
     assert (output_dir / "sample_raw.png").exists()
 
 
-def _write_marker_cube(directory: Path, name: str) -> Path:
-    size, tag = 120, 14
-    cube = np.full((size, size, len(SYNTHETIC_WAVELENGTHS_NM)), 0.9, dtype=np.float32)
-    for top, left in ((20, 20), (20, 86), (86, 20), (86, 86)):
-        cube[top : top + tag, left : left + tag, :] = 0.02
-    path = directory / f"{name}.hdr"
-    envi.save_image(
-        str(path), cube, dtype=np.float32, interleave="bsq", ext=".img",
-        metadata={"wavelength": SYNTHETIC_WAVELENGTHS_NM},
-    )
-    return path
-
-
 def test_batch_service_auto_crops_marker_pattern(tmp_path):
     from PIL import Image
 
     from core import BatchRequest, BatchService
 
-    sample = _write_marker_cube(tmp_path, "leaf")
+    sample = write_marker_cube(tmp_path, "leaf")
     output_dir = tmp_path / "out"
     result = BatchService().run(BatchRequest((sample,), output_dir))
 

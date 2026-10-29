@@ -60,7 +60,8 @@ QPushButton[primaryButton="true"]:hover {
 QPushButton#unsupervisedClassifyButton:disabled,
 QPushButton#pushButton_2:disabled,
 QPushButton#runSuperResButton:disabled,
-QPushButton#batchRunButton:disabled {
+QPushButton#batchRunButton:disabled,
+QPushButton#spectrumSimilarityButton:disabled {
     color: #9ba9a6;
     background: #f0f3f2;
     border-color: #dde5e2;
@@ -269,7 +270,8 @@ QTabWidget#classificationModeTabs::pane {
     background: transparent;
 }
 
-QTabBar#classificationTabBar::tab {
+QTabBar#classificationTabBar::tab,
+QTabBar#spectrumTabBar::tab {
     min-width: 110px;
     background: #ffffff;
     color: #536663;
@@ -278,32 +280,38 @@ QTabBar#classificationTabBar::tab {
     font-weight: 600;
 }
 
-QTabBar#classificationTabBar::tab:first {
+QTabBar#classificationTabBar::tab:first,
+QTabBar#spectrumTabBar::tab:first {
     border-top-left-radius: 6px;
     border-bottom-left-radius: 6px;
 }
 
-QTabBar#classificationTabBar::tab:last {
+QTabBar#classificationTabBar::tab:last,
+QTabBar#spectrumTabBar::tab:last {
     border-left: none;
     border-top-right-radius: 6px;
     border-bottom-right-radius: 6px;
 }
 
-QTabBar#classificationTabBar::tab:hover {
+QTabBar#classificationTabBar::tab:hover,
+QTabBar#spectrumTabBar::tab:hover {
     background: #f0f7f5;
     color: #264b46;
 }
 
-QTabBar#classificationTabBar::tab:selected {
+QTabBar#classificationTabBar::tab:selected,
+QTabBar#spectrumTabBar::tab:selected {
     background: #dcefeb;
     color: #105f55;
 }
 
-QTabBar#classificationTabBar:focus::tab:selected {
+QTabBar#classificationTabBar:focus::tab:selected,
+QTabBar#spectrumTabBar:focus::tab:selected {
     border-color: #78afa5;
 }
 
-QTabBar#classificationTabBar::tab:disabled {
+QTabBar#classificationTabBar::tab:disabled,
+QTabBar#spectrumTabBar::tab:disabled {
     background: #f0f3f2;
     color: #9ba9a6;
     border-color: #dde5e2;
@@ -780,7 +788,11 @@ QPushButton#layerExportButton,
 QPushButton#layerSpectraButton,
 QPushButton#separateLeavesButton,
 QPushButton#layerInspectButton,
-QPushButton#layerOutlineToggleButton {
+QPushButton#layerOutlineToggleButton,
+QPushButton#spectrumImageMeanButton,
+QPushButton#spectrumRemoveButton,
+QPushButton#spectrumClearButton,
+QPushButton#spectrumExportButton {
     min-height: 18px;
     color: #254c46;
     background: #ffffff;
@@ -796,7 +808,11 @@ QPushButton#layerExportButton:hover,
 QPushButton#layerSpectraButton:hover,
 QPushButton#separateLeavesButton:hover,
 QPushButton#layerInspectButton:hover,
-QPushButton#layerOutlineToggleButton:hover {
+QPushButton#layerOutlineToggleButton:hover,
+QPushButton#spectrumImageMeanButton:hover,
+QPushButton#spectrumRemoveButton:hover,
+QPushButton#spectrumClearButton:hover,
+QPushButton#spectrumExportButton:hover {
     color: #126f62;
     background: #f8fcfb;
     border-color: #8fbcb4;
@@ -807,7 +823,11 @@ QPushButton#layerExportButton:pressed,
 QPushButton#layerSpectraButton:pressed,
 QPushButton#separateLeavesButton:pressed,
 QPushButton#layerInspectButton:pressed,
-QPushButton#layerOutlineToggleButton:pressed {
+QPushButton#layerOutlineToggleButton:pressed,
+QPushButton#spectrumImageMeanButton:pressed,
+QPushButton#spectrumRemoveButton:pressed,
+QPushButton#spectrumClearButton:pressed,
+QPushButton#spectrumExportButton:pressed {
     background: #dcefeb;
     border-color: #6ba99e;
 }
@@ -818,7 +838,11 @@ QPushButton#layerInspectButton {
 }
 
 QPushButton#separateLeavesButton:disabled,
-QPushButton#layerInspectButton:disabled {
+QPushButton#layerInspectButton:disabled,
+QPushButton#spectrumImageMeanButton:disabled,
+QPushButton#spectrumRemoveButton:disabled,
+QPushButton#spectrumClearButton:disabled,
+QPushButton#spectrumExportButton:disabled {
     color: #a9b8b3;
     border-color: #dfe7e4;
 }
@@ -943,19 +967,25 @@ QCheckBox#annotationFillCheck {
 }
 
 QCheckBox#annotationFillCheck::indicator,
-QListWidget#annotationLayerList::indicator {
+QListWidget#annotationLayerList::indicator,
+QListWidget#spectrumSeriesList::indicator,
+QWidget#spectrumInspector QCheckBox::indicator {
     width: 18px;
     height: 18px;
     border: 0;
 }
 
 QCheckBox#annotationFillCheck::indicator:unchecked,
-QListWidget#annotationLayerList::indicator:unchecked {
+QListWidget#annotationLayerList::indicator:unchecked,
+QListWidget#spectrumSeriesList::indicator:unchecked,
+QWidget#spectrumInspector QCheckBox::indicator:unchecked {
     image: url(__CHECKBOX_UNCHECKED__);
 }
 
 QCheckBox#annotationFillCheck::indicator:checked,
-QListWidget#annotationLayerList::indicator:checked {
+QListWidget#annotationLayerList::indicator:checked,
+QListWidget#spectrumSeriesList::indicator:checked,
+QWidget#spectrumInspector QCheckBox::indicator:checked {
     image: url(__CHECKBOX_CHECKED__);
 }
 
@@ -1075,7 +1105,8 @@ QLabel#annotationEmptyState {
     font-size: 11px;
 }
 
-QListWidget#annotationLayerList {
+QListWidget#annotationLayerList,
+QListWidget#spectrumSeriesList {
     background: #ffffff;
     color: #3e5c57;
     border: 1px solid #c7d8d4;
@@ -1084,22 +1115,26 @@ QListWidget#annotationLayerList {
     font-size: 12px;
 }
 
-QListWidget#annotationLayerList:focus {
+QListWidget#annotationLayerList:focus,
+QListWidget#spectrumSeriesList:focus {
     border-color: #168b7b;
 }
 
-QListWidget#annotationLayerList::item {
+QListWidget#annotationLayerList::item,
+QListWidget#spectrumSeriesList::item {
     min-height: 24px;
     padding: 5px 4px;
     border: 1px solid transparent;
     border-radius: 5px;
 }
 
-QListWidget#annotationLayerList::item:hover {
+QListWidget#annotationLayerList::item:hover,
+QListWidget#spectrumSeriesList::item:hover {
     background: #f0f7f5;
 }
 
-QListWidget#annotationLayerList::item:selected {
+QListWidget#annotationLayerList::item:selected,
+QListWidget#spectrumSeriesList::item:selected {
     color: #105f55;
     background: #dcefeb;
     border-color: #afd2ca;
@@ -1231,6 +1266,107 @@ QGroupBox#batchOutputGroup::title {
     padding: 0 4px;
     color: #526662;
 }
+
+/* Spectrum Inspector (ui/spectrum_inspector.py), a left-stripe dock. */
+QWidget#spectrumInspector,
+QStackedWidget#spectrumInspectorPages {
+    background: #f9fbfa;
+}
+
+QWidget#spectrumInspector QCheckBox {
+    color: #263735;
+    font-size: 12px;
+    spacing: 6px;
+    padding: 2px 0;
+}
+
+QWidget#spectrumInspector QCheckBox:focus {
+    color: #105f55;
+}
+
+QWidget#spectrumInspector QComboBox {
+    padding: 5px 9px;
+    font-size: 12px;
+}
+
+QPushButton#spectrumSimilarityButton {
+    padding: 5px 12px;
+}
+
+QFrame#spectrumPlotCard {
+    background: #ffffff;
+    border: 1px solid #d5e2df;
+    border-radius: 9px;
+}
+
+QLabel#spectrumSectionLabel {
+    color: #294b44;
+    font-size: 12px;
+    font-weight: 650;
+}
+
+QLabel#spectrumSeriesCount {
+    color: #526863;
+    background: #e5eeeb;
+    border-radius: 4px;
+    min-width: 14px;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#spectrumSeriesEmpty {
+    color: #6b7e78;
+    background: #edf4f2;
+    border: 1px dashed #cbdad6;
+    border-radius: 8px;
+    padding: 12px 8px;
+    font-size: 11px;
+}
+
+QLabel#spectrumSeparabilityHelp {
+    color: #3e5250;
+    background: #ffffff;
+    border: 1px solid #d5e2df;
+    border-radius: 9px;
+    padding: 12px;
+    font-size: 12px;
+}
+
+QTableWidget#spectrumSeparabilityTable {
+    background: #ffffff;
+    color: #263735;
+    border: 1px solid #d5e2df;
+    border-radius: 8px;
+    gridline-color: #e4ece9;
+    font-size: 12px;
+    selection-background-color: #dcefeb;
+    selection-color: #105f55;
+}
+
+QTableWidget#spectrumSeparabilityTable QHeaderView {
+    background: #ffffff;
+}
+
+QTableWidget#spectrumSeparabilityTable QHeaderView::section {
+    color: #526662;
+    background: #f2f7f5;
+    border: 0;
+    border-right: 1px solid #e4ece9;
+    border-bottom: 1px solid #e4ece9;
+    padding: 4px 6px;
+    font-size: 11px;
+    font-weight: 650;
+}
+
+QTableWidget#spectrumSeparabilityTable QTableCornerButton::section {
+    background: #f2f7f5;
+    border: 0;
+}
+
+QSplitter#spectrumPlotSplitter::handle {
+    background: transparent;
+}
 """
 
 
@@ -1280,6 +1416,15 @@ PROMPT_NEGATIVE_COLOR     = Qt.GlobalColor.red
 PROMPT_POINT_RADIUS       = 5.0
 CROP_OVERLAY_COLOR        = QColor(0, 0, 0, 140)
 CROP_SELECTION_COLOR      = Qt.GlobalColor.yellow
+
+# --- Spectrum Inspector plot (ui/spectrum_inspector.py) ----------------- #
+# Matplotlib paints the plot itself, so its colours live here.
+SPECTRUM_PLOT_BACKGROUND   = "#ffffff"
+SPECTRUM_PLOT_TEXT_COLOR   = "#526662"
+SPECTRUM_PLOT_AXIS_COLOR   = "#c7d8d4"
+SPECTRUM_PLOT_GRID_COLOR   = "#e8efed"
+SPECTRUM_PLOT_LIVE_COLOR   = "#263735"
+SPECTRUM_PLOT_MARKER_COLOR = "#8a9c98"
 
 # --- Tool-window stripe (ui/tool_windows.py) ---------------------------- #
 # Stripe buttons paint their own icons, so their state colours live here.

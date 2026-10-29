@@ -214,6 +214,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
     # The image pixel under an idle cursor changed: (row, column). Emitted
     # only on change, so a live spectrum plot reads at most once per pixel.
     pixelHovered          = pyqtSignal(int, int)
+    # Ctrl was pressed or released while the pointer is over the viewer
+    # (seen from key events and from every mouse event's modifiers); a
+    # pointer leaving the viewer counts as a release.
+    ctrlHeldChanged       = pyqtSignal(bool)
     # A pinned-spectrum marker was dragged: (key, row, column). pinDragged
     # fires once per new pixel during the drag, pinMoved once on release.
     pinDragged            = pyqtSignal(str, int, int)
@@ -288,6 +292,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
         # Offer "Add Class Spectra" in the context menu (Classification tab).
         self.class_spectra_available: bool = False
+        # Whether the Spectrum Inspector is following the cursor; the idle
+        # cursor is then a pointer rather than the pan hand.
+        self.spectrum_following: Callable[[], bool] = lambda: False
 
         # --- pixel value overlay ---
         self.pixel_value_provider: PixelValueProvider = self._no_pixel_values
@@ -351,6 +358,11 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def has_photo(self) -> bool:
         return not self._empty
 
+    def hovered_pixel(self) -> Optional[tuple[int, int]]:
+        """``(row, column)`` under the pointer, or ``None`` when off the image."""
+
+        return self._hovered_pixel
+
     def photo_size(self) -> Optional[QtCore.QSize]:
         """Pixel dimensions of the currently displayed photo, or None if empty."""
         return self._photo.pixmap().size() if self.has_photo() else None
@@ -384,12 +396,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._apply_idle_cursor()
         self.fit_in_view()
         if self.has_photo():
-            # The viewport may not have its final size yet (e.g. right after
-            # startup, or in a tab that has never been shown), so the fit
-            # above can be computed against stale geometry. Keep reapplying
-            # it on resize until the layout settles, mirroring queue_view_state.
-            self._pending_fit = True
-            QtCore.QTimer.singleShot(300, self._clear_pending_fit)
+            self._keep_fitting()
 
     def get_view_state(self) -> Optional[tuple[float, QPointF]]:
         """Return (scale_factor, scene_center) describing the current pan/zoom."""
@@ -428,10 +435,43 @@ class HSIViewer(QtWidgets.QGraphicsView):
         can compute against stale/default geometry, and the surrounding
         layout may still be settling across several resize events. Keep
         reapplying until geometry stops changing, then stop.
+
+        A state at exactly the fitted scale is restored as a fit instead, so a
+        fit computed against unsettled geometry (e.g. by an earlier refresh
+        in the same load) is recomputed rather than pinned.
         """
-        self._pending_view_state = state
         self.set_view_state(state)
+        if self._is_fit_scale(state[0]):
+            self._pending_view_state = None
+            self.fit_in_view()
+            self._keep_fitting()
+            return
+        self._pending_fit = False
+        self._pending_view_state = state
         QtCore.QTimer.singleShot(300, self._clear_pending_view_state)
+
+    def _is_fit_scale(self, scale: float) -> bool:
+        """Whether ``scale`` fits the whole photo in the current viewport."""
+
+        rect = self._photo.pixmap().rect()
+        viewrect = self.viewport().rect()
+        if rect.isEmpty() or viewrect.isEmpty():
+            return False
+        fit_scale = min(
+            viewrect.width() / rect.width(), viewrect.height() / rect.height()
+        )
+        return math.isclose(scale, fit_scale, rel_tol=1e-3)
+
+    def _keep_fitting(self) -> None:
+        """Refit on every resize for a short window.
+
+        The viewport may not have its final size yet (e.g. right after
+        startup, or in a tab that has never been shown), so a fit can be
+        computed against stale geometry. Keep reapplying it until the layout
+        settles, mirroring :meth:`queue_view_state`.
+        """
+        self._pending_fit = True
+        QtCore.QTimer.singleShot(300, self._clear_pending_fit)
 
     def _clear_pending_view_state(self) -> None:
         self._pending_view_state = None
@@ -790,7 +830,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
     def enterEvent(self, event: QtGui.QEnterEvent) -> None:
         super().enterEvent(event)
         self._pointer_view_pos = self.viewport().mapFromGlobal(QtGui.QCursor.pos())
-        self._pointer_modifiers = QtWidgets.QApplication.keyboardModifiers()
+        self._set_pointer_modifiers(QtWidgets.QApplication.keyboardModifiers())
         self._apply_idle_cursor()
 
     def leaveEvent(self, event: QtCore.QEvent) -> None:
@@ -798,6 +838,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._pixel_overlay.hide()
         self._pointer_view_pos = None
         self._hovered_pixel = None
+        self._set_pointer_modifiers(Qt.KeyboardModifier.NoModifier)
         self._apply_idle_cursor()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
@@ -933,13 +974,17 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._end_crop_mode()
             return
         if event.key() == Qt.Key.Key_Control:
-            self._pointer_modifiers |= Qt.KeyboardModifier.ControlModifier
+            self._set_pointer_modifiers(
+                self._pointer_modifiers | Qt.KeyboardModifier.ControlModifier
+            )
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
             self._apply_idle_cursor()
 
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Control:
-            self._pointer_modifiers &= ~Qt.KeyboardModifier.ControlModifier
+            self._set_pointer_modifiers(
+                self._pointer_modifiers & ~Qt.KeyboardModifier.ControlModifier
+            )
             self._apply_drag_mode()
             self._apply_idle_cursor()
         if event.key() == Qt.Key.Key_Shift:
@@ -1237,7 +1282,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
 
     def _remember_pointer(self, event: QtGui.QMouseEvent) -> None:
         self._pointer_view_pos = event.position().toPoint()
-        self._pointer_modifiers = event.modifiers()
+        self._set_pointer_modifiers(event.modifiers())
+
+    def _set_pointer_modifiers(self, modifiers: Qt.KeyboardModifier) -> None:
+        control = Qt.KeyboardModifier.ControlModifier
+        was_held = bool(self._pointer_modifiers & control)
+        self._pointer_modifiers = modifiers
+        if bool(modifiers & control) != was_held:
+            self.ctrlHeldChanged.emit(not was_held)
 
     def _clamped_scene_point(self, event: QtGui.QMouseEvent) -> QPointF:
         point = self.mapToScene(event.position().toPoint())
@@ -1428,7 +1480,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 cursor = Qt.CursorShape.CrossCursor
             elif point is not None and self._annotation_at(point) is not None:
                 cursor = Qt.CursorShape.PointingHandCursor
-            elif self._pixel_overlay_enabled:
+            elif self._pixel_overlay_enabled or (
+                self.has_photo() and self.spectrum_following()
+            ):
                 cursor = Qt.CursorShape.PointingHandCursor
             elif self.has_photo():
                 cursor = Qt.CursorShape.OpenHandCursor

@@ -173,6 +173,7 @@ def test_pop_out_round_trip_keeps_inspector_state(shown_window, qtbot):
     # Hover keeps feeding the live trace after the round trips (once the
     # background hypercube build, during which hover skips reads, is done).
     qtbot.waitUntil(lambda: not window._hypercube_controller.is_building(), timeout=10000)
+    inspector._follow_check.setChecked(True)
     window.viewer.pixelHovered.emit(1, 2)
     assert (inspector._live.row, inspector._live.column) == (1, 2)
 
@@ -180,11 +181,12 @@ def test_pop_out_round_trip_keeps_inspector_state(shown_window, qtbot):
 def test_popped_out_window_remembers_its_size(shown_window, qtbot):
     tool = shown_window.spectrumTool
     tool.set_floating(True)
-    tool.window.resize(700, 500)
+    # Above the inspector's themed minimum width (~720px side by side).
+    tool.window.resize(800, 540)
     qtbot.wait(10)
     tool.set_floating(False)
     tool.set_floating(True)
-    assert tool.window.size() == QtCore.QSize(700, 500)
+    assert tool.window.size() == QtCore.QSize(800, 540)
 
 
 def test_stripe_fills_space_left_of_the_image(shown_window, qtbot):

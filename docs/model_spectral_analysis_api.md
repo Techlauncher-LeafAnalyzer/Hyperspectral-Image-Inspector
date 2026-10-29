@@ -34,9 +34,13 @@ not a full cube copy.
 ## Controller integration
 
 - Every `HSIViewer` emits `pixelHovered(row, column)` once per new pixel. When
-  the inspector is visible and *Follow cursor* is ticked, the Controller reads
-  that pixel from the cube the viewer shows (calibrated for the Calibration
-  viewer when a result exists, otherwise `_display_data()`).
+  the inspector is visible and *Follow cursor* is ticked (it starts off) or
+  Ctrl is held over the image (`HSIViewer.ctrlHeldChanged`; pressing it
+  reads the pixel already under the pointer, leaving the image releases it), the
+  Controller reads that pixel from the cube the viewer shows (calibrated for
+  the Calibration viewer when a result exists, otherwise `_display_data()`).
+  While following, the viewers' idle cursor is a pointer instead of the pan
+  hand (`HSIViewer.spectrum_following`).
 - Hover reads are skipped — never blocking — while SR, calibration,
   classification or a Hypercube build hold the cube. Explicit actions (pin,
   class spectra, similarity) instead stop the Hypercube worker, read, then
@@ -84,7 +88,7 @@ not a full cube copy.
   series (hidden series are left out of the plot and the CSV export), select
   one — or click its line on the plot — to highlight it, and *Remove* /
   Delete to take it off. *Clear* removes everything.
-- Inspector: pin cursor, image mean, display transform, ±1σ, index-band
+- Inspector: image mean, display transform, ±1σ, index-band
   markers for the active visualization, reference picker → *Map similarity*,
   Export CSV. The *Separability* tab explains what it shows and how to fill
   it until at least two region spectra are plotted.
