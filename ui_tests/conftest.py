@@ -43,6 +43,20 @@ def _write_synthetic_envi_pair(directory: Path, *, name: str = "synthetic") -> P
     return hdr_path
 
 
+def write_marker_cube(directory: Path, name: str) -> Path:
+    """Write a 120x120 cube with four Leaf2QR-style corner tags (auto-crops)."""
+    size, tag = 120, 14
+    cube = np.full((size, size, len(SYNTHETIC_WAVELENGTHS_NM)), 0.9, dtype=np.float32)
+    for top, left in ((20, 20), (20, 86), (86, 20), (86, 86)):
+        cube[top : top + tag, left : left + tag, :] = 0.02
+    path = directory / f"{name}.hdr"
+    envi.save_image(
+        str(path), cube, dtype=np.float32, interleave="bsq", ext=".img",
+        metadata={"wavelength": SYNTHETIC_WAVELENGTHS_NM},
+    )
+    return path
+
+
 @pytest.fixture
 def synthetic_cube_path(tmp_path) -> Path:
     """Header path for a small, fully-loadable synthetic hyperspectral cube."""

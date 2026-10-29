@@ -4,8 +4,8 @@ Replaces the one-shot modal spectrum dialog. The window plots up to three
 kinds of series over wavelength:
 
 * a *live* trace that follows the pixel under the cursor in any viewer;
-* *pinned* pixel spectra, added with Ctrl+Click on any image, the viewer's
-  right-click "Spectrum Analyzer" menu, or the "Pin cursor" button;
+* *pinned* pixel spectra, added with Ctrl+Click on any image or the
+  viewer's right-click "Spectrum Analyzer" menu;
 * *region* spectra -- per-class or whole-image means with a ±1σ band --
   supplied by the Controller from :class:`core.SpectralAnalysisService`.
 
@@ -28,6 +28,14 @@ from matplotlib.figure import Figure
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, pyqtSignal
 
+from ui.theme import (
+    SPECTRUM_PLOT_AXIS_COLOR,
+    SPECTRUM_PLOT_BACKGROUND,
+    SPECTRUM_PLOT_GRID_COLOR,
+    SPECTRUM_PLOT_LIVE_COLOR,
+    SPECTRUM_PLOT_MARKER_COLOR,
+    SPECTRUM_PLOT_TEXT_COLOR,
+)
 from ui.viewer import PIN_SPECTRUM_SHORTCUT
 from core import (
     RegionSpectrum,
@@ -39,9 +47,7 @@ from core import (
 
 RGBColor = tuple[int, int, int]
 
-_LIVE_COLOR = "#222222"
 _PIN_COLORS = colormaps["tab10"].colors
-_MARKER_COLOR = "#8a8a8a"
 _SERIES_KEY_ROLE = Qt.ItemDataRole.UserRole
 
 _SEPARABILITY_HELP = (
@@ -165,6 +171,8 @@ class SpectrumInspector(QtWidgets.QWidget):
         self._analysis = analysis
         self._live: Optional[SpectrumResult] = None
         self._live_source = ""
+        # Following while Ctrl is held, whatever the checkbox says.
+        self._held_follow = False
         # Pinned and region series in list order, keyed by a stable ID.
         self._series_by_key: dict[str, _Series] = {}
         # Numbers pins #1, #2, ...; restarts when the image changes.
@@ -177,16 +185,23 @@ class SpectrumInspector(QtWidgets.QWidget):
         # Fixed pixel margins, recomputed on resize. Matplotlib's tight and
         # constrained layouts both warn ("axes sizes collapsed to zero") while
         # the canvas is tiny -- e.g. a hidden or still-laying-out dock.
-        self._figure = Figure(figsize=(6, 4))
+        self._figure = Figure(figsize=(6, 4), facecolor=SPECTRUM_PLOT_BACKGROUND)
         self._canvas = _SpectrumCanvas(self._figure, self._fit_axes)
         self._canvas.setObjectName("spectrumInspectorCanvas")
         self._canvas.setMinimumSize(_MIN_CANVAS_WIDTH, _MIN_CANVAS_HEIGHT)
         self._axes = self._figure.add_subplot(111)
         self._live_line = None
         self._canvas.mpl_connect("pick_event", self._on_line_picked)
+        # The canvas paints square corners; a rounded card frames it.
+        plot_card = QtWidgets.QFrame(self)
+        plot_card.setObjectName("spectrumPlotCard")
+        card_layout = QtWidgets.QVBoxLayout(plot_card)
+        card_layout.setContentsMargins(4, 4, 4, 4)
+        card_layout.addWidget(self._canvas)
 
-        self._status_label = QtWidgets.QLabel(self._idle_hint(), self)
+        self._status_label = QtWidgets.QLabel(self)
         self._status_label.setObjectName("spectrumInspectorStatus")
+        self._status_label.setProperty("statusMessage", True)
         self._status_label.setWordWrap(True)
 
         self._series_list = QtWidgets.QListWidget(self)
@@ -207,11 +222,23 @@ class SpectrumInspector(QtWidgets.QWidget):
         delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         delete_shortcut.activated.connect(self.remove_selected)
 
-        self._remove_button = QtWidgets.QPushButton("Remove", self)
-        self._remove_button.setObjectName("spectrumRemoveButton")
-        self._remove_button.setToolTip("Remove the selected spectra from the plot (Delete)")
+        self._remove_button = self._small_button(
+            "Remove", "spectrumRemoveButton",
+            "Remove the selected spectra from the plot (Delete)",
+        )
         self._remove_button.clicked.connect(self.remove_selected)
         self._remove_button.setEnabled(False)
+
+        self._image_mean_button = self._small_button(
+            "Image mean", "spectrumImageMeanButton",
+            "Add the mean spectrum of the whole region of interest",
+        )
+        self._image_mean_button.clicked.connect(self.imageMeanRequested)
+
+        self._clear_button = self._small_button(
+            "Clear", "spectrumClearButton", "Remove every pinned and region spectrum",
+        )
+        self._clear_button.clicked.connect(self.clear)
 
         self._series_empty_label = QtWidgets.QLabel(
             f"No pinned spectra yet.\n{PIN_SPECTRUM_SHORTCUT} a pixel in any "
@@ -222,29 +249,56 @@ class SpectrumInspector(QtWidgets.QWidget):
         self._series_empty_label.setWordWrap(True)
         self._series_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        series_heading = QtWidgets.QLabel("Spectra", self)
+        series_heading.setObjectName("spectrumSectionLabel")
+        self._series_count = QtWidgets.QLabel("0", self)
+        self._series_count.setObjectName("spectrumSeriesCount")
+        self._series_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        series_header = QtWidgets.QHBoxLayout()
+        series_header.setSpacing(4)
+        series_header.addWidget(series_heading)
+        series_header.addWidget(self._series_count, 0, Qt.AlignmentFlag.AlignVCenter)
+        series_header.addStretch(1)
+        for button in (self._image_mean_button, self._remove_button, self._clear_button):
+            series_header.addWidget(button)
+
         series_panel = QtWidgets.QWidget(self)
         series_panel.setObjectName("spectrumSeriesPanel")
         series_layout = QtWidgets.QVBoxLayout(series_panel)
         series_layout.setContentsMargins(0, 0, 0, 0)
-        series_layout.addWidget(QtWidgets.QLabel("Spectra", self))
-        series_layout.addWidget(self._series_empty_label)
+        series_layout.setSpacing(6)
+        series_layout.addLayout(series_header)
+        series_layout.addWidget(self._series_empty_label, 1)
         series_layout.addWidget(self._series_list, 1)
-        series_layout.addWidget(self._remove_button)
 
         self._follow_check = QtWidgets.QCheckBox("Follow cursor", self)
         self._follow_check.setObjectName("spectrumFollowCheck")
-        self._follow_check.setChecked(True)
-        self._follow_check.setToolTip("Update the live trace as the cursor moves over any image")
+        self._follow_check.setChecked(False)
+        self._follow_check.setToolTip(
+            "Update the live trace as the cursor moves over any image. "
+            "Holding Ctrl follows the cursor too."
+        )
         self._follow_check.toggled.connect(self._on_follow_toggled)
 
         self._transform_combo = QtWidgets.QComboBox(self)
         self._transform_combo.setObjectName("spectrumTransformCombo")
+        self._transform_combo.setAccessibleName("Display")
         self._transform_combo.setToolTip(
             "Derivatives sharpen absorption edges; continuum removal isolates "
             "absorption features; area normalisation removes brightness"
         )
         for transform in SpectrumTransform:
             self._transform_combo.addItem(transform.value, transform)
+        # Shrinks (eliding) in a narrow dock; grows to its full width otherwise.
+        natural_width = self._transform_combo.sizeHint().width()
+        self._transform_combo.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._transform_combo.setMinimumContentsLength(8)
+        self._transform_combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        self._transform_combo.setMaximumWidth(natural_width)
         self._transform_combo.currentIndexChanged.connect(lambda _index: self._redraw())
 
         self._spread_check = QtWidgets.QCheckBox("±1σ", self)
@@ -261,34 +315,23 @@ class SpectrumInspector(QtWidgets.QWidget):
         )
         self._markers_check.toggled.connect(lambda _checked: self._redraw())
 
-        self._pin_button = QtWidgets.QPushButton("Pin cursor", self)
-        self._pin_button.setObjectName("spectrumPinButton")
-        self._pin_button.setToolTip(
-            f"Keep the live spectrum on the plot for comparison. Faster: "
-            f"{PIN_SPECTRUM_SHORTCUT} the pixel directly in the image."
+        self._export_button = self._small_button(
+            "Export CSV", "spectrumExportButton",
+            "Save every shown spectrum, as displayed, to a CSV file",
         )
-        self._pin_button.clicked.connect(self.pin_live)
-
-        self._image_mean_button = QtWidgets.QPushButton("Image mean", self)
-        self._image_mean_button.setObjectName("spectrumImageMeanButton")
-        self._image_mean_button.setToolTip("Add the mean spectrum of the whole region of interest")
-        self._image_mean_button.clicked.connect(self.imageMeanRequested)
-
-        self._clear_button = QtWidgets.QPushButton("Clear", self)
-        self._clear_button.setObjectName("spectrumClearButton")
-        self._clear_button.setToolTip("Remove every pinned and region spectrum")
-        self._clear_button.clicked.connect(self.clear)
-
-        self._export_button = QtWidgets.QPushButton("Export CSV", self)
-        self._export_button.setObjectName("spectrumExportButton")
-        self._export_button.setToolTip("Save every shown spectrum, as displayed, to a CSV file")
         self._export_button.clicked.connect(self._on_export_clicked)
 
         self._reference_combo = QtWidgets.QComboBox(self)
         self._reference_combo.setObjectName("spectrumReferenceCombo")
+        self._reference_combo.setAccessibleName("Reference spectrum")
         self._reference_combo.setToolTip("Spectrum to compare every pixel against")
+        self._reference_combo.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._reference_combo.setMinimumContentsLength(12)
         self._similarity_button = QtWidgets.QPushButton("Map similarity", self)
         self._similarity_button.setObjectName("spectrumSimilarityButton")
+        self._similarity_button.setProperty("primaryButton", True)
         self._similarity_button.setToolTip(
             "Show each pixel's spectral angle to the reference in the "
             "Visualization tab's Similarity mode (brightness-independent)"
@@ -305,6 +348,7 @@ class SpectrumInspector(QtWidgets.QWidget):
             "classes are easier to tell apart; under ~2° they are nearly identical.",
             self,
         )
+        separability_hint.setProperty("toolSettingsHint", True)
         separability_hint.setWordWrap(True)
         self._separability_help = QtWidgets.QLabel(_SEPARABILITY_HELP, self)
         self._separability_help.setObjectName("spectrumSeparabilityHelp")
@@ -313,7 +357,6 @@ class SpectrumInspector(QtWidgets.QWidget):
         self._separability_help.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
-        self._separability_help.setContentsMargins(12, 12, 12, 12)
         self._separability_data = QtWidgets.QWidget(self)
         data_layout = QtWidgets.QVBoxLayout(self._separability_data)
         data_layout.setContentsMargins(0, 0, 0, 0)
@@ -323,56 +366,73 @@ class SpectrumInspector(QtWidgets.QWidget):
         self._separability_stack.setObjectName("spectrumSeparabilityStack")
         self._separability_stack.addWidget(self._separability_help)
         self._separability_stack.addWidget(self._separability_data)
-        separability_page = self._separability_stack
 
-        self._tabs = QtWidgets.QTabWidget(self)
-        self._tabs.setObjectName("spectrumInspectorTabs")
+        # Plot options share one row: the sidebar dock is wide enough.
+        options_row = QtWidgets.QHBoxLayout()
+        options_row.setSpacing(10)
+        options_row.addWidget(self._transform_combo, 1)
+        options_row.addWidget(self._spread_check)
+        options_row.addWidget(self._markers_check)
+        options_row.addStretch(0)
+        options_row.addWidget(self._export_button)
+
+        plot_view = QtWidgets.QWidget(self)
+        plot_view_layout = QtWidgets.QVBoxLayout(plot_view)
+        plot_view_layout.setContentsMargins(0, 0, 0, 0)
+        plot_view_layout.setSpacing(8)
+        plot_view_layout.addLayout(options_row)
+        plot_view_layout.addWidget(plot_card, 1)
+
         plot_page = QtWidgets.QSplitter(Qt.Orientation.Horizontal, self)
         self._plot_splitter = plot_page
         plot_page.setObjectName("spectrumPlotSplitter")
-        plot_page.addWidget(self._canvas)
+        plot_page.setChildrenCollapsible(False)
+        plot_page.setHandleWidth(8)
+        plot_page.addWidget(plot_view)
         plot_page.addWidget(series_panel)
         plot_page.setStretchFactor(0, 1)
-        plot_page.setSizes([560, 200])
-        self._tabs.addTab(plot_page, "Plot")
-        self._tabs.addTab(separability_page, "Separability")
+        plot_page.setSizes([560, 280])
 
-        # Grids rather than single rows, so the controls fit a narrow sidebar
-        # dock as well as a wide popped-out window.
-        display_row = QtWidgets.QGridLayout()
-        display_row.setHorizontalSpacing(8)
-        display_row.addWidget(self._follow_check, 0, 0)
-        display_row.addWidget(self._spread_check, 0, 1)
-        display_row.addWidget(self._markers_check, 0, 2)
-        display_row.addWidget(QtWidgets.QLabel("Display", self), 1, 0)
-        display_row.addWidget(self._transform_combo, 1, 1, 1, 2)
-        display_row.setColumnStretch(3, 1)
+        # A bare tab bar over a stack, so Follow cursor shares its row.
+        self._pages = QtWidgets.QStackedWidget(self)
+        self._pages.setObjectName("spectrumInspectorPages")
+        self._pages.addWidget(plot_page)
+        self._pages.addWidget(self._separability_stack)
+        self._tabs = QtWidgets.QTabBar(self)
+        self._tabs.setObjectName("spectrumTabBar")
+        self._tabs.setAccessibleName("Spectrum Inspector views")
+        self._tabs.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._tabs.setExpanding(False)
+        self._tabs.setDrawBase(False)
+        self._tabs.setUsesScrollButtons(False)
+        self._tabs.addTab("Plot")
+        self._tabs.addTab("Separability")
+        self._tabs.currentChanged.connect(self._pages.setCurrentIndex)
+        header_row = QtWidgets.QHBoxLayout()
+        header_row.setSpacing(10)
+        header_row.addWidget(self._tabs)
+        header_row.addStretch(1)
+        header_row.addWidget(self._follow_check)
 
-        action_row = QtWidgets.QGridLayout()
-        action_row.setHorizontalSpacing(6)
-        for column, button in enumerate(
-            (self._pin_button, self._image_mean_button, self._clear_button, self._export_button)
-        ):
-            action_row.addWidget(button, 0, column)
-        self._reference_combo.setSizeAdjustPolicy(
-            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
-        )
-        self._reference_combo.setMinimumContentsLength(12)
+        reference_label = QtWidgets.QLabel("Reference", self)
+        reference_label.setProperty("toolSettingsField", True)
         reference_row = QtWidgets.QHBoxLayout()
-        reference_row.addWidget(QtWidgets.QLabel("Reference", self))
+        reference_row.setSpacing(8)
+        reference_row.addWidget(reference_label)
         reference_row.addWidget(self._reference_combo, 1)
         reference_row.addWidget(self._similarity_button)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.addLayout(display_row)
-        layout.addWidget(self._tabs, 1)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(8)
+        layout.addLayout(header_row)
+        layout.addWidget(self._pages, 1)
         layout.addWidget(self._status_label)
-        layout.addLayout(action_row)
         layout.addLayout(reference_row)
-        self.setMinimumWidth(340)
 
+        self._status_label.setText(self._idle_hint())
         self._refresh_series_list()
+        self._refresh_references()
         self._refresh_separability()
         self._redraw()
 
@@ -381,10 +441,21 @@ class SpectrumInspector(QtWidgets.QWidget):
     # ------------------------------------------------------------------ #
 
     def is_following(self) -> bool:
-        """Whether "Follow cursor" is ticked; the Controller also checks the
-        hosting tool window is open."""
+        """Whether "Follow cursor" is ticked or Ctrl is held; the Controller
+        also checks the hosting tool window is open."""
 
-        return self._follow_check.isChecked()
+        return self._follow_check.isChecked() or self._held_follow
+
+    def set_held_follow(self, held: bool) -> None:
+        """Follow the cursor while ``held`` (Ctrl down), even when unticked."""
+
+        if held == self._held_follow:
+            return
+        if held and not self._follow_check.isChecked():
+            # The last read may be from long ago; wait for a fresh one.
+            self._live = None
+        self._held_follow = held
+        self._following_changed()
 
     def set_compact(self, compact: bool) -> None:
         """Stack the Spectra list under the plot in a narrow sidebar dock."""
@@ -401,7 +472,6 @@ class SpectrumInspector(QtWidgets.QWidget):
         if self._shown_live() is None:
             # Not following: keep the spectrum for when following resumes,
             # but draw no cursor line.
-            self._update_pin_button()
             if self._live_line is not None:
                 self._redraw()
             return
@@ -409,7 +479,6 @@ class SpectrumInspector(QtWidgets.QWidget):
             f"Cursor: row {result.row}, column {result.column}"
             + (f" · {source}" if source else "")
         )
-        self._update_pin_button()
         if self._live_line is None or self._needs_full_redraw():
             self._redraw()
             return
@@ -423,11 +492,6 @@ class SpectrumInspector(QtWidgets.QWidget):
 
     def set_status(self, message: str) -> None:
         self._status_label.setText(message)
-
-    def pin_live(self) -> None:
-        live = self._shown_live()
-        if live is not None:
-            self.add_pin(live, self._live_source)
 
     def add_pin(
         self, result: SpectrumResult, source: str = "", data_source: object = None
@@ -602,6 +666,13 @@ class SpectrumInspector(QtWidgets.QWidget):
     # Private                                                            #
     # ------------------------------------------------------------------ #
 
+    def _small_button(self, text: str, name: str, tooltip: str) -> QtWidgets.QPushButton:
+        button = QtWidgets.QPushButton(text, self)
+        button.setObjectName(name)
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        return button
+
     def _transformed(self, wavelengths: np.ndarray, values: np.ndarray) -> np.ndarray:
         return self._analysis.transform(wavelengths, values, self.current_transform())
 
@@ -611,11 +682,15 @@ class SpectrumInspector(QtWidgets.QWidget):
         live = self._shown_live()
         return live is not None and len(x) != len(live.wavelengths_nm)
 
-    @staticmethod
-    def _idle_hint() -> str:
+    def _idle_hint(self) -> str:
+        if self.is_following():
+            return (
+                f"Hover over an image to see its spectrum · {PIN_SPECTRUM_SHORTCUT} "
+                "a pixel to pin it"
+            )
         return (
-            f"Hover over an image to see its spectrum · {PIN_SPECTRUM_SHORTCUT} "
-            "a pixel to pin it"
+            f"{PIN_SPECTRUM_SHORTCUT} a pixel to pin its spectrum · tick Follow "
+            "cursor for a live trace"
         )
 
     def _visible_series(self) -> list[_Series]:
@@ -676,36 +751,64 @@ class SpectrumInspector(QtWidgets.QWidget):
             (self._live_line,) = axes.plot(
                 live.wavelengths_nm,
                 self._transformed(live.wavelengths_nm, live.values),
-                color=_LIVE_COLOR, linewidth=1.0, linestyle="--", label="Cursor",
+                color=SPECTRUM_PLOT_LIVE_COLOR, linewidth=1.0, linestyle="--",
+                label="Cursor",
             )
         if self._markers_check.isChecked() and self._markers:
             for name, wavelength in self._markers.items():
-                axes.axvline(wavelength, color=_MARKER_COLOR, linewidth=0.8, linestyle=":")
+                axes.axvline(
+                    wavelength, color=SPECTRUM_PLOT_MARKER_COLOR, linewidth=0.8, linestyle=":"
+                )
                 axes.annotate(
                     f"{name} {wavelength:g}", xy=(wavelength, 1.0),
                     xycoords=("data", "axes fraction"), xytext=(2, -10),
-                    textcoords="offset points", fontsize=7, color=_MARKER_COLOR,
+                    textcoords="offset points", fontsize=7, color=SPECTRUM_PLOT_MARKER_COLOR,
                     rotation=90, va="top",
                 )
-        axes.set_xlabel("Wavelength (nm)")
-        axes.set_ylabel(
-            "Value" if transform is SpectrumTransform.NONE else transform.value
-        )
-        if self._marker_title and self._markers_check.isChecked() and self._markers:
-            axes.set_title(f"Bands: {self._marker_title}", fontsize=9)
-        axes.grid(True, alpha=0.3)
+        self._style_axes(transform)
         if axes.get_legend_handles_labels()[0]:
-            axes.legend(fontsize=7, loc="best")
+            legend = axes.legend(fontsize=7, loc="best", framealpha=0.92)
+            legend.get_frame().set_edgecolor(SPECTRUM_PLOT_AXIS_COLOR)
+            for text in legend.get_texts():
+                text.set_color(SPECTRUM_PLOT_TEXT_COLOR)
         else:
             axes.text(
                 0.5, 0.5,
-                f"Hover over an image to see its spectrum\n"
-                f"{PIN_SPECTRUM_SHORTCUT} a pixel to pin it for comparison",
-                transform=axes.transAxes, ha="center", va="center", color=_MARKER_COLOR,
+                (
+                    "Hover over an image to see its spectrum\n"
+                    if self.is_following()
+                    else "Tick Follow cursor for a live spectrum\n"
+                )
+                + f"{PIN_SPECTRUM_SHORTCUT} a pixel to pin it for comparison",
+                transform=axes.transAxes, ha="center", va="center",
+                color=SPECTRUM_PLOT_MARKER_COLOR,
             )
         self._fit_axes()
         self._draw()
         self._export_button.setEnabled(bool(self._visible_series() or live))
+
+    def _style_axes(self, transform: SpectrumTransform) -> None:
+        """Label and colour the axes to match the app theme."""
+
+        axes = self._axes
+        axes.set_facecolor(SPECTRUM_PLOT_BACKGROUND)
+        axes.set_xlabel("Wavelength (nm)", fontsize=9, color=SPECTRUM_PLOT_TEXT_COLOR)
+        axes.set_ylabel(
+            "Value" if transform is SpectrumTransform.NONE else transform.value,
+            fontsize=9, color=SPECTRUM_PLOT_TEXT_COLOR,
+        )
+        if self._marker_title and self._markers_check.isChecked() and self._markers:
+            axes.set_title(
+                f"Bands: {self._marker_title}", fontsize=9, color=SPECTRUM_PLOT_TEXT_COLOR
+            )
+        axes.tick_params(
+            labelsize=8, colors=SPECTRUM_PLOT_TEXT_COLOR, color=SPECTRUM_PLOT_AXIS_COLOR
+        )
+        for side, spine in axes.spines.items():
+            spine.set_visible(side in ("left", "bottom"))
+            spine.set_color(SPECTRUM_PLOT_AXIS_COLOR)
+        axes.grid(True, color=SPECTRUM_PLOT_GRID_COLOR, linewidth=0.8)
+        axes.set_axisbelow(True)
 
     def _draw(self) -> None:
         """Queue a repaint, skipped while the canvas is too small to hold axes."""
@@ -751,6 +854,7 @@ class SpectrumInspector(QtWidgets.QWidget):
         widget.blockSignals(False)
         self._sync_list_selection()
         has_series = bool(self._series_by_key)
+        self._series_count.setText(str(len(self._series_by_key)))
         self._series_empty_label.setVisible(not has_series)
         self._series_list.setVisible(has_series)
         self._clear_button.setEnabled(has_series)
@@ -821,13 +925,13 @@ class SpectrumInspector(QtWidgets.QWidget):
     def _shown_live(self) -> Optional[SpectrumResult]:
         """The cursor spectrum to draw/export/pin: none while not following."""
 
-        return self._live if self._follow_check.isChecked() else None
+        return self._live if self.is_following() else None
 
-    def _update_pin_button(self) -> None:
-        self._pin_button.setEnabled(self._shown_live() is not None)
+    def _on_follow_toggled(self, _checked: bool) -> None:
+        self._following_changed()
 
-    def _on_follow_toggled(self, checked: bool) -> None:
-        if checked:
+    def _following_changed(self) -> None:
+        if self.is_following():
             live = self._live
             self._status_label.setText(
                 f"Cursor: row {live.row}, column {live.column}"
@@ -835,10 +939,7 @@ class SpectrumInspector(QtWidgets.QWidget):
                 if live is not None else self._idle_hint()
             )
         else:
-            self._status_label.setText(
-                "Cursor line hidden; tick Follow cursor to show it again"
-            )
-        self._update_pin_button()
+            self._status_label.setText(self._idle_hint())
         self._redraw()
 
     def _on_similarity_clicked(self) -> None:

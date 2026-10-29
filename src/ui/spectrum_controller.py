@@ -98,6 +98,11 @@ class SpectrumController(QtCore.QObject):
                     self._move_pin(viewer, key, row, column, final=True)
             )
             viewer.pinPicked.connect(self.inspector.select_series)
+            viewer.spectrum_following = self._is_following
+            # Holding Ctrl over an image follows the cursor too.
+            viewer.ctrlHeldChanged.connect(
+                lambda held, viewer=viewer: self._set_ctrl_held(viewer, held)
+            )
 
     # ------------------------------------------------------------------ #
     # Public API                                                         #
@@ -330,8 +335,21 @@ class SpectrumController(QtCore.QObject):
         if final:
             self._statusbar.showMessage(f"Moved pin to pixel ({row}, {column})", 4000)
 
+    def _set_ctrl_held(self, viewer: HSIViewer, held: bool) -> None:
+        held = held and self.is_open()
+        was_following = self._is_following()
+        self.inspector.set_held_follow(held)
+        pixel = viewer.hovered_pixel()
+        if held and not was_following and pixel is not None:
+            # Show the pixel already under the pointer without waiting for
+            # the mouse to move.
+            self._on_pixel_hovered(viewer, *pixel)
+
+    def _is_following(self) -> bool:
+        return self.is_open() and self.inspector.is_following()
+
     def _on_pixel_hovered(self, viewer: HSIViewer, row: int, column: int) -> None:
-        if not (self.is_open() and self.inspector.is_following()):
+        if not self._is_following():
             return
         if self._blocked_reason() is not None:
             return
