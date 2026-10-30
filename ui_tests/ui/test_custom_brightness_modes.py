@@ -20,16 +20,22 @@ from ui.main_window import MainWindowController
 NDVI_FORMULA = "(R800 - R670) / (R800 + R670)"
 
 
-def fake_dialog_factory(formula: str | None, calls: list | None = None):
+def fake_dialog_factory(
+    formula: str | None, calls: list | None = None, name: str | None = None
+):
     """Stand in for the modal editor: accept `formula`, or cancel if None."""
 
-    def create(wavelengths, current, parent=None):
+    def create(wavelengths, current, parent=None, store=None):
         if calls is not None:
-            calls.append(SimpleNamespace(wavelengths=wavelengths, current=current))
+            calls.append(
+                SimpleNamespace(wavelengths=wavelengths, current=current, store=store)
+            )
         accepted = QtWidgets.QDialog.DialogCode.Accepted
         rejected = QtWidgets.QDialog.DialogCode.Rejected
         return SimpleNamespace(
-            exec=lambda: accepted if formula else rejected, formula=formula
+            exec=lambda: accepted if formula else rejected,
+            formula=formula,
+            formula_name=name,
         )
 
     return create
@@ -217,3 +223,78 @@ def test_dialog_palette_inserts_at_the_cursor(qtbot):
     dialog._apply()
     assert dialog.formula == "sqrt(R671)"
     assert dialog.result() == QtWidgets.QDialog.DialogCode.Accepted
+
+
+def test_store_keeps_a_named_library(isolated_settings):
+    store = CustomIndexStore()
+    assert store.library() == ()
+
+    store.save_entry("NDRE", "(R790 - R720) / (R790 + R720)")
+    store.save_entry("Ratio", "R800 / R670")
+    store.save_entry("ndre", "R790 / R720")  # Same name, any case: replaced in place.
+
+    assert [(e.name, e.formula) for e in CustomIndexStore().library()] == [
+        ("ndre", "R790 / R720"),
+        ("Ratio", "R800 / R670"),
+    ]
+    assert store.name_for("R800 / R670") == "Ratio"
+
+    store.save("R800 / R670", "Ratio")
+    store.delete_entry("RATIO")
+    assert [e.name for e in store.library()] == ["ndre"]
+    # The applied formula survives deletion; it just loses its name.
+    assert store.load() == "R800 / R670"
+    assert store.active_name() is None
+
+
+def test_store_migrates_a_formula_saved_before_the_library(isolated_settings):
+    CustomIndexStore().save("R800 / R670")
+
+    library = CustomIndexStore().library()
+
+    assert [(e.name, e.formula) for e in library] == [
+        (CustomIndexStore.MIGRATED_NAME, "R800 / R670")
+    ]
+
+
+def test_dialog_saves_loads_and_deletes_formulas(qtbot, isolated_settings, monkeypatch):
+    store = CustomIndexStore()
+    store.save_entry("Ratio", "R800 / R670")
+    dialog = CustomIndexDialog(np.array([470.0, 670.0, 800.0]), store=store)
+    qtbot.addWidget(dialog)
+    monkeypatch.setattr(dialog, "_ask_name", lambda suggestion: "Normalized")
+    monkeypatch.setattr(dialog, "_confirm", lambda *_args: True)
+
+    assert dialog.savedCombo.currentIndex() == -1  # Empty editor: unsaved.
+    dialog.savedCombo.activated.emit(0)
+    assert dialog.formulaEdit.text() == "R800 / R670"
+    assert dialog.deleteSavedButton.isEnabled()
+
+    dialog.formulaEdit.setText("(R800 - R670) / (R800 + R670)")
+    assert dialog.savedCombo.currentIndex() == -1  # Edited: no longer "Ratio".
+    dialog._on_save_as_clicked()
+    assert dialog.savedCombo.currentText() == "Normalized"
+    assert [e.name for e in store.library()] == ["Ratio", "Normalized"]
+
+    dialog._apply()
+    assert dialog.formula_name == "Normalized"
+
+    dialog.savedCombo.setCurrentIndex(0)
+    dialog._on_delete_clicked()
+    assert [e.name for e in store.library()] == ["Normalized"]
+
+
+def test_applied_name_shows_in_caption_and_persists(loaded_window, qtbot, synthetic_cube_path):
+    loaded_window._custom_index_dialog_factory = fake_dialog_factory(
+        NDVI_FORMULA, name="My NDVI"
+    )
+    CustomIndexStore().save_entry("My NDVI", NDVI_FORMULA)
+
+    loaded_window.modeCustom.click()
+
+    assert "My NDVI" in loaded_window.visualizationModeCaption.text()
+    assert "My NDVI" in loaded_window.modeCustom.toolTip()
+    loaded_window.close()
+    reopened = MainWindowController()
+    qtbot.addWidget(reopened)
+    assert reopened._custom_formula_name == "My NDVI"

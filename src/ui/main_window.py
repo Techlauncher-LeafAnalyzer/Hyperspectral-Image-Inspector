@@ -156,6 +156,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         # `_ensure_on_demand_result`. The last applied formula persists.
         self._custom_index_store = CustomIndexStore()
         self._custom_formula: str | None = self._custom_index_store.load()
+        self._custom_formula_name = self._saved_formula_name()
         self._custom_index_dialog_factory = CustomIndexDialog
         self._on_demand_errors: dict[VisualizationMode, str] = {}
         # Full-cube band sums keyed by id(data), validated against the
@@ -711,6 +712,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         self.editCustomIndexButton.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.editCustomIndexButton.clicked.connect(self._on_edit_custom_index_clicked)
+        self._set_custom_formula_name(self._custom_formula_name)
 
         # Says which on-demand mode is shown and how it was computed, since
         # Brightness silently changes meaning after a supervised result.
@@ -1083,7 +1085,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         self._visualization_cache.clear()
         self._band_sums.clear()
-        self._custom_index_store.save(self._custom_formula)
+        self._custom_index_store.save(self._custom_formula, self._custom_formula_name)
         self._super_res_result = None
         self._spectrum_controller.shutdown()
         for transition in self._tab_transitions:
@@ -1379,17 +1381,47 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             data.wavelengths_nm if data.is_loaded() else None,
             self._custom_formula,
             parent=self,
+            store=self._custom_index_store,
         )
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted or not dialog.formula:
+        accepted = dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted and dialog.formula
+        if not accepted:
+            # The library may have been edited even though nothing was applied.
+            self._set_custom_formula_name(
+                self._custom_index_store.name_for(self._custom_formula)
+                if self._custom_formula else None
+            )
+            self._update_mode_caption()
             return False
         self._custom_formula = dialog.formula
-        self._custom_index_store.save(self._custom_formula)
+        self._set_custom_formula_name(dialog.formula_name)
+        self._custom_index_store.save(self._custom_formula, self._custom_formula_name)
         self._discard_on_demand_results(VisualizationMode.CUSTOM)
         self._classification_controller.set_visualization_results(
             self._visualization_results
         )
-        self.statusbar.showMessage(f"Custom index set to {self._custom_formula}", 5000)
+        label = self._custom_formula_name or self._custom_formula
+        self.statusbar.showMessage(f"Custom index set to {label}", 5000)
         return True
+
+    def _saved_formula_name(self) -> str | None:
+        """The library name of the applied formula, if it is still saved."""
+
+        store = self._custom_index_store
+        if self._custom_formula is None:
+            return None
+        entry = store.find(store.active_name() or "")
+        if entry is not None and entry.formula == self._custom_formula:
+            return entry.name
+        return store.name_for(self._custom_formula)
+
+    def _set_custom_formula_name(self, name: str | None) -> None:
+        self._custom_formula_name = name
+        if self._custom_formula is None:
+            tooltip = "Your own index formula built from any bands; use ✎ Formula to define it"
+        else:
+            title = f"{name}: " if name else ""
+            tooltip = f"Custom index — {title}{self._custom_formula}"
+        self.modeCustom.setToolTip(tooltip)
 
     def _on_edit_custom_index_clicked(self) -> None:
         if not self._edit_custom_index():
@@ -1451,8 +1483,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                     f"{token} → {wavelength:.1f} nm"
                     for token, wavelength in result.band_wavelengths_nm.items()
                 )
+                name = (
+                    f" <b>{_escape(self._custom_formula_name)}</b> ·"
+                    if self._custom_formula_name else ""
+                )
                 text = (
-                    f"<b>Custom index</b> · <code>{_escape(self._custom_formula or '')}</code>"
+                    f"<b>Custom index</b> ·{name} <code>{_escape(self._custom_formula or '')}</code>"
                     f" · {bands} · colours stretched to the 2–98th percentile"
                 )
         else:
@@ -1469,15 +1505,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                     "<b>Brightness · Per leaf cluster</b> — the sum of all "
                     f"{data.bands} bands is scaled 0–1 separately within each of "
                     f"{clusters.count} cluster{plural} from the supervised "
-                    "classification; background is left blank. Compare pixels "
-                    "within a leaf, not between leaves."
+                    "classification, between its 2nd and 98th percentiles so a "
+                    "few glints cannot darken a leaf; background is left blank. "
+                    "Compare pixels within a leaf, not between leaves."
                 )
             else:
                 text = (
                     "<b>Brightness · Whole image</b> — the sum of all "
-                    f"{data.bands} bands is scaled 0–1 across the whole image. "
-                    "After a supervised classification it is scaled per leaf "
-                    "cluster instead."
+                    f"{data.bands} bands is scaled 0–1 across the whole image, "
+                    "between its 2nd and 98th percentiles. After a supervised "
+                    "classification it is scaled per leaf cluster instead."
                 )
         caption.setText(text)
         caption.setProperty("state", "warning" if result is None else "")
@@ -1542,6 +1579,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             data, self._visualization_mode_buttons
         )
         self._update_brightness_tooltip()
+        self._set_custom_formula_name(self._custom_formula_name)
         available = frozenset(
             mode.value for mode in OPTIONAL_VISUALIZATION_MODES if reasons[mode] is None
         )

@@ -9,6 +9,8 @@ formula that parses and fits the current image can be applied.
 from __future__ import annotations
 
 import io
+import json
+from dataclasses import dataclass
 
 import numpy as np
 from matplotlib.mathtext import math_to_image
@@ -50,10 +52,26 @@ _FUNCTION_BUTTONS = (
 _PREVIEW_DPI = 130
 
 
+@dataclass(frozen=True, slots=True)
+class SavedFormula:
+    """One named entry in the user's custom index library."""
+
+    name: str
+    formula: str
+
+
 class CustomIndexStore:
-    """Persist the most recently applied formula between sessions."""
+    """Persist the user's named formulas and the applied one between sessions.
+
+    The library is kept in insertion order. Names are matched ignoring case,
+    so "my ndre" overwrites "My NDRE" rather than adding a near-duplicate.
+    """
 
     KEY = "visualization/customIndexFormula"
+    NAME_KEY = "visualization/customIndexName"
+    LIBRARY_KEY = "visualization/customIndexLibrary"
+    # Name given to a formula saved before the library existed.
+    MIGRATED_NAME = "My custom index"
 
     def __init__(self, settings: QtCore.QSettings | None = None) -> None:
         self._settings = settings or QtCore.QSettings(
@@ -64,14 +82,79 @@ class CustomIndexStore:
         )
 
     def load(self) -> str | None:
+        """The applied formula, if any."""
         value = self._settings.value(self.KEY, "", type=str)
         return value.strip() or None
 
-    def save(self, formula: str | None) -> None:
-        if formula:
-            self._settings.setValue(self.KEY, formula)
+    def active_name(self) -> str | None:
+        """The library name of the applied formula, if it was a saved one."""
+        value = self._settings.value(self.NAME_KEY, "", type=str)
+        return value.strip() or None
+
+    def save(self, formula: str | None, name: str | None = None) -> None:
+        """Record the applied formula and, when it is a saved one, its name."""
+        for key, value in ((self.KEY, formula), (self.NAME_KEY, name)):
+            if value:
+                self._settings.setValue(key, value)
+            else:
+                self._settings.remove(key)
+        self._settings.sync()
+
+    def library(self) -> tuple[SavedFormula, ...]:
+        """Every saved formula, oldest first."""
+        if not self._settings.contains(self.LIBRARY_KEY):
+            # First run with a library: keep a formula from an older version.
+            formula = self.load()
+            return (SavedFormula(self.MIGRATED_NAME, formula),) if formula else ()
+        raw = self._settings.value(self.LIBRARY_KEY, "", type=str)
+        try:
+            entries = json.loads(raw)
+            return tuple(
+                SavedFormula(str(entry["name"]), str(entry["formula"]))
+                for entry in entries
+                if str(entry.get("name", "")).strip() and str(entry.get("formula", "")).strip()
+            )
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return ()
+
+    def find(self, name: str) -> SavedFormula | None:
+        key = name.strip().casefold()
+        return next((entry for entry in self.library() if entry.name.casefold() == key), None)
+
+    def name_for(self, formula: str) -> str | None:
+        """The name of a saved entry with exactly this formula, if any."""
+        text = formula.strip()
+        return next((entry.name for entry in self.library() if entry.formula == text), None)
+
+    def save_entry(self, name: str, formula: str) -> SavedFormula:
+        """Add a formula, or replace the one with the same name in place."""
+        entry = SavedFormula(name.strip(), formula.strip())
+        if not entry.name or not entry.formula:
+            raise ValueError("A saved formula needs a name and a formula.")
+        key = entry.name.casefold()
+        entries = list(self.library())
+        for position, existing in enumerate(entries):
+            if existing.name.casefold() == key:
+                entries[position] = entry
+                break
         else:
-            self._settings.remove(self.KEY)
+            entries.append(entry)
+        self._write_library(entries)
+        return entry
+
+    def delete_entry(self, name: str) -> None:
+        key = name.strip().casefold()
+        self._write_library([e for e in self.library() if e.name.casefold() != key])
+        if (self.active_name() or "").casefold() == key:
+            # The applied formula stays applied; it is just no longer named.
+            self._settings.remove(self.NAME_KEY)
+            self._settings.sync()
+
+    def _write_library(self, entries: list[SavedFormula]) -> None:
+        self._settings.setValue(
+            self.LIBRARY_KEY,
+            json.dumps([{"name": e.name, "formula": e.formula} for e in entries]),
+        )
         self._settings.sync()
 
 
@@ -93,6 +176,8 @@ class CustomIndexDialog(QtWidgets.QDialog):
         wavelengths_nm: np.ndarray | None,
         formula: str | None = None,
         parent: QtWidgets.QWidget | None = None,
+        *,
+        store: CustomIndexStore | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("customIndexDialog")
@@ -104,7 +189,9 @@ class CustomIndexDialog(QtWidgets.QDialog):
             if wavelengths_nm is None or np.size(wavelengths_nm) == 0
             else np.asarray(wavelengths_nm, dtype=np.float64)
         )
+        self._store = store
         self._formula: str | None = None
+        self._formula_name: str | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
@@ -127,6 +214,9 @@ class CustomIndexDialog(QtWidgets.QDialog):
         self.rangeLabel.setObjectName("customIndexRange")
         self.rangeLabel.setWordWrap(True)
         layout.addWidget(self.rangeLabel)
+
+        if store is not None:
+            layout.addWidget(self._build_library_row())
 
         editor_row = QtWidgets.QHBoxLayout()
         self.formulaEdit = QtWidgets.QLineEdit(self)
@@ -169,8 +259,8 @@ class CustomIndexDialog(QtWidgets.QDialog):
             "Operators + − × ÷ ^ and ( ); functions "
             + ", ".join(CUSTOM_INDEX_FUNCTIONS)
             + "; constants pi and e. Writing 2R800 multiplies. Division by zero "
-            "and invalid roots or logs show as 0. The last applied formula is "
-            "remembered next time HyperView opens.",
+            "and invalid roots or logs show as 0. Save formulas you reuse with "
+            "Save as…; the applied one is restored next time HyperView opens.",
             self,
         )
         hint.setObjectName("customIndexHint")
@@ -199,6 +289,9 @@ class CustomIndexDialog(QtWidgets.QDialog):
         self.formulaEdit.textChanged.connect(lambda _text: self._validate_timer.start())
         self.formulaEdit.returnPressed.connect(self._apply)
 
+        if store is not None:
+            self.formulaEdit.textChanged.connect(self._sync_library_selection)
+
         self.formulaEdit.setText(formula or "")
         self._validate()
         self.formulaEdit.setFocus()
@@ -207,6 +300,11 @@ class CustomIndexDialog(QtWidgets.QDialog):
     def formula(self) -> str | None:
         """The applied formula text, or ``None`` before Apply."""
         return self._formula
+
+    @property
+    def formula_name(self) -> str | None:
+        """The saved name of the applied formula, if it is in the library."""
+        return self._formula_name
 
     # ------------------------------------------------------------------ #
     # Construction helpers                                               #
@@ -225,6 +323,39 @@ class CustomIndexDialog(QtWidgets.QDialog):
             f"<b>Available bands:</b> {count} bands from {low:.1f} to "
             f"{high:.1f} nm (about {spacing:.2g} nm apart)."
         )
+
+    def _build_library_row(self) -> QtWidgets.QWidget:
+        row = QtWidgets.QWidget(self)
+        layout = QtWidgets.QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        label = QtWidgets.QLabel("Saved formulas", row)
+        self.savedCombo = QtWidgets.QComboBox(row)
+        self.savedCombo.setObjectName("customIndexSavedCombo")
+        self.savedCombo.setAccessibleName("Saved custom index formulas")
+        self.savedCombo.setPlaceholderText("Unsaved formula")
+        self.savedCombo.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.savedCombo.setMinimumContentsLength(18)
+        self.savedCombo.activated.connect(self._on_saved_formula_chosen)
+        self.saveAsButton = QtWidgets.QPushButton("Save as…", row)
+        self.saveAsButton.setObjectName("customIndexSaveAsButton")
+        self.saveAsButton.setToolTip("Save this formula under a name to reuse it later")
+        self.saveAsButton.setAutoDefault(False)
+        self.saveAsButton.clicked.connect(self._on_save_as_clicked)
+        self.deleteSavedButton = QtWidgets.QPushButton("Delete", row)
+        self.deleteSavedButton.setObjectName("customIndexDeleteButton")
+        self.deleteSavedButton.setToolTip("Remove the selected formula from your saved list")
+        self.deleteSavedButton.setAutoDefault(False)
+        self.deleteSavedButton.clicked.connect(self._on_delete_clicked)
+        layout.addWidget(label)
+        layout.addWidget(self.savedCombo, 1)
+        layout.addWidget(self.saveAsButton)
+        layout.addWidget(self.deleteSavedButton)
+        # The selection syncs once the formula box is filled.
+        self._reload_library(select="")
+        return row
 
     def _build_palette(self) -> QtWidgets.QWidget:
         palette = QtWidgets.QWidget(self)
@@ -298,6 +429,79 @@ class CustomIndexDialog(QtWidgets.QDialog):
     # ------------------------------------------------------------------ #
     # Behaviour                                                          #
     # ------------------------------------------------------------------ #
+
+    def _reload_library(self, select: str | None = None) -> None:
+        """Refill the saved-formula list, keeping the editor's text."""
+
+        combo = self.savedCombo
+        combo.blockSignals(True)
+        combo.clear()
+        for entry in self._store.library():
+            combo.addItem(entry.name, entry.formula)
+            combo.setItemData(combo.count() - 1, entry.formula, Qt.ItemDataRole.ToolTipRole)
+        combo.blockSignals(False)
+        if select is not None:
+            combo.setCurrentIndex(combo.findText(select, Qt.MatchFlag.MatchFixedString))
+        else:
+            self._sync_library_selection()
+
+    def _sync_library_selection(self, _text: str = "") -> None:
+        """Show which saved formula the editor holds, or none if edited."""
+
+        text = self.formulaEdit.text().strip()
+        index = next(
+            (i for i in range(self.savedCombo.count()) if self.savedCombo.itemData(i) == text),
+            -1,
+        )
+        self.savedCombo.setCurrentIndex(index)
+        self.deleteSavedButton.setEnabled(index >= 0)
+
+    def _on_saved_formula_chosen(self, index: int) -> None:
+        if index >= 0:
+            self._set_formula_text(self.savedCombo.itemData(index))
+
+    def _on_save_as_clicked(self) -> None:
+        text = self.formulaEdit.text().strip()
+        try:
+            parse_custom_index(text)
+        except CustomIndexError as exc:
+            QtWidgets.QMessageBox.information(
+                self, "Cannot save formula", f"Fix the formula first: {exc}"
+            )
+            return
+        current = self.savedCombo.currentText() if self.savedCombo.currentIndex() >= 0 else ""
+        name = self._ask_name(current or f"Custom index {len(self._store.library()) + 1}")
+        if not name:
+            return
+        existing = self._store.find(name)
+        if existing is not None and existing.formula != text and not self._confirm(
+            "Replace saved formula?",
+            f"“{existing.name}” already holds {existing.formula}. Replace it?",
+        ):
+            return
+        saved = self._store.save_entry(name, text)
+        self._reload_library(select=saved.name)
+        self.deleteSavedButton.setEnabled(True)
+
+    def _on_delete_clicked(self) -> None:
+        index = self.savedCombo.currentIndex()
+        if index < 0:
+            return
+        name = self.savedCombo.itemText(index)
+        if not self._confirm("Delete saved formula?", f"Remove “{name}” from your saved formulas?"):
+            return
+        self._store.delete_entry(name)
+        self._reload_library()
+
+    def _ask_name(self, suggestion: str) -> str | None:
+        name, accepted = QtWidgets.QInputDialog.getText(
+            self, "Save formula", "Name for this formula:", text=suggestion
+        )
+        return name.strip() if accepted and name.strip() else None
+
+    def _confirm(self, title: str, message: str) -> bool:
+        answer = QtWidgets.QMessageBox.question(self, title, message)
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _update_nearest_label(self, value: float) -> None:
         if self._wavelengths is None:
@@ -381,4 +585,7 @@ class CustomIndexDialog(QtWidgets.QDialog):
         if not self._validate():
             return
         self._formula = self.formulaEdit.text().strip()
+        self._formula_name = (
+            self._store.name_for(self._formula) if self._store is not None else None
+        )
         self.accept()

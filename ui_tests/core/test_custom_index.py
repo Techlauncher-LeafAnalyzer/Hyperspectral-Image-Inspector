@@ -10,6 +10,7 @@ import pytest
 
 from core import (
     CustomIndexError,
+    DisplayStretch,
     VisualizationError,
     VisualizationMode,
     VisualizationRequest,
@@ -140,7 +141,8 @@ def test_brightness_scales_the_whole_image_to_unit_range(camera_cube_factory):
     data, cube = camera_cube_factory(np.linspace(400, 1000, 12))
     result = VisualizationService().render(data, VisualizationRequest("BRIGHTNESS"))
     total = cube.sum(axis=2)
-    expected = (total - total.min()) / (total.max() - total.min())
+    low, high = np.percentile(total, (2, 98))
+    expected = np.clip((total - low) / (high - low), 0, 1)
     np.testing.assert_allclose(result.values, expected, rtol=1e-5, atol=1e-6)
     assert result.value_range == pytest.approx((0.0, 1.0))
     assert result.display_limits == (0.0, 1.0)
@@ -170,6 +172,26 @@ def test_brightness_reuses_a_supplied_band_sum(camera_cube_factory, monkeypatch)
     monkeypatch.setattr(data, "read_bands", lambda *_: pytest.fail("must not re-read"))
     result = service.render(data, VisualizationRequest("BRIGHTNESS", band_sum=total))
     assert np.nanmax(result.values) == pytest.approx(1.0)
+
+
+def test_a_few_bright_pixels_do_not_darken_their_cluster():
+    rng = np.random.default_rng(1)
+    leaf = rng.uniform(10.0, 20.0, size=(20, 20))
+    leaf[0, :3] = 1000.0  # Three glints: under 1% of the leaf.
+    segments = np.zeros(leaf.shape, dtype=int)
+
+    robust = VisualizationService.normalize_by_segment(leaf, segments)
+    plain = VisualizationService.normalize_by_segment(
+        leaf, segments, DisplayStretch(0, 100)
+    )
+
+    body = np.ones(leaf.shape, dtype=bool)
+    body[0, :3] = False
+    # Min-max squeezes the leaf into the bottom 1% of the scale...
+    assert np.median(plain[body]) < 0.01
+    # ...whereas percentile scaling keeps it spread out and clips the glints.
+    assert 0.3 < np.median(robust[body]) < 0.7
+    assert (robust[~body] == 1.0).all()
 
 
 def test_constant_segments_map_to_zero():

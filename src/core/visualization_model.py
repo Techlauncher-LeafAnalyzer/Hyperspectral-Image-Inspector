@@ -308,13 +308,18 @@ class VisualizationService:
 
     @staticmethod
     def normalize_by_segment(
-        values: np.ndarray, segments: np.ndarray | None = None
+        values: np.ndarray,
+        segments: np.ndarray | None = None,
+        stretch: DisplayStretch = DisplayStretch(),
     ) -> np.ndarray:
-        """Min-max scale ``values`` to 0..1, per segment label when given.
+        """Scale ``values`` to 0..1 between percentiles, per segment when given.
 
-        Each label ``>= 0`` in ``segments`` is scaled using only its own
-        finite pixels; negative labels and non-finite inputs become NaN. A
-        region of constant value maps to 0.
+        Each label ``>= 0`` in ``segments`` maps its own ``stretch`` lower and
+        upper percentiles to 0 and 1, clipping beyond them, so a handful of
+        very bright (e.g. specular) pixels saturate instead of darkening the
+        rest of their cluster. ``DisplayStretch(0, 100)`` gives plain min-max.
+        Negative labels and non-finite inputs become NaN; a region of
+        constant value maps to 0.
         """
 
         values = np.asarray(values, dtype=np.float64)
@@ -331,9 +336,13 @@ class VisualizationService:
         valid = np.isfinite(values) & (labels >= 0)
         for label in np.unique(labels[valid]):
             region = valid & (labels == label)
-            low = values[region].min()
-            span = values[region].max() - low
-            normalized[region] = (values[region] - low) / span if span > 0 else 0.0
+            low, high = np.percentile(
+                values[region], (stretch.lower_percentile, stretch.upper_percentile)
+            )
+            span = high - low
+            normalized[region] = (
+                np.clip((values[region] - low) / span, 0.0, 1.0) if span > 0 else 0.0
+            )
         return normalized
 
     def spectrum(self, data: HSIData, row: int, column: int) -> SpectrumResult:
@@ -703,7 +712,9 @@ class VisualizationService:
         segments = request.segments
         if segments is not None and data.roi_mask is not None:
             segments = np.where(data.roi_mask, segments, -1)
-        values = self.normalize_by_segment(data.masked(total).fill(), segments)
+        values = self.normalize_by_segment(
+            data.masked(total).fill(), segments, request.stretch
+        )
         colormap = request.colormap or self.DEFAULT_COLORMAPS[VisualizationMode.BRIGHTNESS]
         finite = values[np.isfinite(values)]
         if segments is None:
