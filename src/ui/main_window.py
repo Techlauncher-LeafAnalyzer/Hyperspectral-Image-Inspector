@@ -1049,14 +1049,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _on_calibration_result_ready(self, high: bool) -> None:
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
-        self._classification_controller.clear_result()
+        self._classification_controller.clear_calibrated_result()
         self._clear_calibration_previews()
         self._update_super_resolution_view_state(self._high_resolution_selected)
 
     @QtCore.pyqtSlot(bool)
     def _on_calibration_references_changed(self, had_result: bool) -> None:
         if had_result:
-            self._classification_controller.clear_result()
+            self._classification_controller.clear_calibrated_result()
         if self._hsi_data.is_loaded():
             self._clear_calibration_previews()
             self._update_super_resolution_view_state(self._high_resolution_selected)

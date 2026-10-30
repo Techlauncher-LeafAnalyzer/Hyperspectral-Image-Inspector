@@ -512,6 +512,19 @@ class ClassificationController(QObject):
         self._update_separate_leaves_button()
         self.segmentationChanged.emit()
 
+    def clear_calibrated_result(self) -> None:
+        """Discard only results made on calibrated data, e.g. on (re-)calibration.
+
+        Calibration never changes the source cube or its geometry, so labels
+        and annotations made before calibration stay valid and are kept.
+        """
+
+        self._calibrated_slots = {False: _ClassificationSlot(), True: _ClassificationSlot()}
+        self._annotation_slots = {
+            key: slot for key, slot in self._annotation_slots.items() if not key[0]
+        }
+        self.refresh_display()
+
     def set_visualization_results(
         self, results: Mapping[VisualizationMode, VisualizationResult]
     ) -> None:
