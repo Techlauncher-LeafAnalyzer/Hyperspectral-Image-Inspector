@@ -13,6 +13,15 @@ from core import (
 )
 
 
+_MODE_TOOLTIPS = {
+    VisualizationMode.RGB: "RGB preview (false-colour bands if visible RGB is unavailable)",
+    VisualizationMode.CUSTOM: "Your own index formula built from any bands; use ✎ Formula to change it",
+    VisualizationMode.BRIGHTNESS: (
+        "Spectral brightness: every pixel's spectrum summed over all bands and scaled 0–1"
+    ),
+}
+
+
 class ImageCapabilityController:
     """Keep camera-dependent UI state outside the main window."""
 
@@ -38,10 +47,7 @@ class ImageCapabilityController:
             button.setEnabled(reason is None)
             if mode in OPTIONAL_VISUALIZATION_MODES:
                 button.setVisible(reason is None)
-            button.setToolTip(reason or (
-                "RGB preview (false-colour bands if visible RGB is unavailable)"
-                if mode is VisualizationMode.RGB else f"View {mode.value}"
-            ))
+            button.setToolTip(reason or _MODE_TOOLTIPS.get(mode, f"View {mode.value}"))
         return reasons
 
     def refresh_super_resolution(self, data: HSIData) -> None:

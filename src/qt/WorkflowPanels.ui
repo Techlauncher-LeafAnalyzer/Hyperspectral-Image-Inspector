@@ -142,6 +142,39 @@
            </attribute>
           </widget>
          </item>
+         <item row="3" column="0">
+          <widget class="QRadioButton" name="modeBrightness">
+           <property name="text">
+            <string>Brightness</string>
+           </property>
+           <attribute name="buttonGroup">
+            <string notr="true">modeButtons</string>
+           </attribute>
+          </widget>
+         </item>
+         <item row="3" column="1">
+          <widget class="QRadioButton" name="modeCustom">
+           <property name="text">
+            <string>Custom Index</string>
+           </property>
+           <attribute name="buttonGroup">
+            <string notr="true">modeButtons</string>
+           </attribute>
+          </widget>
+         </item>
+         <item row="3" column="2">
+          <widget class="QToolButton" name="editCustomIndexButton">
+           <property name="toolTip">
+            <string>Define or edit the custom index formula</string>
+           </property>
+           <property name="accessibleName">
+            <string>Edit custom index formula</string>
+           </property>
+           <property name="text">
+            <string>✎ Formula</string>
+           </property>
+          </widget>
+         </item>
         </layout>
        </widget>
       </item>

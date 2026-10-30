@@ -21,6 +21,8 @@ from core import (
     HSIError,
     HSIReader,
     HSI_FILE_FILTER,
+    LeafClusters,
+    ON_DEMAND_VISUALIZATION_MODES,
     OPTIONAL_VISUALIZATION_MODES,
     SpectralAnalysisService,
     SuperResolutionRequest,
@@ -41,6 +43,7 @@ from ui.batch_controller import BatchController
 from ui.calibration_controller import CalibrationController
 from ui.branding import APP_NAME, ICON_PATH
 from ui.classification_controller import ClassificationController
+from ui.custom_index_dialog import CustomIndexDialog, CustomIndexStore
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.generated.WorkflowPanels import Ui_WorkflowPanels
 from ui.index_mean_dialog import IndexMeanDialog
@@ -68,7 +71,7 @@ from ui.tool_windows import (
     paint_visualization_icon,
 )
 from ui.theme import CLASSIFIER_BORDER_QSS, CLASSIFIER_POPUP_QSS
-from ui.viewer import HSIViewer, PixelValueEntry
+from ui.viewer import VISUALIZATION_LABELS, HSIViewer, PixelValueEntry
 
 
 # Modes rendered eagerly after every image change so hover tooltips, mode
@@ -149,6 +152,20 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._visualization_cache: dict[
             tuple[bool, bool], tuple[HSIData, dict[VisualizationMode, VisualizationResult]]
         ] = {}
+        # CUSTOM and BRIGHTNESS are rendered on demand; see
+        # `_ensure_on_demand_result`. The last applied formula persists.
+        self._custom_index_store = CustomIndexStore()
+        self._custom_formula: str | None = self._custom_index_store.load()
+        self._custom_formula_name = self._saved_formula_name()
+        self._custom_index_dialog_factory = CustomIndexDialog
+        self._on_demand_errors: dict[VisualizationMode, str] = {}
+        # Full-cube band sums keyed by id(data), validated against the
+        # source handle and ROI so a crop or calibration never reuses one.
+        self._band_sums: dict[int, tuple[HSIData, object, object, np.ndarray]] = {}
+        self._checked_mode_button: QtWidgets.QAbstractButton | None = None
+        self._segmentation_refresh = QtCore.QTimer(self)
+        self._segmentation_refresh.setSingleShot(True)
+        self._segmentation_refresh.timeout.connect(self._on_segmentation_settled)
         self._crop_undo_stack: list[_CropSnapshot] = []
         self._crop_redo_stack: list[_CropSnapshot] = []
         self._hypercube_controller = HypercubeController(
@@ -209,6 +226,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._calibration_controller.readyToClose.connect(self.close)
         self._classification_controller.runningChanged.connect(
             self._on_classification_running_changed
+        )
+        self._classification_controller.segmentationChanged.connect(
+            self._on_segmentation_changed
         )
         self._calibration_controller.runningChanged.connect(
             self._on_calibration_running_changed
@@ -643,6 +663,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         self.modeSimilarity.toggled.connect(self._on_similarity_mode_toggled)
         self.spectrumInspectorButton.clicked.connect(self._spectrum_controller.show)
+        self._configure_on_demand_mode_buttons()
 
         mode_buttons = (
             (self.modeRGB, VisualizationMode.RGB),
@@ -654,6 +675,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             (self.modePRI, VisualizationMode.PRI),
             (self.modeNDWI, VisualizationMode.NDWI),
             (self.modeNDMI, VisualizationMode.NDMI),
+            (self.modeBrightness, VisualizationMode.BRIGHTNESS),
+            (self.modeCustom, VisualizationMode.CUSTOM),
         )
         for button, mode in mode_buttons:
             button.toggled.connect(
@@ -661,6 +684,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             )
         self._visualization_mode_buttons = mode_buttons
         self._image_capabilities.refresh_visualizations(self._hsi_data, mode_buttons)
+        self.modeHyperCube.toggled.connect(self._on_hypercube_mode_toggled)
         self.modeRGB.setChecked(True)
 
         QtGui.QShortcut(
@@ -677,6 +701,27 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             redo_keys.append(extra)
         redo_shortcut = QtGui.QShortcut(redo_keys[0], self, self._redo_crop)
         redo_shortcut.setKeys(redo_keys)
+
+    def _configure_on_demand_mode_buttons(self) -> None:
+        """Wire the Brightness/Custom Index controls and add the mode caption.
+
+        The radio buttons and the formula button live in the Visualization
+        panel (``WorkflowPanels.ui``); the caption sits under the image so it
+        stays visible after the panel's flyout closes.
+        """
+
+        self.editCustomIndexButton.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.editCustomIndexButton.clicked.connect(self._on_edit_custom_index_clicked)
+        self._set_custom_formula_name(self._custom_formula_name)
+
+        # Says which on-demand mode is shown and how it was computed, since
+        # Brightness silently changes meaning after a supervised result.
+        self.visualizationModeCaption = QtWidgets.QLabel(self.Visualization)
+        self.visualizationModeCaption.setObjectName("visualizationModeCaption")
+        self.visualizationModeCaption.setWordWrap(True)
+        self.visualizationModeCaption.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.visualizationModeCaption.hide()
+        self.verticalLayout.addWidget(self.visualizationModeCaption)
 
     def _update_super_resolution_view_state(self, show_processed: bool) -> None:
         if self._super_res_worker is not None:
@@ -1039,6 +1084,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             event.ignore()
             return
         self._visualization_cache.clear()
+        self._band_sums.clear()
+        self._custom_index_store.save(self._custom_formula, self._custom_formula_name)
         self._super_res_result = None
         self._spectrum_controller.shutdown()
         for transition in self._tab_transitions:
@@ -1120,6 +1167,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._classification_controller.set_image_loaded(True)
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
+        self._band_sums.clear()
         self._active_visualization_mode = VisualizationMode.RGB
         self._similarity_view = False
         self.modeRGB.setChecked(True)
@@ -1209,17 +1257,295 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _on_visualization_mode_toggled(self, mode: VisualizationMode, checked: bool) -> None:
         if not checked:
             return
+        previous_button = self._checked_mode_button
+        self._checked_mode_button = self.sender()
+        if (
+            mode is VisualizationMode.CUSTOM
+            and self._custom_formula is None
+            and not self._edit_custom_index()
+        ):
+            # Nothing to show without a formula; return to the prior mode.
+            self._checked_mode_button = previous_button
+            (previous_button or self.modeRGB).setChecked(True)
+            return
         self.visualizationStack.setCurrentWidget(self.viewer)
         self._active_visualization_mode = mode
         self._similarity_view = False
-        self._spectrum_controller.set_visualization(self._visualization_results.get(mode))
         if self._hsi_data.is_loaded():
-            self._refresh_viewers_display()
+            self._show_active_mode()
+        else:
+            self._update_mode_caption()
+        # After `_show_active_mode`, so on-demand modes are rendered first.
+        self._spectrum_controller.set_visualization(self._visualization_results.get(mode))
+
+    def _on_hypercube_mode_toggled(self, checked: bool) -> None:
+        if checked:
+            self._checked_mode_button = self.modeHyperCube
+        self._update_mode_caption()
+
+    def _show_active_mode(self) -> None:
+        """Render the active mode if it is on demand, then show it."""
+
+        if self._ensure_on_demand_result(self._active_visualization_mode):
+            self._hypercube_controller.resume(self._display_data())
+        self._refresh_viewers_display()
+        self._update_mode_caption()
+
+    def _ensure_on_demand_result(self, mode: VisualizationMode) -> bool:
+        """Render CUSTOM/BRIGHTNESS into the current results if missing.
+
+        Failures are kept in `_on_demand_errors` for the mode caption rather
+        than shown as dialogs. Returns whether the cube was read.
+        """
+
+        if (
+            mode not in ON_DEMAND_VISUALIZATION_MODES
+            or mode in self._visualization_results
+            or not self._hsi_data.is_loaded()
+            or self._pipeline_busy()
+        ):
+            return False
+        if mode is VisualizationMode.CUSTOM and self._custom_formula is None:
+            return False
+        data = self._display_data()
+        # Serialize behind any hypercube reader of the same SpyFile handle.
+        self._hypercube_controller.stop_and_wait()
+        self._on_demand_errors.pop(mode, None)
+        try:
+            if mode is VisualizationMode.CUSTOM:
+                request = VisualizationRequest(mode, formula=self._custom_formula)
+            else:
+                clusters = self._brightness_clusters(data)
+                request = VisualizationRequest(
+                    mode,
+                    segments=None if clusters is None else clusters.labels,
+                    band_sum=self._band_sum_for(data),
+                )
+            result = self._visualization_service.render(data, request)
+        except (VisualizationError, WavelengthError) as exc:
+            self._on_demand_errors[mode] = str(exc)
+            LOGGER.info("Unable to render %s: %s", mode.value, exc)
+        else:
+            self._visualization_results[mode] = result
+            self._classification_controller.set_visualization_results(
+                self._visualization_results
+            )
+        self._update_on_demand_availability()
+        return True
+
+    def _band_sum_for(self, data: HSIData) -> np.ndarray:
+        cached = self._band_sums.get(id(data))
+        if (
+            cached is not None
+            and cached[0] is data
+            and cached[1] is data.spectral_obj
+            and cached[2] is data.roi_mask
+        ):
+            return cached[3]
+        self.statusbar.showMessage(f"Summing all {data.bands} bands for Brightness…")
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            total = self._visualization_service.band_sum(data)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            self.statusbar.clearMessage()
+        self._band_sums[id(data)] = (data, data.spectral_obj, data.roi_mask, total)
+        return total
+
+    def _brightness_clusters(self, data: HSIData) -> LeafClusters | None:
+        """Leaf clusters from a supervised result matching `data`, if any."""
+
+        clusters = self._classification_controller.brightness_clusters()
+        if clusters is None or clusters.labels.shape != (data.rows, data.columns):
+            return None
+        return clusters if clusters.count else None
+
+    def _update_on_demand_availability(self) -> None:
+        names = {VisualizationMode.BRIGHTNESS.value} if self._hsi_data.is_loaded() else set()
+        if VisualizationMode.CUSTOM in self._visualization_results:
+            names.add(VisualizationMode.CUSTOM.value)
+        for viewer in self._all_viewers():
+            viewer.available_on_demand_indices = frozenset(names)
+
+    def _discard_on_demand_results(self, mode: VisualizationMode) -> None:
+        self._visualization_results.pop(mode, None)
+        for _data, results in self._visualization_cache.values():
+            results.pop(mode, None)
+        self._on_demand_errors.pop(mode, None)
+
+    def _edit_custom_index(self) -> bool:
+        """Open the formula editor; apply and persist an accepted formula."""
+
+        data = self._display_data()
+        dialog = self._custom_index_dialog_factory(
+            data.wavelengths_nm if data.is_loaded() else None,
+            self._custom_formula,
+            parent=self,
+            store=self._custom_index_store,
+        )
+        accepted = dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted and dialog.formula
+        if not accepted:
+            # The library may have been edited even though nothing was applied.
+            self._set_custom_formula_name(
+                self._custom_index_store.name_for(self._custom_formula)
+                if self._custom_formula else None
+            )
+            self._update_mode_caption()
+            return False
+        self._custom_formula = dialog.formula
+        self._set_custom_formula_name(dialog.formula_name)
+        self._custom_index_store.save(self._custom_formula, self._custom_formula_name)
+        self._discard_on_demand_results(VisualizationMode.CUSTOM)
+        self._classification_controller.set_visualization_results(
+            self._visualization_results
+        )
+        label = self._custom_formula_name or self._custom_formula
+        self.statusbar.showMessage(f"Custom index set to {label}", 5000)
+        return True
+
+    def _saved_formula_name(self) -> str | None:
+        """The library name of the applied formula, if it is still saved."""
+
+        store = self._custom_index_store
+        if self._custom_formula is None:
+            return None
+        entry = store.find(store.active_name() or "")
+        if entry is not None and entry.formula == self._custom_formula:
+            return entry.name
+        return store.name_for(self._custom_formula)
+
+    def _set_custom_formula_name(self, name: str | None) -> None:
+        self._custom_formula_name = name
+        if self._custom_formula is None:
+            tooltip = "Your own index formula built from any bands; use ✎ Formula to define it"
+        else:
+            title = f"{name}: " if name else ""
+            tooltip = f"Custom index — {title}{self._custom_formula}"
+        self.modeCustom.setToolTip(tooltip)
+
+    def _on_edit_custom_index_clicked(self) -> None:
+        if not self._edit_custom_index():
+            return
+        if self.modeCustom.isChecked():
+            if self._hsi_data.is_loaded():
+                self._show_active_mode()
+        else:
+            self.modeCustom.setChecked(True)
+
+    def _on_segmentation_changed(self) -> None:
+        # Brightness switches between whole-image and per-cluster scaling.
+        self._discard_on_demand_results(VisualizationMode.BRIGHTNESS)
+        # Defer: a crop or load emits this before the pipeline recomputes.
+        self._segmentation_refresh.start(0)
+
+    def _on_segmentation_settled(self) -> None:
+        if (
+            self._active_visualization_mode is VisualizationMode.BRIGHTNESS
+            and self._hsi_data.is_loaded()
+            and not self._pipeline_busy()
+        ):
+            self._show_active_mode()
+            clusters = self._brightness_clusters(self._display_data())
+            self.statusbar.showMessage(
+                "Brightness now scaled per leaf cluster"
+                if clusters is not None
+                else "Brightness now scaled over the whole image",
+                5000,
+            )
+        else:
+            self._update_mode_caption()
+
+    def _update_mode_caption(self) -> None:
+        """Explain the shown on-demand mode, or hide the caption."""
+
+        caption = self.visualizationModeCaption
+        mode = self._active_visualization_mode
+        if (
+            mode not in ON_DEMAND_VISUALIZATION_MODES
+            or self.modeHyperCube.isChecked()
+            or self.modeSimilarity.isChecked()
+            or not self._hsi_data.is_loaded()
+        ):
+            caption.hide()
+            self._update_brightness_tooltip()
+            return
+        result = self._visualization_results.get(mode)
+        error = self._on_demand_errors.get(mode)
+        if mode is VisualizationMode.CUSTOM:
+            if result is None:
+                text = (
+                    "<b>Custom index unavailable</b> — "
+                    f"{_escape(error or 'no formula defined')}. "
+                    "Click <b>✎ Formula</b> in the Visualization panel to change it."
+                )
+            else:
+                bands = ", ".join(
+                    f"{token} → {wavelength:.1f} nm"
+                    for token, wavelength in result.band_wavelengths_nm.items()
+                )
+                name = (
+                    f" <b>{_escape(self._custom_formula_name)}</b> ·"
+                    if self._custom_formula_name else ""
+                )
+                text = (
+                    f"<b>Custom index</b> ·{name} <code>{_escape(self._custom_formula or '')}</code>"
+                    f" · {bands} · colours stretched to the 2–98th percentile"
+                )
+        else:
+            data = self._display_data()
+            clusters = self._brightness_clusters(data)
+            if result is None:
+                text = (
+                    "<b>Brightness unavailable</b> — "
+                    f"{_escape(error or 'not computed')}."
+                )
+            elif clusters is not None:
+                plural = "s" if clusters.count != 1 else ""
+                text = (
+                    "<b>Brightness · Per leaf cluster</b> — the sum of all "
+                    f"{data.bands} bands is scaled 0–1 separately within each of "
+                    f"{clusters.count} cluster{plural} from the supervised "
+                    "classification, between its 2nd and 98th percentiles so a "
+                    "few glints cannot darken a leaf; background is left blank. "
+                    "Compare pixels within a leaf, not between leaves."
+                )
+            else:
+                text = (
+                    "<b>Brightness · Whole image</b> — the sum of all "
+                    f"{data.bands} bands is scaled 0–1 across the whole image, "
+                    "between its 2nd and 98th percentiles. After a supervised "
+                    "classification it is scaled per leaf cluster instead."
+                )
+        caption.setText(text)
+        caption.setProperty("state", "warning" if result is None else "")
+        caption.style().unpolish(caption)
+        caption.style().polish(caption)
+        caption.show()
+        self._update_brightness_tooltip()
+
+    def _update_brightness_tooltip(self) -> None:
+        clusters = (
+            self._brightness_clusters(self._display_data())
+            if self._hsi_data.is_loaded()
+            else None
+        )
+        scope = (
+            "Currently scaled per leaf cluster (supervised classification found)."
+            if clusters is not None
+            else "Currently scaled over the whole image; a supervised "
+            "classification switches it to per leaf cluster."
+        )
+        self.modeBrightness.setToolTip(
+            "Spectral brightness: every pixel's spectrum summed over all bands "
+            f"and scaled 0–1. {scope}"
+        )
 
     def _on_similarity_mode_toggled(self, checked: bool) -> None:
         self._similarity_view = checked
         if not checked:
             return
+        self._checked_mode_button = self.modeSimilarity
+        self._update_mode_caption()
         self.visualizationStack.setCurrentWidget(self.viewer)
         self._spectrum_controller.set_visualization(None)
         if self._spectrum_controller.similarity_for(self._display_data()) is None:
@@ -1252,6 +1578,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         reasons = self._image_capabilities.refresh_visualizations(
             data, self._visualization_mode_buttons
         )
+        self._update_brightness_tooltip()
+        self._set_custom_formula_name(self._custom_formula_name)
         available = frozenset(
             mode.value for mode in OPTIONAL_VISUALIZATION_MODES if reasons[mode] is None
         )
@@ -1273,6 +1601,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 except (VisualizationError, WavelengthError) as exc:
                     LOGGER.info("Skipping %s visualization: %s", mode.value, exc)
             self._visualization_cache[key] = (data, self._visualization_results)
+        # The custom index is cheap (a few bands), so keep it alongside the
+        # built-in indices for hover values and class means; Brightness reads
+        # every band, so it is only rendered while selected.
+        self._ensure_on_demand_result(VisualizationMode.CUSTOM)
+        self._ensure_on_demand_result(self._active_visualization_mode)
+        self._update_on_demand_availability()
 
         # Keep the active source on the same RGB stretch as Visualization.
         # After a crop, the previous RGB array has stale limits.
@@ -1422,6 +1756,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         except ValueError:
             return
 
+        if self._ensure_on_demand_result(mode):
+            self._hypercube_controller.resume(self._display_data())
         result = self._visualization_results.get(mode)
         if result is None or result.values is None:
             QMessageBox.information(
@@ -1433,7 +1769,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         mean_value = float(np.nanmean(result.values))
         dialog = IndexMeanDialog(
-            index_name,
+            VISUALIZATION_LABELS.get(index_name, index_name),
             mean_value,
             result.value_range,
             result.colormap,
@@ -1630,4 +1966,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _refresh_visualization_pipeline(self) -> None:
         self._recompute_visualizations()
         self._refresh_viewers_display()
+        self._update_mode_caption()
         self._hypercube_controller.refresh(self._display_data(), reuse=True)
+
+
+def _escape(text: str) -> str:
+    """Escape plain text for a rich-text QLabel."""
+
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

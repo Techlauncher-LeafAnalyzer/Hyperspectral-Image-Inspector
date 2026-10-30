@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 from ui.annotation_render import make_annotation_item
 from core.annotation_model import ROTATABLE_KINDS
 from core import (
+    ON_DEMAND_VISUALIZATION_MODES,
     OPTIONAL_VISUALIZATION_MODES,
     AnnotationKind,
     AnnotationLayer,
@@ -138,12 +139,19 @@ PIN_SPECTRUM_SHORTCUT = "Ctrl+Click"
 
 # All visualization modes except HyperCube, in display order.
 VISUALIZATION_NAMES = (
-    "RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI", "NDWI", "NDMI"
+    "RGB", "NDVI", "EVI", "MCARI", "MTVI", "OSAVI", "PRI", "NDWI", "NDMI",
+    "BRIGHTNESS", "CUSTOM",
 )
+
+# User-facing labels for modes whose identifier is not already readable.
+VISUALIZATION_LABELS = {"BRIGHTNESS": "Brightness", "CUSTOM": "Custom index"}
 
 
 # Modes that only make sense for some cameras; hidden unless the image has them.
 OPTIONAL_VISUALIZATION_NAMES = frozenset(mode.value for mode in OPTIONAL_VISUALIZATION_MODES)
+
+# Modes computed only on request; listed only once a result exists.
+ON_DEMAND_VISUALIZATION_NAMES = frozenset(mode.value for mode in ON_DEMAND_VISUALIZATION_MODES)
 
 
 def _contrast_text_color(color: tuple[int, int, int]) -> QColor:
@@ -172,7 +180,10 @@ def format_pixel_values_html(
             f'<td style="padding-left:6px;">Class: {int(class_id)}</td></tr>'
         )
     for name in VISUALIZATION_NAMES:
-        if name in OPTIONAL_VISUALIZATION_NAMES and name not in values:
+        if (
+            name in OPTIONAL_VISUALIZATION_NAMES | ON_DEMAND_VISUALIZATION_NAMES
+            and name not in values
+        ):
             continue
         entry = values.get(name)
         if not isinstance(entry, PixelValueEntry):
@@ -194,7 +205,8 @@ def format_pixel_values_html(
             swatch = '<td width="10" height="10"></td>'
         rows.append(
             f'<tr>{swatch}'
-            f'<td style="padding-left:6px;">{name}: {text}</td></tr>'
+            f'<td style="padding-left:6px;">'
+            f'{VISUALIZATION_LABELS.get(name, name)}: {text}</td></tr>'
         )
     return f'<table cellspacing="3" cellpadding="0">{"".join(rows)}</table>'
 
@@ -300,6 +312,8 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.pixel_value_provider: PixelValueProvider = self._no_pixel_values
         # Optional index names the current image can compute (see above).
         self.available_optional_indices: frozenset[str] = frozenset()
+        # On-demand modes that can be computed now (e.g. CUSTOM once defined).
+        self.available_on_demand_indices: frozenset[str] = frozenset()
         self._pixel_overlay_enabled: bool = False
         self._pixel_overlay = QLabel(self.viewport())
         self._pixel_overlay.setObjectName("pixelValueOverlay")
@@ -1042,10 +1056,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
             if name == "RGB" or (
                 name in OPTIONAL_VISUALIZATION_NAMES
                 and name not in self.available_optional_indices
+            ) or (
+                name in ON_DEMAND_VISUALIZATION_NAMES
+                and name not in self.available_on_demand_indices
             ):
                 continue
             index_menu.addAction(
-                name, lambda checked=False, name=name: self.meanIndexRequested.emit(name)
+                VISUALIZATION_LABELS.get(name, name),
+                lambda checked=False, name=name: self.meanIndexRequested.emit(name),
             )
         menu.addMenu(index_menu)
 

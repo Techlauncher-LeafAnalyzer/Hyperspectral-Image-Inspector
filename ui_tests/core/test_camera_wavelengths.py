@@ -5,7 +5,7 @@ import pytest
 from spectral import get_rgb
 
 from core import (
-    HSIHeaderError, HSIReader, SuperResolutionError, SuperResolutionRequest,
+    HSIHeaderError, HSIReader, ON_DEMAND_VISUALIZATION_MODES, SuperResolutionError, SuperResolutionRequest,
     SuperResolutionService, VisualizationMode, VisualizationRequest,
     VisualizationService, WavelengthError,
 )
@@ -66,9 +66,10 @@ def test_swir_camera_keeps_rgb_band_and_hypercube_but_no_indices(camera_cube_fac
     service = VisualizationService()
     assert service.unavailable_reason(data, "RGB") is None
     assert service.unavailable_reason(data, "BAND") is None
-    water = {VisualizationMode.NDWI, VisualizationMode.NDMI}
+    # Water indices plus the band-agnostic Brightness/Custom modes.
+    available = {VisualizationMode.NDWI, VisualizationMode.NDMI} | ON_DEMAND_VISUALIZATION_MODES
     for mode in service.DEFAULT_COLORMAPS:
-        assert (service.unavailable_reason(data, mode) is None) == (mode in water)
+        assert (service.unavailable_reason(data, mode) is None) == (mode in available)
     result = service.render(data, VisualizationRequest("NDMI"))
     assert result.band_wavelengths_nm["nir"] == pytest.approx(1070, abs=service.INDEX_TOLERANCE_NM)
     assert result.band_wavelengths_nm["swir"] == pytest.approx(1650, abs=service.INDEX_TOLERANCE_NM)

@@ -211,6 +211,34 @@ payload and must not be reused for scientific calculations.
 - Cubes without visible coverage render RGB as false colour from 1340, 1040,
   and 1720 nm (red, green, blue) when all three exist, otherwise from the
   first, middle, and last bands.
+- CUSTOM evaluates `VisualizationRequest.formula`, a user formula parsed by
+  `core.custom_index` (never `eval`). `R<nm>` reads reflectance at a
+  wavelength; each one maps to the nearest band, with no tolerance, and is
+  rejected only when it lies outside the cube's range by more than one band
+  spacing. Supported: numbers, `+ - * / ^` (`**` too), parentheses, implicit
+  multiplication (`2R800`), `sqrt sq abs ln log10 exp min max`, `pi`, `e`,
+  and pasted `× · ÷ − √ ² ³`. Malformed formulas raise `CustomIndexError`
+  (a `VisualizationError`) with the offending character `position`. As with
+  the built-in indices, non-finite results become 0 and the display is a
+  2-98 percentile stretch. The GUI lets users save formulas under names
+  (Saved formulas in the editor) and restores the applied one on the next
+  launch; both live in `HyperView.ini` (`visualization/customIndexLibrary`
+  as JSON, `visualization/customIndexFormula` and `customIndexName`). A
+  formula saved by an older version becomes the first library entry.
+- BRIGHTNESS sums every band (`VisualizationService.band_sum`, read in
+  chunks of `BAND_SUM_CHUNK` bands) and scales it to 0-1 between the
+  request's `stretch` percentiles (2nd/98th by default), clipping beyond them
+  so a few very bright pixels saturate rather than darkening everything else.
+  Pass `segments`, an integer label raster, to scale each label `>= 0` on its
+  own and leave negative labels as no-data, and pass a previous `band_sum` to skip
+  re-reading the cube. The GUI uses the whole image by default and, after a
+  supervised classification, the leaf clusters from `core.leaf_clusters`
+  (the plant class split into leaves, background excluded). A caption under
+  the viewer says which scaling is shown.
+
+CUSTOM and BRIGHTNESS are listed in `ON_DEMAND_VISUALIZATION_MODES`: they
+are available on any camera and the Controller renders them when needed
+instead of on every image change.
 
 The result records the actual nearest wavelength selected from the cube.
 Required index bands must be within 15 nm of their target; indices never use

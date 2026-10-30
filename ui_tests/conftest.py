@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from spectral.io import envi
 
@@ -54,6 +55,14 @@ def write_marker_cube(directory: Path, name: str) -> Path:
         str(path), cube, dtype=np.float32, interleave="bsq", ext=".img",
         metadata={"wavelength": SYNTHETIC_WAVELENGTHS_NM},
     )
+    return path
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path_factory):
+    """Keep persisted preferences (e.g. the custom index) out of the user's profile."""
+    path = tmp_path_factory.mktemp("settings")
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(path))
     return path
 
 

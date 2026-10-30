@@ -152,6 +152,39 @@ def separate_leaves(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LeafClusters:
+    """Per-pixel cluster labels for normalizing values leaf by leaf.
+
+    ``labels`` holds one non-negative ID per cluster and ``-1`` for the
+    background class and pixels outside the classified region.
+    """
+
+    labels: np.ndarray
+    count: int
+
+
+def leaf_clusters(
+    result: SupervisedClassificationResult, *, separated: bool = False
+) -> LeafClusters:
+    """Return ``result``'s non-background classes as clusters.
+
+    Unless ``separated`` says the leaves were already split, the plant class
+    is split into its leaves first, exactly as :func:`separate_leaves` does;
+    when no clear leaves are found it stays one cluster.
+    """
+
+    if not separated:
+        try:
+            result = separate_leaves(result).result
+        except ClassificationError:
+            pass
+    labels = np.array(result.class_map, dtype=np.int32, copy=True)
+    labels[labels == BACKGROUND_CLASS_ID] = -1
+    labels.setflags(write=False)
+    return LeafClusters(labels=labels, count=int(np.unique(labels[labels >= 0]).size))
+
+
 def _label_leaves(plant: np.ndarray, opening_iterations: int) -> np.ndarray:
     """Label plant pixels by leaf, cutting thin bridges between leaves."""
 

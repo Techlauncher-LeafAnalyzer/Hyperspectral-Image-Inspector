@@ -20,6 +20,8 @@ _FULL_NAMES: dict[str, str] = {
     "PRI": "Photochemical Reflectance Index",
     "NDWI": "Normalized Difference Water Index",
     "NDMI": "Normalized Difference Moisture Index",
+    "Brightness": "Spectral brightness — the summed spectrum scaled 0–1",
+    "Custom index": "Your custom index formula",
 }
 
 _GAUGE_MARKER_DIAMETER = 16
