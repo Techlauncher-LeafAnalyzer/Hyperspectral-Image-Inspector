@@ -7,6 +7,7 @@ composited image.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Mapping, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -109,6 +110,8 @@ class _LayerRowWidget(QtWidgets.QWidget):
         color: RGBColor,
         means: Optional[Mapping[str, PixelValueEntry]] = None,
         parent: Optional[QtWidgets.QWidget] = None,
+        *,
+        vectorized: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("classificationLayerRow")
@@ -140,8 +143,16 @@ class _LayerRowWidget(QtWidgets.QWidget):
         self._inspect_button.setEnabled(layer.pixel_count > 0)
         self._inspect_button.clicked.connect(lambda: self.inspectRequested.emit(self.class_id))
 
-        self._count_label = QtWidgets.QLabel(f"{layer.pixel_count:,} pixels", self)
+        count_text = f"{layer.pixel_count:,} pixels"
+        if vectorized:
+            count_text += " · vector mask"
+        self._count_label = QtWidgets.QLabel(count_text, self)
         self._count_label.setObjectName("layerPixelCountLabel")
+        if vectorized:
+            self._count_label.setToolTip(
+                "This class's region is set by its vector mask; edit it with the "
+                "Pen on the Annotations tab"
+            )
 
         self._opacity_caption = QtWidgets.QLabel("Opacity", self)
         self._opacity_caption.setObjectName("layerOpacityCaption")
@@ -407,6 +418,8 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
     backgroundChanged = pyqtSignal(str)
     exportRequested = pyqtSignal()
     classSpectraRequested = pyqtSignal()
+    # Convert class regions into editable vector masks.
+    vectorizeRequested = pyqtSignal()
     regionRenameRequested = pyqtSignal(int, str)
     # Inspect one class or region: "class:<id>" or "annotation:<id>".
     inspectRequested = pyqtSignal(str)
@@ -504,6 +517,19 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self.separate_leaves_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.separate_leaves_button.setEnabled(False)
 
+        self._vectorize_button = QtWidgets.QPushButton("Vector mask…", self)
+        self._vectorize_button.setObjectName("vectorizeButton")
+        self._vectorize_button.setIcon(
+            QtGui.QIcon(str(Path(__file__).parent / "assets" / "vector_mask.svg"))
+        )
+        self._vectorize_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._vectorize_button.setToolTip(
+            "Convert class regions into vector masks with editable Bézier "
+            "outlines, then reshape them with the Pen on the Annotations tab"
+        )
+        self._vectorize_button.setEnabled(False)
+        self._vectorize_button.clicked.connect(self.vectorizeRequested)
+
         export_row = QtWidgets.QHBoxLayout()
         export_row.setContentsMargins(0, 0, 0, 0)
         export_row.setSpacing(7)
@@ -563,6 +589,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         controls_layout.addLayout(header_controls_row)
         controls_layout.addLayout(export_row)
         controls_layout.addWidget(self.separate_leaves_button)
+        controls_layout.addWidget(self._vectorize_button)
         controls_layout.addLayout(global_opacity_header)
         controls_layout.addWidget(self._global_opacity_slider)
 
@@ -731,12 +758,14 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         outline_mode: bool = False,
         means: Optional[Mapping[int, Mapping[str, PixelValueEntry]]] = None,
         fixed_colors: Optional[Mapping[int, RGBColor]] = None,
+        vector_class_ids: frozenset[int] = frozenset(),
     ) -> None:
         """Rebuild rows to reflect the Model while preserving global controls.
 
         ``means`` maps a class ID to that class's per-visualization means,
         keyed by visualization name; classes without an entry show none.
         ``fixed_colors`` pins swatch colours, matching the viewer's class map.
+        Classes in ``vector_class_ids`` are marked as set by a vector mask.
         """
 
         self._clear_rows()
@@ -750,6 +779,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
                 colors[layer.class_id],
                 means.get(layer.class_id),
                 self._rows_container,
+                vectorized=layer.class_id in vector_class_ids,
             )
             row.visibilityChanged.connect(self.visibilityChanged)
             row.opacityChanged.connect(self.opacityChanged)
@@ -876,6 +906,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._rows_container.setVisible(has_content)
         self._toggle_all_button.setEnabled(has_content)
         self._outline_toggle_button.setEnabled(has_rows)
+        self._vectorize_button.setEnabled(has_rows)
         self._export_button.setEnabled(has_content)
         self._spectra_button.setEnabled(has_content)
         self._global_opacity_slider.setEnabled(has_rows)

@@ -67,11 +67,14 @@ def draw_leaf_labels(
     rgb: np.ndarray,
     labels: Iterable[LeafLabel],
     visible_ids: Iterable[int] | None = None,
+    colors: Mapping[int, tuple[int, int, int]] | None = None,
 ) -> np.ndarray:
-    """Return a copy of ``rgb`` with each label drawn as outlined white text.
+    """Return a copy of ``rgb`` with each label drawn as outlined text.
 
     ``visible_ids`` limits drawing to those classes (hidden layers lose their
-    number too); ``None`` draws every label.
+    number too); ``None`` draws every label. ``colors`` fills each label with
+    its class's display colour, so a number matches its leaf; classes it
+    lacks are drawn in white. The dark outline keeps any colour legible.
     """
 
     visible = None if visible_ids is None else {int(i) for i in visible_ids}
@@ -83,9 +86,11 @@ def draw_leaf_labels(
     size = leaf_label_size(rgb.shape[:2])
     font = ImageFont.load_default(size=size)
     stroke = max(1, size // 8)
+    colors = colors or {}
     for label in labels:
+        fill = tuple(int(c) for c in colors.get(label.class_id, _TEXT_FILL))
         draw.text(
-            (label.x, label.y), label.text, fill=_TEXT_FILL, font=font, anchor="mt",
+            (label.x, label.y), label.text, fill=fill, font=font, anchor="mt",
             stroke_width=stroke, stroke_fill=_TEXT_STROKE,
         )
     return np.asarray(image, dtype=np.uint8)

@@ -252,6 +252,23 @@ class ClassificationLayerModel:
         self._global_opacity = 1.0
         self._outline_mode = False
 
+    def with_result(self, result: ClassificationResult) -> "ClassificationLayerModel":
+        """Return a model over ``result`` that keeps this one's layer state.
+
+        Use after editing class regions (e.g. a vector mask) without
+        reclassifying: names, visibility and opacity carry over for every
+        class ID the new result still has, as do the global controls.
+        """
+
+        model = ClassificationLayerModel(result, names=self._names)
+        for class_id in model._class_ids:
+            if class_id in self._visibility:
+                model._visibility[class_id] = self._visibility[class_id]
+                model._opacity[class_id] = self._opacity[class_id]
+        model._global_opacity = self._global_opacity
+        model._outline_mode = self._outline_mode
+        return model
+
     @property
     def result(self) -> ClassificationResult:
         """Return the immutable source classification result."""

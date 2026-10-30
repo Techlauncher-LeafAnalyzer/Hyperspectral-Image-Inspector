@@ -499,6 +499,7 @@ class BatchService:
                     display_rgb = draw_leaf_labels(
                         display_rgb,
                         place_leaf_labels(classification_result.class_map, leaf_numbers),
+                        colors=_classification_palette(class_ids, fixed_colors),
                     )
                 classified = True
 

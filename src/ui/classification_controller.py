@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
 from core import (
+    AnchorMode,
     AnnotationError,
     AnnotationKind,
     AnnotationLayerModel,
@@ -42,8 +43,11 @@ from core import (
     TrainingPairResolver,
     UnsupervisedClassificationRequest,
     UnsupervisedClassificationResult,
+    VectorMask,
+    VectorMaskModel,
     VisualizationMode,
     VisualizationResult,
+    apply_vector_masks,
     export_class_summary_csv,
     draw_leaf_labels,
     leaf_clusters,
@@ -51,11 +55,15 @@ from core import (
     region_mask,
     place_leaf_labels,
     separate_leaves,
+    trace_mask,
 )
+from ui.annotation_panel import PEN_TOOL
 from ui.annotation_render import render_annotations
 from ui.classification_colors import classification_palette
 from ui.classification_layer_panel import ClassificationLayerPanel
 from ui.theme import VIEWER_SCENE_BACKGROUND
+from ui.vector_mask_dialog import VectorMaskDialog
+from ui.vector_pen import VectorOutline, VectorSelection
 from ui.viewer import HSIViewer, PixelValueEntry
 
 _LAYER_COMPOSITE_BACKGROUND = (
@@ -69,6 +77,13 @@ _REGION_REFRESH_INTERVAL_MS = 30
 LOGGER = logging.getLogger(__name__)
 
 _ClassificationResult = Union[UnsupervisedClassificationResult, SupervisedClassificationResult]
+# Golden-ratio hue steps keep successive drawn classes far apart in colour.
+_DRAWN_HUE_STEP = 0.618034
+
+
+def _drawn_class_color(class_id: int) -> tuple[int, int, int]:
+    color = QtGui.QColor.fromHsvF((class_id * _DRAWN_HUE_STEP) % 1.0, 0.72, 0.92)
+    return color.red(), color.green(), color.blue()
 
 
 @dataclass(frozen=True)
@@ -94,6 +109,13 @@ class _ClassificationSlot:
     """
 
     result: Optional[_ClassificationResult] = None
+    # The classification before any vector-mask edits; ``result`` is this
+    # with ``vectors`` applied, so edits can be redone from scratch.
+    base_result: Optional[_ClassificationResult] = None
+    vectors: VectorMaskModel = field(default_factory=VectorMaskModel)
+    # The vector mask the pen edits and draws new paths into.
+    vector_class: Optional[int] = None
+    vector_selection: Optional[VectorSelection] = None
     rgb: Optional[NDArray[np.uint8]] = None
     layers: Optional[ClassificationLayerModel] = None
     active_data: Optional[HSIData] = None
@@ -104,6 +126,11 @@ class _ClassificationSlot:
     # saved images; empty until leaves are separated.
     leaf_labels: tuple[LeafLabel, ...] = ()
     clusters: Optional[LeafClusters] = None
+    # Leaf class ID -> number, to re-place the labels after a vector edit.
+    leaf_numbers: dict[int, int] = field(default_factory=dict)
+    # Names of classes drawn from scratch with the pen. Kept so that redoing
+    # an undone drawing brings the class back under the same name.
+    drawn_names: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -289,6 +316,9 @@ class ClassificationController(QObject):
     runningChanged = QtCore.pyqtSignal(bool)
     # The supervised result behind `brightness_clusters()` changed.
     segmentationChanged = QtCore.pyqtSignal()
+    # The pixels, names or colours of classes or measured regions may have
+    # changed: re-read analysis_regions() to follow them.
+    regionsChanged = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -357,7 +387,10 @@ class ClassificationController(QObject):
         self._region_refresh_timer = QtCore.QTimer(self)
         self._region_refresh_timer.setSingleShot(True)
         self._region_refresh_timer.setInterval(_REGION_REFRESH_INTERVAL_MS)
-        self._region_refresh_timer.timeout.connect(self._refresh_regions)
+        # Mid-drag refreshes update the rows only; spectra follow on release.
+        self._region_refresh_timer.timeout.connect(
+            lambda: self._refresh_regions(notify=False)
+        )
         self._thread: Optional[QtCore.QThread] = None
         self._worker: Optional[
             Union[_ClassificationWorker, _SupervisedClassificationWorker]
@@ -414,7 +447,8 @@ class ClassificationController(QObject):
         if not slot.leaf_labels or slot.layers is None:
             return composite.display_rgb
         return draw_leaf_labels(
-            composite.display_rgb, slot.leaf_labels, slot.layers.visible_class_ids
+            composite.display_rgb, slot.leaf_labels, slot.layers.visible_class_ids,
+            classification_palette(slot.layers.class_ids, slot.fixed_colors),
         )
 
     def with_annotations(self, rgb: NDArray[np.uint8]) -> NDArray[np.uint8]:
@@ -636,12 +670,23 @@ class ClassificationController(QObject):
         page.moveRequested.connect(self._on_annotation_move_requested)
         page.deleteRequested.connect(self._on_annotation_delete_requested)
         page.measureChanged.connect(self._on_annotation_measure_changed)
+        page.vectorMaskSelected.connect(self._on_vector_mask_selected)
+        page.anchorModeRequested.connect(self._on_anchor_mode_requested)
+        page.deleteAnchorRequested.connect(self._on_delete_anchor_requested)
+        page.vectorRevertRequested.connect(self._on_vector_revert_requested)
+        self._layer_panel.vectorizeRequested.connect(self._on_vectorize_requested)
+        self._viewer.vectorMaskEdited.connect(self._on_vector_mask_edited)
+        self._viewer.vectorClassDrawn.connect(self._on_vector_class_drawn)
+        self._viewer.vectorSelectionChanged.connect(self._on_vector_selection_changed)
+        self._viewer.vectorEditFinished.connect(
+            lambda: self._current_slot.vectors.break_coalescing()
+        )
         self._viewer.annotationShapeDrawn.connect(self._on_annotation_shape_drawn)
         self._viewer.annotationTextRequested.connect(self._on_annotation_text_requested)
         self._viewer.annotationArrowDrawn.connect(self._on_annotation_arrow_drawn)
         self._viewer.annotationGeometryChanged.connect(self._on_annotation_geometry_changed)
         self._viewer.annotationInteractionFinished.connect(
-            lambda: self._annotation_slot.layers.break_coalescing()
+            self._on_annotation_interaction_finished
         )
         self._viewer.annotationRotationChanged.connect(self._on_annotation_rotation_changed)
         self._viewer.annotationPicked.connect(self._on_annotation_picked)
@@ -962,6 +1007,7 @@ class ClassificationController(QObject):
         if slot.active_data is None:
             slot.active_data = self._display_data_provider()
         slot.result = result
+        self._reset_vectors(slot, result)
         class_ids = (
             result.class_ids
             if isinstance(result, SupervisedClassificationResult)
@@ -974,6 +1020,7 @@ class ClassificationController(QObject):
         slot.fixed_colors = {}
         slot.leaf_labels = ()
         slot.clusters = None
+        slot.leaf_numbers = {}
         if slot_key == self._is_super_resolution_active():
             self._populate_layer_panel(slot)
             self._show_result()
@@ -1048,6 +1095,8 @@ class ClassificationController(QObject):
         names.update(separation.leaf_names)
         result = separation.result
         slot.result = result
+        # Leaf classes replace the plant class, so outlines start afresh.
+        self._reset_vectors(slot, result)
         slot.fixed_colors = separation.fixed_colors
         slot.rgb = self._colorize_class_map(
             result.class_map, result.class_ids, slot.fixed_colors
@@ -1055,7 +1104,8 @@ class ClassificationController(QObject):
         slot.layers = ClassificationLayerModel(result, names=names)
         slot.means = None
         slot.leaves_separated = True
-        slot.leaf_labels = place_leaf_labels(result.class_map, separation.leaf_numbers)
+        slot.leaf_numbers = dict(separation.leaf_numbers)
+        slot.leaf_labels = place_leaf_labels(result.class_map, slot.leaf_numbers)
         slot.clusters = None
         self._populate_layer_panel(slot)
         self._show_result()
@@ -1099,7 +1149,11 @@ class ClassificationController(QObject):
         except ClassificationError as exc:
             self._statusbar.showMessage(str(exc), 8000)
             return
-        self._populate_layer_panel(self._current_slot)
+        slot = self._current_slot
+        if class_id in slot.drawn_names:
+            slot.drawn_names[class_id] = layers.layers[layers.class_ids.index(class_id)].name
+        self._populate_layer_panel(slot)
+        self.regionsChanged.emit()
 
     @QtCore.pyqtSlot(int, float)
     def _on_layer_opacity_changed(self, class_id: int, opacity: float) -> None:
@@ -1214,12 +1268,14 @@ class ClassificationController(QObject):
             slot.layers.layers, slot.selected_id
         )
         self._refresh_regions()
+        self._sync_vectors()
 
-    def _refresh_regions(self) -> None:
+    def _refresh_regions(self, *, notify: bool = True) -> None:
         """Show each measured, visible annotation as a row on the Classes tab.
 
         Means are recomputed from the annotation's current geometry every time,
-        so a region always reflects where its shape is now.
+        so a region always reflects where its shape is now. ``notify`` also
+        emits :attr:`regionsChanged`, so plotted spectra follow.
         """
 
         self._region_refresh_timer.stop()
@@ -1234,6 +1290,13 @@ class ClassificationController(QObject):
                  measurement.pixel_count, means)
             )
         self._layer_panel.set_regions(tuple(regions))
+        if notify:
+            self.regionsChanged.emit()
+
+    def _on_annotation_interaction_finished(self) -> None:
+        self._annotation_slot.layers.break_coalescing()
+        # A shape drag only refreshed the rows; now the spectra catch up.
+        self.regionsChanged.emit()
 
     def _measured_regions(self) -> list:
         """Return ``(layer, measurement)`` for each visible, measured annotation."""
@@ -1276,11 +1339,21 @@ class ClassificationController(QObject):
         if mode != "annotations":
             self._layer_panel.annotation_page.set_tool(None)
             self._viewer.set_annotation_tool(None)
+            self._viewer.set_pen_tool(False)
 
-    def _on_annotation_tool_changed(self, kind: Optional[AnnotationKind]) -> None:
+    def _on_annotation_tool_changed(self, kind: Optional[AnnotationKind | str]) -> None:
+        pen = kind == PEN_TOOL
+        self._viewer.set_pen_tool(pen)
         self._viewer.set_annotation_tool(
-            kind, self._layer_panel.annotation_page.current_style
+            None if pen else kind, self._layer_panel.annotation_page.current_style
         )
+        self._sync_vectors()
+        if pen and not self._current_slot.vectors:
+            self._statusbar.showMessage(
+                "Click points on the image to draw a new class, or on the Classes "
+                "tab choose Vector mask… to edit an existing class's outline",
+                8000,
+            )
 
     def _on_annotation_style_changed(self, style: AnnotationStyle) -> None:
         """Apply style edits to the selected layer; they also seed new shapes."""
@@ -1418,6 +1491,9 @@ class ClassificationController(QObject):
         return self._step_annotation_history(redo=True)
 
     def _step_annotation_history(self, *, redo: bool) -> bool:
+        if self._viewer.pen_active:
+            # The pen edits vector masks, so its history is the one to step.
+            return self._step_vector_history(redo=redo)
         slot = self._annotation_slot
         changed = slot.layers.redo() if redo else slot.layers.undo()
         if not changed:
@@ -1489,7 +1565,312 @@ class ClassificationController(QObject):
             outline_mode=slot.layers.outline_mode,
             means=self._segment_means(slot),
             fixed_colors=slot.fixed_colors,
+            vector_class_ids=frozenset(slot.vectors.masks),
         )
+
+    # ------------------------------------------------------------------ #
+    # Private: vector masks                                               #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _reset_vectors(slot: _ClassificationSlot, base: _ClassificationResult) -> None:
+        """Start a fresh, unedited vector-mask history over ``base``."""
+
+        slot.base_result = base
+        slot.vectors = VectorMaskModel()
+        slot.vector_class = None
+        slot.vector_selection = None
+        slot.drawn_names = {}
+
+    def _apply_vectors(self, slot: _ClassificationSlot) -> None:
+        """Rebuild the class regions from the base result and its vector masks.
+
+        Everything that reads class pixels -- the composite, index means,
+        spectra, CSV export, saved images -- reads ``slot.result``, so this
+        is the single place an outline edit becomes the class region.
+        """
+
+        if slot.base_result is None or slot.layers is None:
+            return
+        try:
+            result = apply_vector_masks(slot.base_result, slot.vectors.masks)
+            layers = slot.layers.with_result(result)
+            for class_id, name in slot.drawn_names.items():
+                if class_id in layers.class_ids:
+                    layers.rename_class(class_id, name)
+        except ClassificationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
+        slot.result = result
+        slot.layers = layers
+        slot.rgb = self._colorize_class_map(
+            result.class_map, layers.class_ids, slot.fixed_colors
+        )
+        slot.means = None
+        slot.clusters = None
+        if slot.leaf_numbers:
+            slot.leaf_labels = place_leaf_labels(result.class_map, slot.leaf_numbers)
+        if slot is self._current_slot:
+            self._populate_layer_panel(slot)
+            self._show_result()
+            self.segmentationChanged.emit()
+
+    def _sync_vectors(self) -> None:
+        """Show the displayed result's vector masks on the canvas and panel."""
+
+        slot = self._current_slot
+        outlines: list[VectorOutline] = []
+        entries = []
+        if slot.layers is not None and slot.vectors:
+            colors = classification_palette(slot.layers.class_ids, slot.fixed_colors)
+            names = {layer.class_id: layer.name for layer in slot.layers.layers}
+            for class_id, mask in slot.vectors.masks.items():
+                outlines.append(VectorOutline(class_id, colors[class_id], mask))
+                entries.append(
+                    (class_id, names[class_id], colors[class_id],
+                     len(mask.paths), mask.anchor_count)
+                )
+        if slot.vector_class not in slot.vectors:
+            # No mask chosen: the pen's next path starts a new class.
+            slot.vector_class = None
+        self._viewer.set_vector_masks(
+            tuple(outlines), slot.vector_selection, slot.vector_class
+        )
+        # The viewer drops a selection whose path or point no longer exists.
+        slot.vector_selection = self._viewer.vector_selection
+        page = self._layer_panel.annotation_page
+        page.set_vector_masks(tuple(entries), slot.vector_class)
+        page.set_anchor_state(self._selected_anchor(slot)[1])
+
+    @staticmethod
+    def _selected_anchor(
+        slot: _ClassificationSlot,
+    ) -> tuple[Optional[VectorMask], Optional[AnchorMode]]:
+        """The selected point's mask and mode, or ``(None, None)``."""
+
+        selection = slot.vector_selection
+        if selection is None or selection[2] < 0:
+            return None, None
+        class_id, path_index, anchor_index = selection
+        mask = slot.vectors.get(class_id)
+        if mask is None or path_index >= len(mask.paths):
+            return None, None
+        path = mask.paths[path_index]
+        if anchor_index >= len(path):
+            return None, None
+        return mask, path.anchors[anchor_index].mode
+
+    @staticmethod
+    def _largest_path(mask: VectorMask) -> int:
+        if not mask.paths:
+            return -1
+        return max(range(len(mask.paths)), key=lambda index: mask.paths[index].area())
+
+    def _on_vectorize_requested(self) -> None:
+        """Trace the chosen classes into vector masks and start editing them."""
+
+        slot = self._current_slot
+        if slot.layers is None or slot.result is None:
+            return
+        colors = classification_palette(slot.layers.class_ids, slot.fixed_colors)
+        classes = tuple(
+            (layer.class_id, layer.name, colors[layer.class_id],
+             layer.visible and layer.pixel_count > 0)
+            for layer in slot.layers.layers
+        )
+        dialog = VectorMaskDialog(classes, self._parent)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        options = dialog.options()
+        masks: dict[int, VectorMask] = {}
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            for class_id in dialog.selected_class_ids():
+                mask = trace_mask(slot.result.class_map == class_id, options)
+                if mask.paths:
+                    masks[class_id] = mask
+        except ClassificationError as exc:
+            QMessageBox.critical(self._parent, "Vector mask failed", str(exc))
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        if not masks:
+            QMessageBox.information(
+                self._parent,
+                "Nothing to trace",
+                "The selected classes have no regions larger than "
+                f"{options.min_area:g} pixels.",
+            )
+            return
+        slot.vectors.set_masks(masks)
+        first = next(iter(masks))
+        slot.vector_class = first
+        slot.vector_selection = (first, self._largest_path(masks[first]), -1)
+        self._apply_vectors(slot)
+        # Converting is the first step of editing, so go straight to the pen.
+        self._layer_panel.set_mode("annotations")
+        self._layer_panel.annotation_page.set_tool(PEN_TOOL)
+        self._on_annotation_tool_changed(PEN_TOOL)
+        paths = sum(len(mask.paths) for mask in masks.values())
+        points = sum(mask.anchor_count for mask in masks.values())
+        self._statusbar.showMessage(
+            f"Converted {len(masks)} class{'es' if len(masks) != 1 else ''} into vector "
+            f"masks ({paths} paths, {points} points); edit them with the Pen",
+            8000,
+        )
+
+    @QtCore.pyqtSlot(int, object, bool)
+    def _on_vector_mask_edited(self, class_id: int, mask: object, final: bool) -> None:
+        slot = self._current_slot
+        if slot.layers is None or class_id not in slot.layers.class_ids:
+            return
+        # The moves of one drag are one undo step; the viewer's
+        # vectorEditFinished breaks the run when the drag ends.
+        slot.vectors.set_mask(
+            class_id, mask, coalesce_key=None if final else ("drag", class_id)
+        )
+        slot.vector_class = class_id
+        if final:
+            self._apply_vectors(slot)
+        else:
+            # Re-rasterizing on every move would lag; the outline alone
+            # follows the cursor and the region updates on release.
+            self._sync_vectors()
+
+    @QtCore.pyqtSlot(object)
+    def _on_vector_class_drawn(self, mask: object) -> None:
+        """Make a new class from a path the pen closed with no mask chosen."""
+
+        slot = self._current_slot
+        if slot.layers is None and not self._start_blank_result(slot):
+            return
+        # Reuse the empty slot a removed drawn class leaves behind (K-means
+        # class IDs stay contiguous), else take the next ID.
+        free = [
+            layer.class_id for layer in slot.layers.layers
+            if layer.class_id in slot.drawn_names and layer.class_id not in slot.vectors
+        ]
+        class_id = free[0] if free else max(slot.layers.class_ids, default=-1) + 1
+        number = 1 + sum(1 for drawn in slot.vectors.masks if drawn in slot.drawn_names)
+        # Pin the current colours, or the palette would re-spread every hue
+        # to make room for the new class.
+        slot.fixed_colors = {
+            **classification_palette(slot.layers.class_ids, slot.fixed_colors),
+            class_id: _drawn_class_color(class_id),
+        }
+        slot.drawn_names[class_id] = f"Drawn class {number}"
+        slot.vectors.set_mask(class_id, mask)
+        slot.vector_class = class_id
+        slot.vector_selection = (class_id, 0, -1)
+        self._apply_vectors(slot)
+        self._statusbar.showMessage(
+            f"Added {slot.drawn_names[class_id]}; keep drawing to add more paths "
+            "to it, or press Esc to start another class",
+            8000,
+        )
+
+    def _start_blank_result(self, slot: _ClassificationSlot) -> bool:
+        """Give ``slot`` an empty classification for the pen to draw classes into."""
+
+        data = self._display_data_provider()
+        if not data.is_loaded():
+            return False
+        rows, columns = data.rows, data.columns
+        result = UnsupervisedClassificationResult(
+            class_map=np.full((rows, columns), -1, dtype=np.int32),
+            one_hot_masks=np.zeros((0, rows, columns), dtype=np.uint8),
+            cluster_centers=np.zeros((0, 0), dtype=np.float32),
+            class_pixel_counts=np.zeros(0, dtype=np.int64),
+            band_indices=(),
+            band_wavelengths_nm=np.zeros(0),
+            iterations_completed=0,
+        )
+        slot.active_data = data
+        slot.result = result
+        self._reset_vectors(slot, result)
+        slot.layers = ClassificationLayerModel(result)
+        slot.fixed_colors = {}
+        self._update_separate_leaves_button()
+        return True
+
+    @QtCore.pyqtSlot(int, int, int)
+    def _on_vector_selection_changed(
+        self, class_id: int, path_index: int, anchor_index: int
+    ) -> None:
+        slot = self._current_slot
+        if class_id < 0:
+            # Deselecting (Esc) aims the pen at a new class again.
+            slot.vector_selection = None
+            slot.vector_class = None
+        else:
+            slot.vector_selection = (class_id, path_index, anchor_index)
+            slot.vector_class = class_id
+        self._sync_vectors()
+
+    def _on_vector_mask_selected(self, class_id: int) -> None:
+        """Aim the pen at ``class_id``'s mask, or at a new class when negative."""
+
+        slot = self._current_slot
+        if class_id < 0:
+            slot.vector_class = None
+            slot.vector_selection = None
+            self._sync_vectors()
+            return
+        mask = slot.vectors.get(class_id)
+        if mask is None:
+            return
+        slot.vector_class = class_id
+        if slot.vector_selection is None or slot.vector_selection[0] != class_id:
+            path_index = self._largest_path(mask)
+            slot.vector_selection = (class_id, path_index, -1) if path_index >= 0 else None
+        self._sync_vectors()
+
+    def _on_anchor_mode_requested(self, mode: object) -> None:
+        if not isinstance(mode, AnchorMode):
+            return
+        slot = self._current_slot
+        mask, current = self._selected_anchor(slot)
+        if mask is None or current is mode:
+            return
+        class_id, path_index, anchor_index = slot.vector_selection
+        path = mask.paths[path_index].set_mode(anchor_index, mode)
+        slot.vectors.set_mask(class_id, mask.with_path(path_index, path))
+        self._apply_vectors(slot)
+
+    def _on_delete_anchor_requested(self) -> None:
+        slot = self._current_slot
+        mask, _mode = self._selected_anchor(slot)
+        if mask is None:
+            return
+        class_id, path_index, anchor_index = slot.vector_selection
+        path = mask.paths[path_index].remove_anchor(anchor_index)
+        slot.vectors.set_mask(class_id, mask.with_path(path_index, path))
+        slot.vector_selection = None if path is None else (class_id, path_index, -1)
+        self._apply_vectors(slot)
+
+    def _on_vector_revert_requested(self, class_id: int) -> None:
+        slot = self._current_slot
+        if class_id not in slot.vectors:
+            return
+        slot.vectors.remove(class_id)
+        if slot.vector_selection is not None and slot.vector_selection[0] == class_id:
+            slot.vector_selection = None
+        self._apply_vectors(slot)
+        if class_id in slot.layers.class_ids:
+            self._statusbar.showMessage("Vector mask removed; segmented pixels restored", 5000)
+        else:
+            self._statusbar.showMessage("Drawn class removed", 5000)
+
+    def _step_vector_history(self, *, redo: bool) -> bool:
+        slot = self._current_slot
+        changed = slot.vectors.redo() if redo else slot.vectors.undo()
+        if not changed:
+            return False
+        self._apply_vectors(slot)
+        self._statusbar.showMessage(
+            "Vector mask change redone" if redo else "Vector mask change undone", 4000
+        )
+        return True
 
     def _segment_means(
         self, slot: _ClassificationSlot

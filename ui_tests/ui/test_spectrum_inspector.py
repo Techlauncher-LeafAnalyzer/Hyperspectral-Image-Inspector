@@ -576,3 +576,44 @@ def test_pin_drag_is_refused_while_the_pipeline_is_busy(pinned_viewer, qtbot, mo
     (item,) = viewer._pin_marker_items
     assert item.pos() == QtCore.QPointF(2.5, 3.5)  # snapped back
     monkeypatch.undo()  # let the window close normally at teardown
+
+
+def test_plotted_spectra_follow_region_edits(loaded_window, qtbot, inspector):
+    window = loaded_window
+    _classify(window, qtbot)
+    rect = _draw_rectangle(window, 0, 0, 2, 2)
+    panel = window.classificationLayerPanel
+    panel._region_rows[rect.layer_id]._inspect_button.click()
+    key = f"annotation:{rect.layer_id}"
+    assert inspector._series_by_key[key].region.pixel_count == 4
+
+    viewer = window.classificationViewer
+    viewer.annotationGeometryChanged.emit(rect.layer_id, 0, 0, 3, 2)
+    viewer.annotationInteractionFinished.emit()
+    qtbot.waitUntil(lambda: inspector._series_by_key[key].region.pixel_count == 6)
+
+    window._classification_controller._on_annotation_rename_requested(rect.layer_id, "Spot")
+    qtbot.waitUntil(lambda: inspector._series_by_key[key].label == "Spot")
+
+    window._classification_controller._on_annotation_delete_requested(rect.layer_id)
+    qtbot.waitUntil(lambda: key not in inspector._series_by_key)
+
+
+def test_plotted_class_spectrum_follows_vector_edits(loaded_window, qtbot, inspector):
+    from core import Anchor, VectorMask, VectorPath
+
+    window = loaded_window
+    _classify(window, qtbot)
+    panel = window.classificationLayerPanel
+    row = next(row for row in panel._rows.values() if row._inspect_button.isEnabled())
+    row._inspect_button.click()
+    key = f"class:{row.class_id}"
+    square = VectorPath((Anchor(0, 0), Anchor(3, 0), Anchor(3, 3), Anchor(0, 3)))
+    window.classificationViewer.vectorMaskEdited.emit(row.class_id, VectorMask((square,)), True)
+    qtbot.waitUntil(lambda: inspector._series_by_key[key].region.pixel_count == 9)
+    data = window._display_data()
+    cube = data.read_bands(range(data.bands))
+    np.testing.assert_allclose(
+        inspector._series_by_key[key].region.mean,
+        cube[:3, :3].reshape(-1, data.bands).mean(axis=0), rtol=1e-5,
+    )

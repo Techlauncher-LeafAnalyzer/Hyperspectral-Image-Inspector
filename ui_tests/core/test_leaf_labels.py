@@ -31,3 +31,16 @@ def test_draw_burns_labels_only_for_visible_classes():
     only_leaf_2 = draw_leaf_labels(rgb, labels, visible_ids=(11,))
     assert not only_leaf_2[20:40, 5:25].any()
     assert draw_leaf_labels(rgb, labels, visible_ids=()) is rgb
+
+
+def test_labels_take_their_class_colour():
+    class_map = _two_leaves()
+    labels = place_leaf_labels(class_map, {10: 1, 11: 2})
+    rgb = np.zeros((60, 60, 3), dtype=np.uint8)
+    drawn = draw_leaf_labels(rgb, labels, colors={10: (255, 0, 0)})
+    below_leaf_1 = drawn[20:40, 5:25].reshape(-1, 3)
+    assert ((below_leaf_1[:, 0] > 200) & (below_leaf_1[:, 1:].max(axis=1) < 50)).any()
+    assert not (below_leaf_1.min(axis=1) > 150).any()  # no white text
+    # Leaf 2 has no colour given, so it stays white.
+    leaf_2 = drawn[30:60, 30:50].reshape(-1, 3)
+    assert (leaf_2.min(axis=1) > 150).any()

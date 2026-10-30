@@ -375,26 +375,52 @@ def test_calibration_tracks_crop_from_any_tab_and_clears_history(
     assert window.calibrationViewer.rgb.shape == (4, 4, 3)
 
 
-def test_calibration_clears_obsolete_classification(
+def test_calibration_keeps_uncalibrated_work_under_before(
     loaded_window, file_dialog, tmp_path, qtbot
 ):
+    from core import AnnotationKind
+
     window = loaded_window
+    controller = window._classification_controller
     window.numOfClassesEdit.setText("2")
     window.maxIterationsEdit.setText("3")
     window.unsupervisedClassifyButton.click()
-    qtbot.waitUntil(lambda: window._classification_controller._thread is None)
-    assert window._classification_controller._slots[False].result is not None
+    qtbot.waitUntil(lambda: controller._thread is None)
+    before_result = controller._slots[False].result
+    assert before_result is not None
+    window.classificationViewer.annotationShapeDrawn.emit(
+        AnnotationKind.RECTANGLE, QtCore.QRectF(1, 1, 3, 3)
+    )
+    before_annotations = controller._annotation_slot.layers.layers
+    assert before_annotations
 
     shape = (21, SYNTHETIC_COLUMNS, len(SYNTHETIC_WAVELENGTHS_NM))
     dark = _write_reference(tmp_path, "dark", np.zeros(shape, dtype=np.float32))
     bright = _write_reference(tmp_path, "bright", np.full(shape, 2, dtype=np.float32))
     _select_references(window, file_dialog, dark, bright)
-    assert window._classification_controller._slots[False].result is not None
     qtbot.waitUntil(lambda: window.calibrateButton.isEnabled())
     window.calibrateButton.click()
     _wait_for_calibration(qtbot, window)
     assert window._calibration_controller.result is not None
-    assert all(slot.result is None for slot in window._classification_controller._slots.values())
+    # "After Calibration" starts empty...
+    assert controller._current_slot.result is None
+    assert not controller._annotation_slot.layers.layers
+    window.classificationViewer.annotationShapeDrawn.emit(
+        AnnotationKind.ELLIPSE, QtCore.QRectF(0, 0, 2, 2)
+    )
+    # ...while "Before Calibration" keeps the earlier classification and shapes.
+    switch = window._resolution_switches.calibration_switches[0]
+    switch.click()
+    assert controller._current_slot.result is before_result
+    assert controller._annotation_slot.layers.layers == before_annotations
+    assert window.classificationLayerPanel._rows
+
+    # Replacing the references drops only the calibrated work.
+    switch.click()
+    window.referenceFileButton.click()
+    assert controller._slots[False].result is before_result
+    assert all(slot.result is None for slot in controller._calibrated_slots.values())
+    assert controller._annotation_slot.layers.layers == before_annotations
 
 
 def test_calibration_comparison_reuses_results_and_keeps_view_state(

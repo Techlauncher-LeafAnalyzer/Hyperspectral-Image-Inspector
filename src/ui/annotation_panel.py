@@ -1,7 +1,8 @@
 """Annotation tools and layer stack shown in the classification side panel.
 
 Reflects a ``core.AnnotationLayerModel`` without owning it: every edit is
-emitted as a signal and the Controller applies it to the Model.
+emitted as a signal and the Controller applies it to the Model. The page also
+hosts the Pen tool and the list of class vector masks it edits.
 """
 
 from __future__ import annotations
@@ -12,11 +13,16 @@ from typing import Optional
 from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import QRectF, QSize, Qt, pyqtSignal
 
-from core import AnnotationKind, AnnotationLayer, AnnotationStyle
+from core import AnchorMode, AnnotationKind, AnnotationLayer, AnnotationStyle
 from core.annotation_model import MEASURABLE_KINDS, RGB
 
 _LAYER_ID_ROLE = Qt.ItemDataRole.UserRole
-_TOOL_LABELS: tuple[tuple[AnnotationKind, str, str], ...] = (
+# Vector-list entry that makes the pen draw a new class.
+_NEW_CLASS_ID = -1
+# Emitted by ``toolChanged`` for the vector-mask pen, which is not an
+# annotation kind: it edits class outlines rather than adding a layer.
+PEN_TOOL = "pen"
+_TOOL_LABELS: tuple[tuple[AnnotationKind | str, str, str], ...] = (
     (AnnotationKind.RECTANGLE, "Rectangle", "Draw a rectangle (click again to turn off)"),
     (AnnotationKind.ELLIPSE, "Circle", "Draw a circle or ellipse (click again to turn off)"),
     (
@@ -25,6 +31,12 @@ _TOOL_LABELS: tuple[tuple[AnnotationKind, str, str], ...] = (
         "Drag to draw an arrow in the stroke colour (click again to turn off)",
     ),
     (AnnotationKind.TEXT, "Text", "Click the image to add text (click again to turn off)"),
+    (
+        PEN_TOOL,
+        "Pen (vector mask)",
+        "Draw a new class, or edit a class's vector mask outline "
+        "(click again to turn off)",
+    ),
 )
 _ASSETS = Path(__file__).parent / "assets"
 _TOOL_ICONS = {
@@ -32,6 +44,21 @@ _TOOL_ICONS = {
     AnnotationKind.ELLIPSE: "annotation_ellipse.svg",
     AnnotationKind.ARROW: "annotation_arrow.svg",
     AnnotationKind.TEXT: "annotation_text.svg",
+    PEN_TOOL: "annotation_pen.svg",
+}
+_PEN_HINT = (
+    "Click to place corner points, or drag to pull smooth handles; click the "
+    "first point (or press Enter) to close a new path. With New class chosen "
+    "below, the path becomes a new class; otherwise it is added to the chosen "
+    "mask. Press Esc to go back to New class. Click an outline to "
+    "select it, then click it again to add a point. Drag points and handles "
+    "to reshape; Alt-drag a handle to break it into a corner. Alt-click or "
+    "double-click a point to toggle corner/smooth; Delete removes it."
+)
+_ANCHOR_MODE_TIPS = {
+    AnchorMode.CORNER: "Corner: handles move independently, for a sharp turn",
+    AnchorMode.SMOOTH: "Smooth: handles stay in line so the curve flows through",
+    AnchorMode.SYMMETRIC: "Symmetric: smooth, with both handles the same length",
 }
 
 
@@ -98,12 +125,20 @@ class AnnotationToolsPage(QtWidgets.QWidget):
     moveRequested = pyqtSignal(int, int)
     deleteRequested = pyqtSignal(int)
     measureChanged = pyqtSignal(int, bool)
+    # Vector masks: choose the mask the pen edits/draws into (class ID), or
+    # -1 for "New class".
+    vectorMaskSelected = pyqtSignal(int)
+    # Convert the selected point to an AnchorMode.
+    anchorModeRequested = pyqtSignal(object)
+    deleteAnchorRequested = pyqtSignal()
+    # Discard a class's vector mask and restore its segmented pixels.
+    vectorRevertRequested = pyqtSignal(int)
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("annotationToolsPage")
         defaults = AnnotationStyle()
-        self._tool_buttons: dict[AnnotationKind, QtWidgets.QToolButton] = {}
+        self._tool_buttons: dict[AnnotationKind | str, QtWidgets.QToolButton] = {}
         # Not exclusive: clicking the active tool turns it off, which returns to
         # the default pan/select behaviour. Exclusivity is kept by hand.
         self._tool_group = QtWidgets.QButtonGroup(self)
@@ -129,7 +164,10 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             )
             self._tool_group.addButton(button)
             self._tool_buttons[kind] = button
-            tool_grid.addWidget(button, index // 2, index % 2)
+            if kind == PEN_TOOL:
+                tool_grid.addWidget(button, index // 2, 0, 1, 2)
+            else:
+                tool_grid.addWidget(button, index // 2, index % 2)
             button.clicked.connect(
                 lambda checked, k=kind: self._on_tool_clicked(k, checked)
             )
@@ -144,6 +182,10 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum
         )
         tool_hint.setWordWrap(True)
+        self._pen_hint = QtWidgets.QLabel(_PEN_HINT, self)
+        self._pen_hint.setObjectName("annotationHint")
+        self._pen_hint.setWordWrap(True)
+        self._pen_hint.hide()
 
         self._fill_button = _ColorButton(defaults.fill, "Fill colour (also text colour)")
         self._fill_check = QtWidgets.QCheckBox("Fill shapes", self)
@@ -242,7 +284,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._list = QtWidgets.QListWidget(self)
         self._list.setObjectName("annotationLayerList")
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        # Grows to fit every layer (see _fit_list_height): the whole inspector
+        # Grows to fit every layer (see _fit_height): the whole inspector
         # scrolls, not the list.
         self._list.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
@@ -292,6 +334,8 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         layers_heading.addLayout(layers_header)
         layers_heading.addWidget(layers_hint)
 
+        vector_section = self._build_vector_section()
+
         content = QtWidgets.QWidget(self)
         content.setObjectName("annotationContent")
         layout = QtWidgets.QVBoxLayout(content)
@@ -300,6 +344,8 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         layout.addWidget(self._section_label("Drawing tools"))
         layout.addLayout(tool_grid)
         layout.addWidget(tool_hint)
+        layout.addWidget(self._pen_hint)
+        layout.addWidget(vector_section)
         layout.addWidget(controls)
         layout.addWidget(self._measure_check)
         layout.addLayout(layers_heading)
@@ -331,6 +377,155 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._refreshing = False
         self._layers_by_id: dict[int, AnnotationLayer] = {}
         self._update_buttons()
+        self.set_vector_masks(())
+
+    def _build_vector_section(self) -> QtWidgets.QFrame:
+        """The vector-mask list and the selected point's smoothing controls."""
+
+        section = QtWidgets.QFrame(self)
+        section.setObjectName("annotationAppearance")
+        layout = QtWidgets.QVBoxLayout(section)
+        layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        layout.addWidget(self._section_label("Vector masks"))
+
+        self._vector_empty = QtWidgets.QLabel(
+            "Draw with the Pen to create a new class, or on the Classes tab choose "
+            "<b>Vector mask…</b> to convert class regions into editable outlines.", self
+        )
+        self._vector_empty.setObjectName("annotationHint")
+        self._vector_empty.setWordWrap(True)
+
+        self._vector_list = QtWidgets.QListWidget(self)
+        self._vector_list.setObjectName("annotationLayerList")
+        self._vector_list.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self._vector_list.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        self._vector_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._vector_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._vector_list.setSpacing(3)
+        self._vector_list.setIconSize(QSize(16, 16))
+        self._vector_list.setToolTip(
+            "The Pen edits, and draws new paths into, the selected mask; with "
+            "New class selected, it draws a new class"
+        )
+        self._vector_list.setAccessibleName("Class vector masks")
+        self._vector_list.currentItemChanged.connect(self._on_vector_current_changed)
+
+        point_label = self._field_label("Selected point", self._vector_list)
+        self._anchor_mode_buttons: dict[AnchorMode, QtWidgets.QToolButton] = {}
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(4)
+        mode_group = QtWidgets.QButtonGroup(self)
+        mode_group.setExclusive(True)
+        for mode in AnchorMode:
+            button = QtWidgets.QToolButton(self)
+            button.setObjectName("annotationToolButton")
+            button.setText(mode.value)
+            button.setToolTip(_ANCHOR_MODE_TIPS[mode])
+            button.setAccessibleName(_ANCHOR_MODE_TIPS[mode])
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+            )
+            button.clicked.connect(lambda _checked, m=mode: self.anchorModeRequested.emit(m))
+            mode_group.addButton(button)
+            mode_row.addWidget(button, 1)
+            self._anchor_mode_buttons[mode] = button
+
+        self._delete_anchor_button = self._small_button(
+            "Delete point", "Remove the selected point (Delete)"
+        )
+        self._delete_anchor_button.clicked.connect(self.deleteAnchorRequested)
+        self._revert_vector_button = self._small_button(
+            "Revert to pixels",
+            "Discard this vector mask: a converted class gets its segmented "
+            "pixels back, and a drawn class is removed",
+        )
+        self._revert_vector_button.setObjectName("annotationDeleteButton")
+        self._revert_vector_button.clicked.connect(self._request_vector_revert)
+        actions = QtWidgets.QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
+        actions.addWidget(self._delete_anchor_button, 1)
+        actions.addWidget(self._revert_vector_button, 1)
+
+        layout.addWidget(self._vector_empty)
+        layout.addWidget(self._vector_list)
+        layout.addWidget(point_label)
+        layout.addLayout(mode_row)
+        layout.addLayout(actions)
+        self._vector_controls = (point_label, self._delete_anchor_button, self._revert_vector_button,
+                                 *self._anchor_mode_buttons.values())
+        return section
+
+    def set_vector_masks(
+        self,
+        masks: tuple[tuple[int, str, RGB, int, int], ...],
+        selected_class: Optional[int] = None,
+    ) -> None:
+        """List vectorized classes as ``(class_id, name, colour, paths, points)``."""
+
+        self._vector_list.blockSignals(True)
+        self._vector_list.clear()
+        new_item = QtWidgets.QListWidgetItem("New class")
+        new_item.setIcon(QtGui.QIcon(str(_ASSETS / _TOOL_ICONS[PEN_TOOL])))
+        new_item.setData(_LAYER_ID_ROLE, _NEW_CLASS_ID)
+        new_item.setToolTip("Paths drawn with the Pen each start a new class")
+        self._vector_list.addItem(new_item)
+        self._vector_list.setCurrentItem(new_item)
+        for class_id, name, color, path_count, anchor_count in masks:
+            item = QtWidgets.QListWidgetItem(
+                f"{name}  ·  {path_count} path{'s' if path_count != 1 else ''}, "
+                f"{anchor_count} points"
+            )
+            swatch = QtGui.QPixmap(16, 16)
+            swatch.fill(QtGui.QColor(*color))
+            item.setIcon(QtGui.QIcon(swatch))
+            item.setData(_LAYER_ID_ROLE, class_id)
+            item.setToolTip(f"{name}: select to edit with the Pen")
+            self._vector_list.addItem(item)
+            if class_id == selected_class:
+                self._vector_list.setCurrentItem(item)
+        self._vector_list.blockSignals(False)
+        has_masks = bool(masks)
+        self._vector_empty.setVisible(not has_masks)
+        for widget in self._vector_controls:
+            widget.setVisible(has_masks)
+        self._revert_vector_button.setEnabled(self.selected_vector_class() is not None)
+        self._fit_height(self._vector_list)
+
+    def set_anchor_state(self, mode: Optional[AnchorMode]) -> None:
+        """Show the selected point's mode; ``None`` when no point is selected."""
+
+        for anchor_mode, button in self._anchor_mode_buttons.items():
+            button.setEnabled(mode is not None)
+            button.setChecked(anchor_mode is mode)
+        self._delete_anchor_button.setEnabled(mode is not None)
+
+    def selected_vector_class(self) -> Optional[int]:
+        """The mask the pen draws into; ``None`` when it draws a new class."""
+
+        item = self._vector_list.currentItem()
+        if item is None or int(item.data(_LAYER_ID_ROLE)) == _NEW_CLASS_ID:
+            return None
+        return int(item.data(_LAYER_ID_ROLE))
+
+    def _on_vector_current_changed(self, current, _previous) -> None:
+        self._revert_vector_button.setEnabled(self.selected_vector_class() is not None)
+        if current is not None:
+            self.vectorMaskSelected.emit(int(current.data(_LAYER_ID_ROLE)))
+
+    def _request_vector_revert(self) -> None:
+        class_id = self.selected_vector_class()
+        if class_id is not None:
+            self.vectorRevertRequested.emit(class_id)
 
     # ------------------------------------------------------------------ #
 
@@ -360,13 +555,14 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         for widget in widgets:
             widget.blockSignals(False)
 
-    def set_tool(self, kind: Optional[AnnotationKind]) -> None:
-        """Show ``kind`` as the active tool (``None`` for none) without emitting."""
+    def set_tool(self, kind: Optional[AnnotationKind | str]) -> None:
+        """Show ``kind`` (or :data:`PEN_TOOL`) as the active tool without emitting."""
 
         for tool, button in self._tool_buttons.items():
-            button.setChecked(tool is kind)
+            button.setChecked(tool == kind)
+        self._pen_hint.setVisible(kind == PEN_TOOL)
 
-    def _on_tool_clicked(self, kind: AnnotationKind, checked: bool) -> None:
+    def _on_tool_clicked(self, kind: AnnotationKind | str, checked: bool) -> None:
         self.set_tool(kind if checked else None)
         self.toolChanged.emit(kind if checked else None)
 
@@ -407,20 +603,21 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._layer_count.setAccessibleName(f"{len(layers)} annotation layers")
         self._list.setVisible(has_layers)
         self._empty_label.setVisible(not has_layers)
-        self._fit_list_height()
+        self._fit_height(self._list)
         self._update_buttons()
 
-    def _fit_list_height(self) -> None:
-        """Make the layer list exactly as tall as its rows, so it never scrolls."""
+    @staticmethod
+    def _fit_height(widget: QtWidgets.QListWidget) -> None:
+        """Make a list exactly as tall as its rows, so it never scrolls."""
 
-        rows = self._list.count()
+        rows = widget.count()
         if not rows:
             return
-        self._list.doItemsLayout()
-        last = self._list.visualItemRect(self._list.item(rows - 1))
-        bottom = last.bottom() + self._list.verticalOffset()
-        frame = 2 * self._list.frameWidth()
-        self._list.setFixedHeight(bottom + 1 + self._list.spacing() + frame)
+        widget.doItemsLayout()
+        last = widget.visualItemRect(widget.item(rows - 1))
+        bottom = last.bottom() + widget.verticalOffset()
+        frame = 2 * widget.frameWidth()
+        widget.setFixedHeight(bottom + 1 + widget.spacing() + frame)
 
     # ------------------------------------------------------------------ #
 
