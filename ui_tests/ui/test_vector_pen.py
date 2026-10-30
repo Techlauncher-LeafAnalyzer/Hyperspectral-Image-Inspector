@@ -10,7 +10,7 @@ from ui.annotation_panel import PEN_TOOL
 from ui.vector_pen import VectorOutline
 from ui.viewer import HSIViewer
 
-from ui_tests.ui.test_classification_layer_panel import (
+from test_classification_layer_panel import (
     _make_controller,
     _make_unsupervised_result,
 )
