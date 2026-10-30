@@ -297,6 +297,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.classificationLayerPanel.inspectRequested.connect(
             self._spectrum_controller.inspect_region
         )
+        self._classification_controller.regionsChanged.connect(
+            self._spectrum_controller.schedule_region_refresh
+        )
         self._stripe_geometry_timer = QtCore.QTimer(self)
         self._stripe_geometry_timer.setSingleShot(True)
         self._stripe_geometry_timer.timeout.connect(self._sync_stripe_geometry)
@@ -1049,6 +1052,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _on_calibration_result_ready(self, high: bool) -> None:
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
+        # Work on the uncalibrated image stays under "Before Calibration".
         self._classification_controller.clear_calibrated_result()
         self._clear_calibration_previews()
         self._update_super_resolution_view_state(self._high_resolution_selected)

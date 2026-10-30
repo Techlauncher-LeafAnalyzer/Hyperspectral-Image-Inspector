@@ -11,6 +11,7 @@ from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPainterPath, QPe
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem, QLabel, QMenu
 
 from ui.annotation_render import make_annotation_item
+from ui.vector_pen import VectorOutline, VectorPenTool, VectorSelection
 from core.annotation_model import ROTATABLE_KINDS
 from core import (
     ON_DEMAND_VISUALIZATION_MODES,
@@ -258,6 +259,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
     annotationPicked = pyqtSignal(int)
     # A plain click (no drag) landed on empty image area.
     annotationDeselected = pyqtSignal()
+    # The pen edited a class's vector mask: (class_id, VectorMask, final).
+    # Drags emit with final=False on every move and once with True at the end.
+    vectorMaskEdited = pyqtSignal(int, object, bool)
+    # The pen's selection changed: (class_id, path, anchor); -1 means none.
+    vectorSelectionChanged = pyqtSignal(int, int, int)
+    vectorEditFinished = pyqtSignal()
+    # The pen closed a path with no mask chosen: a new class (VectorMask).
+    vectorClassDrawn = pyqtSignal(object)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -365,6 +374,8 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._photo.setZValue(1)
         self.mask_pixmapitem.setZValue(3)
 
+        self._pen = VectorPenTool(self)
+
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
@@ -411,6 +422,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self.fit_in_view()
         if self.has_photo():
             self._keep_fitting()
+        self._pen.redraw()
 
     def get_view_state(self) -> Optional[tuple[float, QPointF]]:
         """Return (scale_factor, scene_center) describing the current pan/zoom."""
@@ -515,6 +527,33 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._annotation_style_provider = style_provider
         self._apply_drag_mode()
         self._apply_idle_cursor()
+
+    @property
+    def pen_active(self) -> bool:
+        return self._pen.active
+
+    @property
+    def vector_selection(self) -> Optional[VectorSelection]:
+        return self._pen.selection
+
+    def set_pen_tool(self, active: bool) -> None:
+        """Arm or disarm the vector-mask pen (see :mod:`ui.vector_pen`)."""
+
+        self._cancel_annotation_drag()
+        self._pen.set_active(active)
+        self._apply_drag_mode()
+        self._apply_idle_cursor()
+
+    def set_vector_masks(
+        self,
+        outlines: tuple[VectorOutline, ...],
+        selection: Optional[VectorSelection] = None,
+        draw_target: Optional[int] = None,
+    ) -> None:
+        """Show class vector masks for the pen; new paths go to ``draw_target``,
+        or into a new class when it is ``None``."""
+
+        self._pen.set_masks(outlines, selection, draw_target)
 
     def set_annotations(
         self,
@@ -719,6 +758,21 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
                 return
         if (
+            self._pen.active
+            and event.button() == Qt.MouseButton.LeftButton
+            and self.has_photo()
+            and not self._cropping
+            and not self._polygon_cropping
+            and not event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            self._pen.press(
+                self._clamped_scene_point(event),
+                bool(event.modifiers() & Qt.KeyboardModifier.AltModifier),
+            )
+            self._apply_idle_cursor()
+            return
+        if (
             event.button() == Qt.MouseButton.LeftButton
             and self.has_photo()
             and not self._cropping
@@ -762,6 +816,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         if self._polygon_cropping:
             self._finish_polygon_crop()
             return
+        if self._pen.active and event.button() == Qt.MouseButton.LeftButton:
+            self._pen.double_click(self._clamped_scene_point(event))
+            return
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
@@ -776,6 +833,14 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._pin_drag_moved = True
                 self.pinDragged.emit(key, row, column)
             return
+        if self._pen.active and self.has_photo():
+            self._pen.move(
+                self._clamped_scene_point(event),
+                bool(event.modifiers() & Qt.KeyboardModifier.AltModifier),
+            )
+            if self._pen.is_dragging:
+                self._apply_idle_cursor()
+                return
         if self._annotation_interaction is not None:
             self._drag_annotation(
                 self._clamped_scene_point(event),
@@ -866,6 +931,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self.pinMoved.emit(key, row, column)
             else:
                 self.pinPicked.emit(key)
+            self._apply_idle_cursor()
+            return
+        if self._pen.active and event.button() == Qt.MouseButton.LeftButton:
+            self._pen.release(bool(event.modifiers() & Qt.KeyboardModifier.AltModifier))
             self._apply_idle_cursor()
             return
         if self._annotation_interaction is not None:
@@ -981,6 +1050,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
                 self._polygon_points.pop()
                 self._update_polygon_overlay(None)
                 return
+        if self._pen.active and self._pen.key(event.key()):
+            self._apply_idle_cursor()
+            return
         if event.key() == Qt.Key.Key_Escape and self._annotation_start is not None:
             self._cancel_annotation_drag()
             return
@@ -1005,6 +1077,10 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._render_mask()
 
     def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
+        if self._pen.is_drafting:
+            # Right-click closes the path being drawn, like the polygon crop.
+            self._pen.finish_draft()
+            return
         scene_pos = self.mapToScene(event.pos())
         menu = self._build_context_menu(scene_pos)
         menu.exec(event.globalPos())
@@ -1348,7 +1424,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
             self._annotation_preview = None
 
     def _apply_drag_mode(self) -> None:
-        if not self.has_photo() or self._annotation_tool is not None:
+        if not self.has_photo() or self._annotation_tool is not None or self._pen.active:
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
         else:
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
@@ -1442,8 +1518,7 @@ class HSIViewer(QtWidgets.QGraphicsView):
         self._crop_start = None
         self._polygon_cropping = False
         self._polygon_points = []
-        if self.has_photo():
-            self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
+        self._apply_drag_mode()
         self._apply_idle_cursor()
 
     def _render_mask(self) -> None:
@@ -1486,6 +1561,12 @@ class HSIViewer(QtWidgets.QGraphicsView):
         elif (self._cropping or self._polygon_cropping
               or self._pointer_modifiers & Qt.KeyboardModifier.ControlModifier):
             cursor = Qt.CursorShape.CrossCursor
+        elif self._pen.active and self.has_photo():
+            point = None
+            if (self._pointer_view_pos is not None
+                    and self.viewport().rect().contains(self._pointer_view_pos)):
+                point = self.mapToScene(self._pointer_view_pos)
+            cursor = self._pen.cursor_shape(point)
         else:
             point = None
             if (self.has_photo() and self._pointer_view_pos is not None

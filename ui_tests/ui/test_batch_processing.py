@@ -277,8 +277,15 @@ def test_batch_supervised_separate_leaves_writes_one_row_per_leaf(tmp_path):
         preview = np.asarray(image.convert("RGB"))
     assert preview[0, 0].tolist() == [0, 0, 0]
     assert preview[5, 5].any() and preview[20, 20].any()
-    # Leaf numbers are burned in beneath each leaf (on the black background).
-    assert (preview[13:17, 3:13].min(axis=2) > 150).any()
+    # Leaf numbers are burned in beneath each leaf (on the black background),
+    # in the leaf's own colour.
+    # Small text is anti-aliased, so compare hue (the colour's direction).
+    leaf_color = preview[5, 5].astype(float)
+    label = preview[13:17, 3:13].reshape(-1, 3).astype(float)
+    bright = label[label.max(axis=1) > 150]
+    assert bright.size
+    cosine = bright @ leaf_color / (np.linalg.norm(bright, axis=1) * np.linalg.norm(leaf_color))
+    assert (cosine > 0.99).all()
 
 
 def test_batch_separate_leaves_checkbox_reaches_request(window, tmp_path, monkeypatch):

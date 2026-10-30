@@ -6,7 +6,9 @@ Owns the :class:`SpectrumInspector` window and the cube reads behind it:
 * Ctrl+Click, or the viewer's right-click "Spectrum Analyzer → Pin Spectrum
   Here", pins that pixel and opens the window;
 * per-class and whole-image mean spectra, and Spectral Angle Mapper maps,
-  are computed with :class:`core.SpectralAnalysisService` on request.
+  are computed with :class:`core.SpectralAnalysisService` on request;
+* plotted class and region spectra are recomputed whenever their pixels
+  change (see :meth:`SpectrumController.refresh_regions`).
 
 Every read goes through ``can_read`` first, so nothing touches the cube while
 SR, calibration, classification or a Hypercube build hold it.
@@ -14,6 +16,7 @@ SR, calibration, classification or a Hypercube build hold it.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Callable, Mapping, Optional
 
@@ -40,6 +43,7 @@ RGBColor = tuple[int, int, int]
 # (data, {key: region}) for classes and annotation regions; each region has
 # .label, .mask, .color and .selected (see classification_controller).
 AnalysisRegions = tuple[HSIData, Mapping[str, object]]
+_REGION_PREFIXES = ("class:", "annotation:")
 
 
 class SpectrumController(QtCore.QObject):
@@ -79,6 +83,14 @@ class SpectrumController(QtCore.QObject):
         self._parent = parent_widget
         self._similarity: Optional[tuple[HSIData, SimilarityResult]] = None
         self._tool_window = None
+        # What each plotted class/region spectrum was computed from, so a
+        # refresh recomputes only the regions that actually changed.
+        self._region_signatures: dict[str, tuple] = {}
+        # One refresh per event-loop turn, however many changes arrive.
+        self._region_refresh_timer = QtCore.QTimer(self)
+        self._region_refresh_timer.setSingleShot(True)
+        self._region_refresh_timer.setInterval(0)
+        self._region_refresh_timer.timeout.connect(self.refresh_regions)
 
         self.inspector = SpectrumInspector(analysis_service, parent_widget)
         self.inspector.similarityRequested.connect(self._on_similarity_requested)
@@ -241,12 +253,65 @@ class SpectrumController(QtCore.QObject):
         self.show()
         self._statusbar.showMessage(f"Added {region.label} to the Spectrum Inspector", 5000)
 
+    def schedule_region_refresh(self) -> None:
+        """Refresh plotted class and region spectra once control returns to Qt.
+
+        Connect to the classification Controller's ``regionsChanged``.
+        """
+
+        self._region_refresh_timer.start()
+
+    def refresh_regions(self) -> None:
+        """Recompute plotted class and region spectra whose pixels, name or
+        colour changed; drop those whose class or region no longer exists."""
+
+        self._region_refresh_timer.stop()
+        plotted = [
+            spectrum.key for spectrum in self.inspector.region_spectra()
+            if spectrum.key.startswith(_REGION_PREFIXES)
+        ]
+        if not plotted:
+            return
+        summary = self._analysis_regions()
+        regions = summary[1] if summary is not None else {}
+        gone = [key for key in plotted if key not in regions]
+        stale = {
+            key: regions[key] for key in plotted
+            if key in regions
+            and self._region_signatures.get(key) != self._signature(summary[0], regions[key])
+        }
+        if stale:
+            spectra = self._compute_regions(summary[0], stale)
+            if spectra is None:
+                return
+            self.inspector.update_region_spectra(
+                spectra, {key: region.color for key, region in stale.items()}
+            )
+            # A region edited down to no pixels has no spectrum left.
+            computed = {spectrum.key for spectrum in spectra}
+            gone += [key for key in stale if key not in computed]
+        for key in gone:
+            self._region_signatures.pop(key, None)
+        self.inspector.remove_series(gone)
+
     def _compute_regions(self, data: HSIData, regions: Mapping[str, object]):
-        return self._run_full_cube(
+        spectra = self._run_full_cube(
             "Computing spectra…",
             lambda: self._analysis.masked_spectra(
                 data, {key: (region.label, region.mask) for key, region in regions.items()}
             ),
+        )
+        if spectra is not None:
+            for key, region in regions.items():
+                self._region_signatures[key] = self._signature(data, region)
+        return spectra
+
+    @staticmethod
+    def _signature(data: HSIData, region) -> tuple:
+        mask = np.packbits(np.asarray(region.mask, dtype=bool))
+        return (
+            id(data), region.label, tuple(region.color),
+            hashlib.blake2b(mask.tobytes(), digest_size=16).digest(),
         )
 
     def show_image_mean(self) -> None:

@@ -588,6 +588,31 @@ class SpectrumInspector(QtWidgets.QWidget):
             )
         self._series_changed()
 
+    def update_region_spectra(
+        self,
+        spectra: Sequence[RegionSpectrum],
+        colors: Mapping[str, RGBColor] | None = None,
+    ) -> None:
+        """Replace listed regions' spectra in place, e.g. after their pixels change.
+
+        Each series keeps its place in the list and its shown/hidden state;
+        spectra whose key is not listed are ignored.
+        """
+
+        colors = colors or {}
+        changed = False
+        for spectrum in spectra:
+            series = self._series_by_key.get(spectrum.key)
+            if series is None or series.region is None:
+                continue
+            series.region = spectrum
+            color = colors.get(spectrum.key)
+            if color is not None:
+                series.color = _mpl_color(color)
+            changed = True
+        if changed:
+            self._series_changed()
+
     def remove_regions_with_prefix(self, prefixes: tuple[str, ...]) -> None:
         """Drop region series whose key starts with any of ``prefixes``."""
 
