@@ -117,16 +117,6 @@ class HypercubeWidget(QOpenGLWidget):
         self._status_label = QLabel(self)
         self._status_label.setObjectName("hypercubeStatusLabel")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_label.setStyleSheet(
-            "QLabel#hypercubeStatusLabel {"
-            "  background-color: rgba(20, 20, 20, 200);"
-            "  color: #f5f5f5;"
-            "  border: 1px solid #555555;"
-            "  border-radius: 4px;"
-            "  padding: 8px 12px;"
-            "  font-size: 12px;"
-            "}"
-        )
         self._status_label.hide()
         self.set_status_message("Load an image to view its hypercube.")
 

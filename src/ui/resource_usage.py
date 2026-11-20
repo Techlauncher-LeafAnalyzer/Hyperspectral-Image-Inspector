@@ -66,11 +66,6 @@ class ResourceUsageWidget(QtWidgets.QWidget):
             layout.addWidget(label)
         # Compact enough to sit in the status bar.
         self.setFixedSize(190, 24)
-        self.setStyleSheet(
-            "QWidget#resourceUsageWidget { background: transparent; }"
-            "QLabel { color: #49635d; background: #e2ece9; border: 1px solid #cdded8; "
-            "border-radius: 5px; padding: 0 2px; font-size: 11px; font-weight: 600; }"
-        )
         self.cpu_label.setToolTip("System-wide CPU usage; waiting for the first sample")
         self.ram_label.setToolTip("Program RAM usage; waiting for the first sample")
         self._timer = QtCore.QTimer(self)

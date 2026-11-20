@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFontDatabase
+from PyQt6.QtGui import QColor, QFontDatabase, QPalette
 from PyQt6.QtWidgets import QApplication
 
 
@@ -265,13 +265,15 @@ QFrame#tabIndicator {
 }
 
 /* Segmentation method: a two-segment switch above a borderless page. */
-QTabWidget#classificationModeTabs::pane {
+QTabWidget#classificationModeTabs::pane,
+QTabWidget#batchClassifyModeTabs::pane {
     border: none;
     background: transparent;
 }
 
 QTabBar#classificationTabBar::tab,
-QTabBar#spectrumTabBar::tab {
+QTabBar#spectrumTabBar::tab,
+QTabBar#batchClassifyTabBar::tab {
     min-width: 110px;
     background: #ffffff;
     color: #536663;
@@ -281,44 +283,51 @@ QTabBar#spectrumTabBar::tab {
 }
 
 QTabBar#classificationTabBar::tab:first,
-QTabBar#spectrumTabBar::tab:first {
+QTabBar#spectrumTabBar::tab:first,
+QTabBar#batchClassifyTabBar::tab:first {
     border-top-left-radius: 6px;
     border-bottom-left-radius: 6px;
 }
 
 QTabBar#classificationTabBar::tab:last,
-QTabBar#spectrumTabBar::tab:last {
+QTabBar#spectrumTabBar::tab:last,
+QTabBar#batchClassifyTabBar::tab:last {
     border-left: none;
     border-top-right-radius: 6px;
     border-bottom-right-radius: 6px;
 }
 
 QTabBar#classificationTabBar::tab:hover,
-QTabBar#spectrumTabBar::tab:hover {
+QTabBar#spectrumTabBar::tab:hover,
+QTabBar#batchClassifyTabBar::tab:hover {
     background: #f0f7f5;
     color: #264b46;
 }
 
 QTabBar#classificationTabBar::tab:selected,
-QTabBar#spectrumTabBar::tab:selected {
+QTabBar#spectrumTabBar::tab:selected,
+QTabBar#batchClassifyTabBar::tab:selected {
     background: #dcefeb;
     color: #105f55;
 }
 
 QTabBar#classificationTabBar:focus::tab:selected,
-QTabBar#spectrumTabBar:focus::tab:selected {
+QTabBar#spectrumTabBar:focus::tab:selected,
+QTabBar#batchClassifyTabBar:focus::tab:selected {
     border-color: #78afa5;
 }
 
 QTabBar#classificationTabBar::tab:disabled,
-QTabBar#spectrumTabBar::tab:disabled {
+QTabBar#spectrumTabBar::tab:disabled,
+QTabBar#batchClassifyTabBar::tab:disabled {
     background: #f0f3f2;
     color: #9ba9a6;
     border-color: #dde5e2;
 }
 
 /* The segment fill shows the selection; no sliding underline. */
-QTabBar#classificationTabBar QFrame#tabIndicator {
+QTabBar#classificationTabBar QFrame#tabIndicator,
+QTabBar#batchClassifyTabBar QFrame#tabIndicator {
     background: transparent;
 }
 
@@ -565,11 +574,7 @@ QStatusBar {
     border-top: 1px solid #d8e2df;
 }
 
-QDialog#indexMeanDialog {
-    background: #ffffff;
-}
-
-QDialog#customIndexDialog {
+QDialog, QMessageBox {
     background: #ffffff;
 }
 
@@ -705,9 +710,68 @@ QLabel#indexMeanRangeLabel {
     font-weight: 600;
 }
 
-QScrollBar:vertical, QScrollBar:horizontal {
-    background: #edf2f1;
+/* One slim scrollbar style app-wide: rounded handle, no arrows or trough. */
+QScrollBar:vertical {
+    width: 8px;
+    background: transparent;
     border: 0;
+    margin: 2px 1px;
+}
+
+QScrollBar:horizontal {
+    height: 8px;
+    background: transparent;
+    border: 0;
+    margin: 1px 2px;
+}
+
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal {
+    background: #bfceca;
+    border-radius: 3px;
+}
+
+QScrollBar::handle:vertical {
+    min-height: 26px;
+}
+
+QScrollBar::handle:horizontal {
+    min-width: 26px;
+}
+
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background: #93aaa5;
+}
+
+QScrollBar::handle:vertical:pressed,
+QScrollBar::handle:horizontal:pressed {
+    background: #7a948f;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0;
+    height: 0;
+    border: 0;
+    background: transparent;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}
+
+QAbstractScrollArea::corner {
+    background: transparent;
+    border: 0;
+}
+
+QToolTip {
+    color: #263735;
+    background: #ffffff;
+    border: 1px solid #cddad6;
+    border-radius: 4px;
+    padding: 4px 7px;
+    font-size: 12px;
 }
 
 QWidget#Classification {
@@ -781,30 +845,6 @@ QScrollArea#classificationLayerScrollArea {
 }
 
 QScrollArea#classificationLayerScrollArea > QWidget > QWidget {
-    background: transparent;
-}
-
-QScrollArea#classificationLayerScrollArea QScrollBar:vertical {
-    width: 7px;
-    background: transparent;
-    margin: 1px 0;
-}
-
-QScrollArea#classificationLayerScrollArea QScrollBar::handle:vertical {
-    min-height: 26px;
-    background: #bfceca;
-    border-radius: 3px;
-}
-
-QScrollArea#classificationLayerScrollArea QScrollBar::handle:vertical:hover {
-    background: #93aaa5;
-}
-
-QScrollArea#classificationLayerScrollArea QScrollBar::add-line:vertical,
-QScrollArea#classificationLayerScrollArea QScrollBar::sub-line:vertical,
-QScrollArea#classificationLayerScrollArea QScrollBar::add-page:vertical,
-QScrollArea#classificationLayerScrollArea QScrollBar::sub-page:vertical {
-    height: 0;
     background: transparent;
 }
 
@@ -1065,6 +1105,15 @@ QPushButton#annotationColorButton {
     text-align: left;
 }
 
+QCheckBox {
+    color: #263735;
+    spacing: 7px;
+}
+
+QCheckBox:disabled {
+    color: #9aa9a5;
+}
+
 QCheckBox#annotationFillCheck {
     color: #526863;
     font-size: 11px;
@@ -1072,7 +1121,7 @@ QCheckBox#annotationFillCheck {
     padding: 3px 0;
 }
 
-QCheckBox#annotationFillCheck::indicator,
+QCheckBox::indicator,
 QListWidget#annotationLayerList::indicator,
 QListWidget#spectrumSeriesList::indicator,
 QWidget#spectrumInspector QCheckBox::indicator {
@@ -1081,14 +1130,14 @@ QWidget#spectrumInspector QCheckBox::indicator {
     border: 0;
 }
 
-QCheckBox#annotationFillCheck::indicator:unchecked,
+QCheckBox::indicator:unchecked,
 QListWidget#annotationLayerList::indicator:unchecked,
 QListWidget#spectrumSeriesList::indicator:unchecked,
 QWidget#spectrumInspector QCheckBox::indicator:unchecked {
     image: url(__CHECKBOX_UNCHECKED__);
 }
 
-QCheckBox#annotationFillCheck::indicator:checked,
+QCheckBox::indicator:checked,
 QListWidget#annotationLayerList::indicator:checked,
 QListWidget#spectrumSeriesList::indicator:checked,
 QWidget#spectrumInspector QCheckBox::indicator:checked {
@@ -1099,11 +1148,11 @@ QCheckBox#annotationFillCheck:disabled {
     color: #9aa9a5;
 }
 
-QCheckBox#annotationFillCheck::indicator:disabled {
+QCheckBox::indicator:disabled {
     image: url(__CHECKBOX_DISABLED__);
 }
 
-QCheckBox#annotationFillCheck::indicator:checked:disabled {
+QCheckBox::indicator:checked:disabled {
     image: url(__CHECKBOX_CHECKED_DISABLED__);
 }
 
@@ -1113,71 +1162,98 @@ QCheckBox#annotationFillCheck:focus {
     border-radius: 4px;
 }
 
-QSpinBox#annotationSizeInput {
+/* Spin boxes share one look; the inner QLineEdit must not draw its own frame. */
+QSpinBox, QDoubleSpinBox {
     min-height: 22px;
     color: #263735;
     background: #ffffff;
     border: 1px solid #c7d8d4;
     border-radius: 6px;
-    padding: 3px 5px;
-    font-size: 12px;
+    padding: 4px 6px;
     selection-background-color: #cfe7e0;
     selection-color: #105f55;
 }
 
-QSpinBox#annotationSizeInput QLineEdit {
+QSpinBox#annotationSizeInput {
+    padding: 3px 5px;
+    font-size: 12px;
+}
+
+QSpinBox QLineEdit,
+QDoubleSpinBox QLineEdit {
     border: 0;
     border-radius: 0;
     padding: 0;
     background: transparent;
 }
 
-QSpinBox#annotationSizeInput:hover {
+QSpinBox:hover,
+QDoubleSpinBox:hover {
     border-color: #8fbcb4;
 }
 
-QSpinBox#annotationSizeInput::up-button,
-QSpinBox#annotationSizeInput::down-button {
+QSpinBox::up-button,
+QDoubleSpinBox::up-button,
+QSpinBox::down-button,
+QDoubleSpinBox::down-button {
     subcontrol-origin: border;
     width: 18px;
     border: 1px solid #c7d8d4;
     background: #edf4f2;
 }
 
-QSpinBox#annotationSizeInput::up-button {
+QSpinBox::up-button,
+QDoubleSpinBox::up-button {
     subcontrol-position: top right;
     border-bottom: 0;
     border-top-right-radius: 5px;
 }
 
-QSpinBox#annotationSizeInput::down-button {
+QSpinBox::down-button,
+QDoubleSpinBox::down-button {
     subcontrol-position: bottom right;
     border-bottom-right-radius: 5px;
 }
 
-QSpinBox#annotationSizeInput::up-button:hover,
-QSpinBox#annotationSizeInput::down-button:hover {
+QSpinBox::up-button:hover,
+QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover,
+QDoubleSpinBox::down-button:hover {
     background: #dcefeb;
 }
 
-QSpinBox#annotationSizeInput::up-button:pressed,
-QSpinBox#annotationSizeInput::down-button:pressed {
+QSpinBox::up-button:pressed,
+QDoubleSpinBox::up-button:pressed,
+QSpinBox::down-button:pressed,
+QDoubleSpinBox::down-button:pressed {
     background: #cfe7e0;
 }
 
-QSpinBox#annotationSizeInput::up-arrow {
+QSpinBox::up-arrow,
+QDoubleSpinBox::up-arrow {
     image: url(__SPINBOX_UP_ARROW__);
     width: 9px;
     height: 5px;
 }
 
-QSpinBox#annotationSizeInput::down-arrow {
+QSpinBox::down-arrow,
+QDoubleSpinBox::down-arrow {
     image: url(__COMBOBOX_ARROW__);
     width: 9px;
     height: 5px;
 }
 
-QSpinBox#annotationSizeInput:focus,
+QSpinBox:disabled, QDoubleSpinBox:disabled {
+    color: #9ba9a6;
+    background: #f0f3f2;
+    border-color: #dde5e2;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus {
+    border-color: #168b7b;
+    background: #f0f8f5;
+}
+
 QPushButton#annotationColorButton:focus,
 QPushButton#annotationLayerAction:focus,
 QPushButton#annotationDeleteButton:focus {
@@ -1473,6 +1549,31 @@ QTableWidget#spectrumSeparabilityTable QTableCornerButton::section {
 QSplitter#spectrumPlotSplitter::handle {
     background: transparent;
 }
+
+/* Status-bar CPU/RAM monitor (ui/resource_usage.py). */
+QWidget#resourceUsageWidget {
+    background: transparent;
+}
+
+QWidget#resourceUsageWidget QLabel {
+    color: #49635d;
+    background: #e2ece9;
+    border: 1px solid #cdded8;
+    border-radius: 5px;
+    padding: 0 2px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* Status overlay drawn over the hypercube canvas (ui/hypercube_widget.py). */
+QLabel#hypercubeStatusLabel {
+    background-color: rgba(20, 20, 20, 200);
+    color: #f5f5f5;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+}
 """
 
 
@@ -1541,8 +1642,49 @@ TOOL_STRIPE_HOVER_COLOR          = "#e8efec"
 TOOL_STRIPE_DISABLED_COLOR       = "#b8c2bd"
 
 
+def _light_palette() -> QPalette:
+    """Light palette for anything Fusion draws that the QSS does not cover."""
+    palette = QPalette()
+    roles = {
+        QPalette.ColorRole.Window: "#edf2f1",
+        QPalette.ColorRole.WindowText: "#263735",
+        QPalette.ColorRole.Base: "#ffffff",
+        QPalette.ColorRole.AlternateBase: "#f5f9f8",
+        QPalette.ColorRole.Text: "#263735",
+        QPalette.ColorRole.Button: "#ffffff",
+        QPalette.ColorRole.ButtonText: "#263735",
+        QPalette.ColorRole.BrightText: "#ffffff",
+        QPalette.ColorRole.Highlight: "#168b7b",
+        QPalette.ColorRole.HighlightedText: "#ffffff",
+        QPalette.ColorRole.ToolTipBase: "#ffffff",
+        QPalette.ColorRole.ToolTipText: "#263735",
+        QPalette.ColorRole.PlaceholderText: "#8a9c98",
+        QPalette.ColorRole.Link: "#126f62",
+        QPalette.ColorRole.Light: "#ffffff",
+        QPalette.ColorRole.Midlight: "#e4ece9",
+        QPalette.ColorRole.Mid: "#cddad6",
+        QPalette.ColorRole.Dark: "#a9bcb6",
+        QPalette.ColorRole.Shadow: "#7a8c88",
+    }
+    for role, color in roles.items():
+        palette.setColor(role, QColor(color))
+    disabled = QPalette.ColorGroup.Disabled
+    for role in (
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+    ):
+        palette.setColor(disabled, role, QColor("#9ba9a6"))
+    palette.setColor(disabled, QPalette.ColorRole.Base, QColor("#f0f3f2"))
+    palette.setColor(disabled, QPalette.ColorRole.Button, QColor("#f0f3f2"))
+    return palette
+
+
 def apply_theme(app: QApplication) -> None:
+    # The theme is light-only; stop Fusion following the OS dark mode.
+    app.styleHints().setColorScheme(Qt.ColorScheme.Light)
     app.setStyle("Fusion")
+    app.setPalette(_light_palette())
     app.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
     assets_dir = Path(__file__).parent / "assets"
     combo_box_arrow = assets_dir / "chevron_down.svg"

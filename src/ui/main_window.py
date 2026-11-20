@@ -592,6 +592,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 "classificationTabBar",
                 "Classification mode",
             ),
+            (
+                self.batchClassifyModeTabs,
+                "batchClassifyTabBar",
+                "Batch classification mode",
+            ),
         )
         self._tab_transitions: list[TabTransitionHandler] = []
 
@@ -603,6 +608,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             tab_bar.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
             tab_bar.setExpanding(False)
             tab_bar.setElideMode(QtCore.Qt.TextElideMode.ElideRight)
+            if object_name != "mainTabBar":
+                # Two-segment switches always fit; never show scroll arrows.
+                tab_bar.setUsesScrollButtons(False)
             self._tab_transitions.append(TabTransitionHandler(tab_widget))
 
     def _configure_file_menu(self) -> None:
