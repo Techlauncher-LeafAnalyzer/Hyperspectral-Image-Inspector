@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import threading
 
 import numpy as np
-import pytest
 from spectral.io import envi
 
 from core import CalibrationService, CancelledError
@@ -30,14 +28,18 @@ def _reference(directory: Path, name: str, value: float, columns: int) -> Path:
     return path
 
 
-def _wait(qtbot, worker: CalibrationWorker) -> None:
-    qtbot.waitUntil(lambda: not worker.isRunning(), timeout=30_000)
+def _start(qtbot, worker: CalibrationWorker):
+    """Start the worker; ``.wait()`` on the result blocks until it has finished.
+
+    Polling ``isRunning()`` races the worker's queued signals: the thread can
+    stop before ``result_ready``/``failed`` reach the GUI thread. ``finished``
+    is queued after them, so once it arrives they have been delivered.
+    """
+    blocker = qtbot.waitSignal(worker.finished, timeout=30_000)
+    worker.start()
+    return blocker
 
 
-@pytest.mark.skipif(
-    os.environ.get("GITHUB_ACTIONS", "").casefold() == "true",
-    reason="Calibration preview worker test is unreliable on GitHub Actions; enabled locally.",
-)
 def test_worker_calibrates_and_renders_preview(
     loaded_window, tmp_path, qtbot
 ):
@@ -51,8 +53,7 @@ def test_worker_calibrates_and_renders_preview(
     worker.result_ready.connect(lambda result, display: results.append((result, display)))
     worker.failed.connect(failures.append)
 
-    worker.start()
-    _wait(qtbot, worker)
+    _start(qtbot, worker).wait()
 
     assert failures == []
     assert len(results) == 1
@@ -76,8 +77,7 @@ def test_worker_reports_model_validation_failure(
     worker.result_ready.connect(lambda *items: results.append(items))
     worker.failed.connect(failures.append)
 
-    worker.start()
-    _wait(qtbot, worker)
+    _start(qtbot, worker).wait()
 
     assert results == []
     assert len(failures) == 1
@@ -105,10 +105,10 @@ def test_worker_honours_interruption_during_calibration(
     worker.cancelled.connect(lambda: cancelled.append(True))
     worker.result_ready.connect(lambda *items: results.append(items))
 
-    worker.start()
+    done = _start(qtbot, worker)
     qtbot.waitUntil(started.is_set)
     worker.requestInterruption()
-    _wait(qtbot, worker)
+    done.wait()
 
     assert cancelled == [True]
     assert results == []

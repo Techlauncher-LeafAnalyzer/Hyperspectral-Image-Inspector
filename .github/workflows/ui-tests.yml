@@ -8,13 +8,16 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest is migrating to Ubuntu 26, which would change the
+    # system Qt libraries underneath us without a code change.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.14"
+          python-version: "3.14.7"
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
@@ -43,4 +46,4 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run UI test suite
-        run: pytest -v
+        run: pytest -v -ra -p no:cacheprovider
