@@ -289,6 +289,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             viewer_names={self.viewer: ""},
             statusbar=self.statusbar,
             parent_widget=self,
+            display_scale=self._display_scale,
         )
         self._spectrum_controller.similarityReady.connect(self._on_similarity_ready)
         self.classificationLayerPanel.classSpectraRequested.connect(

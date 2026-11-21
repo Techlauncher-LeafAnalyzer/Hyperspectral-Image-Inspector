@@ -72,7 +72,9 @@ class PinnedSpectrum:
 
     ``number`` is shown in the label and on the image marker, so a circle on
     the canvas can be matched to its line. ``source`` is the cube the pixel
-    was read from (opaque here); markers are drawn only on viewers showing it.
+    was read from (opaque here). ``center`` is the pinned point as
+    ``(y, x)`` in original-image pixels, so the pin can follow the image
+    between its original and Super-Resolution sizes.
     """
 
     label: str
@@ -83,6 +85,7 @@ class PinnedSpectrum:
     row: int = 0
     column: int = 0
     source: object = None
+    center: Optional[tuple[float, float]] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +99,7 @@ class PinMarker:
     color: tuple[float, float, float]
     selected: bool
     source: object
+    center: Optional[tuple[float, float]] = None
 
 
 @dataclass(slots=True)
@@ -499,7 +503,11 @@ class SpectrumInspector(QtWidgets.QWidget):
         self._status_label.setText(message)
 
     def add_pin(
-        self, result: SpectrumResult, source: str = "", data_source: object = None
+        self,
+        result: SpectrumResult,
+        source: str = "",
+        data_source: object = None,
+        center: Optional[tuple[float, float]] = None,
     ) -> None:
         """Keep ``result`` on the plot under a ``#N · (row, column)`` label.
 
@@ -518,33 +526,65 @@ class SpectrumInspector(QtWidgets.QWidget):
         pin = PinnedSpectrum(
             label, result.wavelengths_nm, result.values, color,
             number=number, row=result.row, column=result.column, source=data_source,
+            center=center,
         )
         self._series_by_key[key] = _Series(key, color, pin=pin)
         self._selected_key = key
         self._series_changed()
 
-    def move_pin(self, key: str, result: SpectrumResult, *, final: bool = True) -> None:
+    def move_pin(
+        self,
+        key: str,
+        result: SpectrumResult,
+        *,
+        final: bool = True,
+        center: Optional[tuple[float, float]] = None,
+    ) -> None:
         """Re-point pin ``key`` at ``result``'s pixel, keeping its number and colour.
 
         ``final=False`` is a live update during a drag: only the plot is
         redrawn; the list, references and markers refresh on the final move.
         """
 
-        series = self._series_by_key.get(key)
-        if series is None or series.pin is None:
+        if not self._repoint(key, result, center=center):
             return
-        pin = series.pin
-        source = pin.label.split(")", 1)[1] if ")" in pin.label else ""
-        series.pin = PinnedSpectrum(
-            f"#{pin.number} · Pixel ({result.row}, {result.column}){source}",
-            result.wavelengths_nm, result.values, pin.color,
-            number=pin.number, row=result.row, column=result.column, source=pin.source,
-        )
         if final:
             self._selected_key = key
             self._series_changed()
         else:
             self._redraw()
+
+    def retarget_pins(self, updates: Sequence[tuple[str, SpectrumResult, object]]) -> None:
+        """Re-read pins from another cube: ``(key, spectrum, cube)`` each.
+
+        Used when the displayed image changes (calibration, Super-Resolution);
+        each pin keeps its number, colour, place and selection.
+        """
+
+        if any([self._repoint(key, result, data_source=data) for key, result, data in updates]):
+            self._series_changed()
+
+    def _repoint(
+        self,
+        key: str,
+        result: SpectrumResult,
+        *,
+        center: Optional[tuple[float, float]] = None,
+        data_source: object = None,
+    ) -> bool:
+        series = self._series_by_key.get(key)
+        if series is None or series.pin is None:
+            return False
+        pin = series.pin
+        source = pin.label.split(")", 1)[1] if ")" in pin.label else ""
+        series.pin = PinnedSpectrum(
+            f"#{pin.number} · Pixel ({result.row}, {result.column}){source}",
+            result.wavelengths_nm, result.values, pin.color,
+            number=pin.number, row=result.row, column=result.column,
+            source=pin.source if data_source is None else data_source,
+            center=pin.center if center is None else center,
+        )
+        return True
 
     def pinned_spectra(self) -> tuple[PinnedSpectrum, ...]:
         return tuple(s.pin for s in self._series_by_key.values() if s.pin is not None)
@@ -558,7 +598,7 @@ class SpectrumInspector(QtWidgets.QWidget):
         return tuple(
             PinMarker(
                 s.key, s.pin.number, s.pin.row, s.pin.column, s.color,
-                s.key == self._selected_key, s.pin.source,
+                s.key == self._selected_key, s.pin.source, s.pin.center,
             )
             for s in self._series_by_key.values()
             if s.pin is not None and s.marker_visible

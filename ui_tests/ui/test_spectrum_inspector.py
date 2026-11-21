@@ -336,18 +336,6 @@ def test_pins_draw_numbered_markers_matching_their_spectra(loaded_window, inspec
     assert loaded_window.viewer._pin_marker_items == []
 
 
-def test_markers_only_while_the_canvas_shows_the_pinned_cube(
-    loaded_window, inspector, monkeypatch
-):
-    loaded_window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(5, 3))
-    controller = loaded_window._spectrum_controller
-    controller.refresh_markers()
-    assert _marker_numbers(loaded_window.viewer) == ["1"]
-    monkeypatch.setattr(controller, "_data_for_viewer", lambda viewer: object())
-    controller.refresh_markers()
-    assert loaded_window.viewer._pin_marker_items == []
-
-
 def test_markers_survive_mode_switch_and_clear_on_crop(loaded_window, inspector):
     loaded_window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(5, 3))
     loaded_window.modeNDVI.setChecked(True)

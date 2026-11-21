@@ -700,3 +700,49 @@ def test_partial_calibration_result_does_not_show_after_for_missing_resolution(
     window._select_canvas_resolution(False)
     assert window._display_data() is source
     assert all(not switch.isChecked() and switch.isEnabled() for switch in switches)
+
+
+def _marker_pixels(viewer):
+    return [(round(item.pos().y() - 0.5), round(item.pos().x() - 0.5))
+            for item in viewer._pin_marker_items]
+
+
+def test_pins_follow_the_image_between_resolutions(loaded_window, stub_sr, qtbot):
+    window = loaded_window
+    inspector = window._spectrum_controller.inspector
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(5, 3))  # pixel (3, 5)
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+
+    # The same pin, at the matching 2x pixel, with the 2x cube's spectrum.
+    high = window._super_res_result.data
+    (pin,) = inspector.pinned_spectra()
+    assert (pin.row, pin.column, pin.number) == (7, 11, 1) and pin.source is high
+    np.testing.assert_array_equal(pin.values, high.read_pixel(7, 11))
+    assert _marker_pixels(window.viewer) == [(7, 11)]
+    assert window.classificationLayerPanel._pin_rows["pin:0"]._count_label.text() == "Pixel (7, 11)"
+
+    # A pin made on the 2x image comes back to it unchanged.
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(15, 14))
+    window._set_high_resolution_selected(False)
+    assert _marker_pixels(window.viewer) == [(3, 5), (7, 7)]
+    first, second = inspector.pinned_spectra()
+    np.testing.assert_array_equal(first.values, window._hsi_data.read_pixel(3, 5))
+    window._set_high_resolution_selected(True)
+    assert _marker_pixels(window.viewer) == [(7, 11), (14, 15)]
+    assert len(inspector.pinned_spectra()) == 2
+
+
+def test_a_pin_dragged_on_the_2x_image_keeps_its_place(loaded_window, stub_sr, qtbot):
+    window = loaded_window
+    stub_sr.release.set()
+    window.runSuperResButton.click()
+    finish(qtbot, window)
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(1, 1))
+    window.viewer.pinMoved.emit("pin:0", 9, 13)
+    window._set_high_resolution_selected(False)
+    assert _marker_pixels(window.viewer) == [(4, 6)]
+    window._set_high_resolution_selected(True)
+    assert _marker_pixels(window.viewer) == [(9, 13)]
+

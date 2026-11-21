@@ -67,8 +67,12 @@ class SpectrumController(QtCore.QObject):
         viewer_names: Mapping[HSIViewer, str],
         statusbar: QtWidgets.QStatusBar,
         parent_widget: QtWidgets.QWidget,
+        display_scale: Callable[[], float] | None = None,
     ) -> None:
         super().__init__(parent_widget)
+        # Displayed pixels per original pixel (2 for Super-Resolution); pins
+        # are kept in original pixels and drawn at this scale.
+        self._display_scale = display_scale or (lambda: 1)
         self._visualization = visualization_service
         self._analysis = analysis_service
         self._data_for_viewer = data_for_viewer
@@ -163,7 +167,9 @@ class SpectrumController(QtCore.QObject):
             return None
         finally:
             self._resume_hypercube()
-        self.inspector.add_pin(result, self._viewer_names.get(viewer, ""), data)
+        self.inspector.add_pin(
+            result, self._viewer_names.get(viewer, ""), data, self._center_of(row, column)
+        )
         self.inspector.set_live(result, self._viewer_names.get(viewer, ""))
         self.show()
         self._statusbar.showMessage(
@@ -174,25 +180,74 @@ class SpectrumController(QtCore.QObject):
         return result
 
     def refresh_markers(self) -> None:
-        """Draw each shown pin's circle on every viewer displaying its cube.
+        """Draw each shown pin's circle where it lies on the displayed image.
 
-        Call after any viewer's displayed cube may have changed (resolution or
-        calibration toggles, crops); pins from another cube are not drawn, so
-        a low-resolution pin never lands on the 2x Super-Resolution image.
+        Call after the displayed cube may have changed (resolution or
+        calibration toggles, crops). Pins follow the image between its
+        original and Super-Resolution sizes, and their spectra are re-read
+        from whichever cube is now shown.
         """
 
         markers = self.inspector.pin_markers()
         for viewer in self._viewer_names:
             data = self._data_for_viewer(viewer)
-            viewer.set_pin_markers(tuple(
-                PinMarkerSpec(
-                    marker.row, marker.column, marker.number,
-                    tuple(round(channel * 255) for channel in marker.color),
-                    marker.selected, marker.key,
-                )
-                for marker in markers
-                if data is not None and marker.source is data
-            ))
+            specs = []
+            for marker in markers:
+                pixel = self._pin_pixel(marker, data)
+                if pixel is not None:
+                    specs.append(PinMarkerSpec(
+                        *pixel, marker.number,
+                        tuple(round(channel * 255) for channel in marker.color),
+                        marker.selected, marker.key,
+                    ))
+            viewer.set_pin_markers(tuple(specs))
+        self._follow_pins()
+
+    def _center_of(self, row: int, column: int) -> tuple[float, float]:
+        """The centre of displayed pixel ``(row, column)``, in original pixels."""
+
+        scale = self._display_scale()
+        return ((row + 0.5) / scale, (column + 0.5) / scale)
+
+    def _pin_pixel(self, pin, data: Optional[HSIData]) -> Optional[tuple[int, int]]:
+        """The displayed pixel under ``pin`` (a pin or its marker), if on the image."""
+
+        if data is None:
+            return None
+        if pin.center is None:
+            return (pin.row, pin.column) if pin.source is data else None
+        scale = self._display_scale()
+        row, column = int(pin.center[0] * scale), int(pin.center[1] * scale)
+        if 0 <= row < data.rows and 0 <= column < data.columns:
+            return row, column
+        return None
+
+    def _follow_pins(self) -> None:
+        """Re-read pins taken from another cube than the one now displayed."""
+
+        data = self._display_data()
+        stale = [
+            (key, pin) for key, pin in self.inspector.pin_keys().items()
+            if pin.source is not data
+        ]
+        if not stale or not data.is_loaded() or self._blocked_reason() is not None:
+            return
+        readable = [(key, self._pin_pixel(pin, data)) for key, pin in stale]
+        readable = [(key, pixel) for key, pixel in readable if pixel is not None]
+        if not readable:
+            return
+        updates = []
+        self._stop_hypercube()
+        try:
+            for key, pixel in readable:
+                try:
+                    updates.append((key, self._visualization.spectrum(data, *pixel), data))
+                except HSIError as exc:
+                    LOGGER.info("Pin re-read failed: %s", exc)
+        finally:
+            self._resume_hypercube()
+        # Redraws the markers (pinsChanged) at the re-read pixels.
+        self.inspector.retarget_pins(updates)
 
     def set_visualization(self, result: Optional[VisualizationResult]) -> None:
         """Mark the bands read by the visualization now shown."""
@@ -416,7 +471,7 @@ class SpectrumController(QtCore.QObject):
         finally:
             if final:
                 self._resume_hypercube()
-        self.inspector.move_pin(key, result, final=final)
+        self.inspector.move_pin(key, result, final=final, center=self._center_of(row, column))
         if final:
             self._statusbar.showMessage(f"Moved pin to pixel ({row}, {column})", 4000)
 
