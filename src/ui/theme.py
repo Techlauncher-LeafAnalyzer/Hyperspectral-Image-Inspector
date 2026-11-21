@@ -1066,6 +1066,43 @@ QToolButton#annotationToolButton:focus {
     border: 1px solid #168b7b;
 }
 
+/* Drawing toolbox at the Segmentation image's left edge. */
+QFrame#annotationToolPalette {
+    background: #f9fbfa;
+    border: 1px solid #d8e2df;
+    border-radius: 8px;
+}
+
+QToolButton#annotationPaletteButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 0;
+}
+
+QToolButton#annotationPaletteButton:hover {
+    background: #e8efec;
+}
+
+QToolButton#annotationPaletteButton:checked {
+    background: #d3ebe5;
+    border-color: #78afa5;
+}
+
+QToolButton#annotationPaletteButton:pressed,
+QToolButton#annotationPaletteButton:checked:hover {
+    background: #cfe7e0;
+    border-color: #4e9d8f;
+}
+
+QToolButton#annotationPaletteButton:focus {
+    border-color: #168b7b;
+}
+
+QToolButton#annotationPaletteButton:disabled {
+    background: transparent;
+}
+
 QWidget#annotationContent {
     background: transparent;
     border: 0;

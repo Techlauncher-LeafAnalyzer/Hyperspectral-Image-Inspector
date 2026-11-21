@@ -136,8 +136,8 @@ def test_bottom_bars_moved_into_their_panels(shown_window):
     for widget in (window.classificationModeTabs, window.comboBox,
                    window.unsupervisedClassifyButton, window.pushButton_2):
         assert window.classificationLayerPanel.isAncestorOf(widget)
-    # Each view page now holds just its canvas (plus Segmentation's inspector
-    # and Visualization's mode caption).
+    # Each view page now holds just its canvas (plus Segmentation's toolbox
+    # and inspector, and Visualization's mode caption).
     def page_items(page):
         layout = page.layout()
         return [layout.itemAt(i).widget() for i in range(layout.count())]
@@ -148,6 +148,7 @@ def test_bottom_bars_moved_into_their_panels(shown_window):
     assert page_items(window.SuperResolution) == [window.superResViewer]
     assert page_items(window.Calibration) == [window.calibrationViewer]
     assert page_items(window.Classification) == [
+        window.classificationLayerPanel.annotation_page.tool_palette,
         window.classificationViewer, window.classificationLayerPanel,
     ]
 

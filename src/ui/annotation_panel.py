@@ -39,6 +39,7 @@ _TOOL_LABELS: tuple[tuple[AnnotationKind | str, str, str], ...] = (
     ),
 )
 _ASSETS = Path(__file__).parent / "assets"
+_PALETTE_BUTTON_SIZE = 34
 _TOOL_ICONS = {
     AnnotationKind.RECTANGLE: "annotation_rectangle.svg",
     AnnotationKind.ELLIPSE: "annotation_ellipse.svg",
@@ -144,44 +145,38 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._tool_group = QtWidgets.QButtonGroup(self)
         self._tool_group.setExclusive(False)
 
-        tool_grid = QtWidgets.QGridLayout()
-        tool_grid.setContentsMargins(0, 0, 0, 0)
-        tool_grid.setSpacing(6)
-        for index, (kind, label, tip) in enumerate(_TOOL_LABELS):
-            button = QtWidgets.QToolButton(self)
-            button.setObjectName("annotationToolButton")
+        # Photoshop-style toolbox: a column of square icon buttons. The page
+        # owns it, but the window places it at the image's left edge.
+        self.tool_palette = QtWidgets.QFrame(self)
+        self.tool_palette.setObjectName("annotationToolPalette")
+        self.tool_palette.hide()  # until the window places it beside the image
+        self.tool_palette.setAccessibleName("Drawing tools")
+        self.tool_palette.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Maximum
+        )
+        palette_layout = QtWidgets.QVBoxLayout(self.tool_palette)
+        palette_layout.setContentsMargins(4, 4, 4, 4)
+        palette_layout.setSpacing(4)
+        for kind, label, tip in _TOOL_LABELS:
+            button = QtWidgets.QToolButton(self.tool_palette)
+            button.setObjectName("annotationPaletteButton")
             button.setText(label)
-            button.setToolTip(tip)
-            button.setAccessibleName(tip)
+            button.setToolTip(f"<b>{label}</b><br>{tip}")
+            button.setAccessibleName(label)
+            button.setAccessibleDescription(tip)
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setIcon(QtGui.QIcon(str(_ASSETS / _TOOL_ICONS[kind])))
-            button.setIconSize(QSize(16, 16))
-            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            button.setSizePolicy(
-                QtWidgets.QSizePolicy.Policy.Expanding,
-                QtWidgets.QSizePolicy.Policy.Fixed,
-            )
+            button.setIconSize(QSize(20, 20))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            button.setFixedSize(_PALETTE_BUTTON_SIZE, _PALETTE_BUTTON_SIZE)
             self._tool_group.addButton(button)
             self._tool_buttons[kind] = button
-            if kind == PEN_TOOL:
-                tool_grid.addWidget(button, index // 2, 0, 1, 2)
-            else:
-                tool_grid.addWidget(button, index // 2, index % 2)
+            palette_layout.addWidget(button)
             button.clicked.connect(
                 lambda checked, k=kind: self._on_tool_clicked(k, checked)
             )
-        tool_grid.setColumnStretch(0, 1)
-        tool_grid.setColumnStretch(1, 1)
 
-        tool_hint = QtWidgets.QLabel(
-            "Click the active tool again to pan or select.", self
-        )
-        tool_hint.setObjectName("annotationHint")
-        tool_hint.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum
-        )
-        tool_hint.setWordWrap(True)
         self._pen_hint = QtWidgets.QLabel(_PEN_HINT, self)
         self._pen_hint.setObjectName("annotationHint")
         self._pen_hint.setWordWrap(True)
@@ -309,7 +304,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
 
         self._empty_label = QtWidgets.QLabel(
             "<b>No annotations yet</b><br><br>"
-            "Choose a drawing tool above,<br>then draw on the image.", self
+            "Choose a drawing tool at the image's<br>left edge, then draw on the image.", self
         )
         self._empty_label.setObjectName("annotationEmptyState")
         self._empty_label.setMinimumHeight(110)
@@ -341,9 +336,6 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 2, 0)
         layout.setSpacing(8)
-        layout.addWidget(self._section_label("Drawing tools"))
-        layout.addLayout(tool_grid)
-        layout.addWidget(tool_hint)
         layout.addWidget(self._pen_hint)
         layout.addWidget(vector_section)
         layout.addWidget(controls)

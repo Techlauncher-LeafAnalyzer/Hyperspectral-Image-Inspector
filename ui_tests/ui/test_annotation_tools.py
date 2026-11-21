@@ -306,29 +306,39 @@ def test_tool_buttons_toggle_off_and_fit_the_inspector(qtbot, themed_app, width,
     assert not any(b.isChecked() for b in page._tool_buttons.values())
     scroll = panel._scroll_area  # the whole inspector scrolls, not the page
     qtbot.waitUntil(lambda: scroll.widget().width() <= scroll.viewport().width())
-    for button in page._tool_buttons.values():
+    # The tools are a Photoshop-style column of square icon buttons.
+    page.tool_palette.show()  # the window normally places it beside the image
+    page.tool_palette.adjustSize()
+    buttons = list(page._tool_buttons.values())
+    qtbot.waitUntil(lambda: buttons[-1].y() > buttons[0].y())
+    for button in buttons:
         assert not button.icon().isNull()
-        assert button.width() >= button.minimumSizeHint().width()
-    arrow = page._tool_buttons[AnnotationKind.ARROW]
-    text = page._tool_buttons[AnnotationKind.TEXT]
-    # Qt respects each label's minimum width before sharing remaining space;
-    # wider fonts may need unequal columns to keep both labels readable.
-    assert rect.x() == arrow.x()
-    assert circle.x() == text.x()
-    assert rect.y() == circle.y()
-    assert arrow.y() == text.y()
-    assert rect.geometry().right() < circle.x()
-    assert rect.geometry().bottom() < arrow.y()
+        assert button.width() == button.height()
+        assert button.parentWidget() is page.tool_palette
+    assert [b.x() for b in buttons] == [buttons[0].x()] * len(buttons)
+    assert all(a.geometry().bottom() < b.y() for a, b in zip(buttons, buttons[1:]))
 
-    hint = next(label for label in page.findChildren(QtWidgets.QLabel)
-                if label.text().startswith("Click the active tool"))
     appearance = page.findChild(QtWidgets.QFrame, "annotationAppearance")
-    assert hint.height() >= hint.heightForWidth(hint.width())
-    assert hint.geometry().bottom() < appearance.y()
     assert appearance.height() >= appearance.minimumSizeHint().height()
     assert page._fill_button.geometry().bottom() < page._fill_check.y()
     assert page._fill_check.height() >= page._fill_check.minimumSizeHint().height()
     assert page._fill_check.geometry().bottom() < page._stroke_width.y()
+
+
+def test_choosing_a_tool_from_the_classes_view_shows_its_options(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    assert panel.mode == "classes"
+    panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].click()
+    assert panel.mode == "annotations"
+    assert panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].isChecked()
+    panel.set_mode("classes")
+    panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].click()
+    # Turning a tool off does not switch views.
+    panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].click()
+    assert panel.mode == "annotations"
+    panel.set_mode("classes")
+    assert panel.mode == "classes"
 
 
 def _log_deselect(viewer, log):

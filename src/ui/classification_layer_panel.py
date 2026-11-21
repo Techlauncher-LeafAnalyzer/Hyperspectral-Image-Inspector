@@ -624,6 +624,13 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         body_layout.addWidget(self._rows_container, 1)
 
         self.annotation_page = AnnotationToolsPage(self)
+        # The toolbox sits beside the image, so a tool can be picked from the
+        # Classes view; show the tool's options and layers when it is.
+        # Connected before any Controller, so the mode switch (which disarms
+        # tools when leaving Annotations) runs before the tool is armed.
+        self.annotation_page.toolChanged.connect(
+            lambda kind: kind is not None and self.set_mode("annotations")
+        )
 
         self._classes_mode_button = self._make_mode_button("Classes", "Show class layers")
         self._annotations_mode_button = self._make_mode_button(

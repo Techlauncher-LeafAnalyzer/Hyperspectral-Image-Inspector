@@ -505,6 +505,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.segmentationPill.clicked.connect(self._on_segmentation_pill_clicked)
         # The classifier form joins the inspector beside the image.
         self.classificationLayerPanel.set_classifier_controls(self.segmentationPanel)
+        # The drawing toolbox sits at the image's left edge, like Photoshop's.
+        palette = self.classificationLayerPanel.annotation_page.tool_palette
+        self.classificationLayout.insertWidget(0, palette, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        palette.show()
         self.classificationModeTabs.currentChanged.connect(self._fit_classification_mode_tabs)
         self._fit_classification_mode_tabs()
 
