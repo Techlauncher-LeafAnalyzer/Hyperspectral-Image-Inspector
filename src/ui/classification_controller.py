@@ -468,14 +468,8 @@ class ClassificationController(QObject):
     def class_id_at(self, row: int, column: int) -> Optional[int]:
         """Return the zero-based class ID at ``(row, column)``, if any."""
 
-        result = self._current_slot.result
-        if result is None or not (
-            0 <= row < result.class_map.shape[0]
-            and 0 <= column < result.class_map.shape[1]
-        ):
-            return None
-        class_id = int(result.class_map[row, column])
-        return class_id if class_id >= 0 else None
+        layers = self._current_slot.layers
+        return None if layers is None else layers.class_at(row, column)
 
     def analysis_regions(self) -> Optional[tuple[HSIData, dict[str, "AnalysisRegion"]]]:
         """Every class and measured annotation region, for spectral analysis.
@@ -665,6 +659,8 @@ class ClassificationController(QObject):
         self._layer_panel.annotationDeleteRequested.connect(
             self._on_annotation_delete_requested
         )
+        self._layer_panel.classMoveRequested.connect(self._on_class_move_requested)
+        self._layer_panel.classDeleteRequested.connect(self._on_class_delete_requested)
 
         self._num_classes_edit.setValidator(QtGui.QIntValidator(2, 65535, self))
         self._max_iterations_edit.setValidator(QtGui.QIntValidator(1, 10000, self))
@@ -1106,6 +1102,51 @@ class ClassificationController(QObject):
             self._statusbar.showMessage(str(exc), 8000)
             return
         self._opacity_refresh_timer.start()
+
+    @QtCore.pyqtSlot(int, int)
+    def _on_class_move_requested(self, class_id: int, delta: int) -> None:
+        slot = self._current_slot
+        if slot.layers is None or not slot.layers.move_class(class_id, delta):
+            return
+        self._populate_layer_panel(slot)
+        self._show_result()
+        self.regionsChanged.emit()
+
+    @QtCore.pyqtSlot(int)
+    def _on_class_delete_requested(self, class_id: int) -> None:
+        """Delete a class layer.
+
+        A class drawn with the Pen is removed with its outline, which Ctrl+Z
+        undoes. A classified class's pixels can only come back by
+        classifying again, so that asks first.
+        """
+
+        slot = self._current_slot
+        if slot.layers is None or class_id not in slot.layers.paint_order:
+            return
+        if class_id in slot.drawn_names:
+            self._on_vector_revert_requested(class_id)
+            self._layer_panel.set_selected_layer(None)
+            return
+        name = next(layer.name for layer in slot.layers.layers if layer.class_id == class_id)
+        answer = QMessageBox.question(
+            self._parent,
+            "Delete class layer",
+            f"Delete {name}? Its pixels become unclassified; classify again "
+            "to get it back.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        slot.layers.remove_class(class_id)
+        if class_id in slot.vectors:
+            slot.vectors.remove(class_id)
+        if slot.vector_class == class_id:
+            slot.vector_class = None
+            slot.vector_selection = None
+        self._layer_panel.set_selected_layer(None)
+        self._apply_vectors(slot)
+        self.regionsChanged.emit()
+        self._statusbar.showMessage(f"Deleted {name}", 5000)
 
     @QtCore.pyqtSlot(bool)
     def _on_set_all_visible_requested(self, visible: bool) -> None:
@@ -1619,6 +1660,8 @@ class ClassificationController(QObject):
             names = {layer.class_id: layer.name for layer in slot.layers.layers}
             scale = self._display_scale()
             for class_id, mask in slot.vectors.masks.items():
+                if class_id not in names:
+                    continue  # a deleted layer's outline, back from an undo
                 outlines.append(VectorOutline(class_id, colors[class_id], mask.scaled(scale)))
                 entries.append(
                     (class_id, names[class_id], colors[class_id],
@@ -1909,14 +1952,10 @@ class ClassificationController(QObject):
         slot = self._current_slot
         if slot.rgb is None or slot.layers is None:
             return None
-        # Overlapping layers paint bottom to top: classification classes,
-        # then outlined and drawn classes in the order they were made.
+        # Overlapping layers paint bottom to top in the layer stack's order.
         paint = dict(
             colors=classification_palette(slot.layers.class_ids, slot.fixed_colors),
-            paint_order=(
-                *(class_id for class_id in slot.layers.class_ids if class_id not in slot.vectors),
-                *slot.vectors.masks,
-            ),
+            paint_order=slot.layers.paint_order,
         )
         base_rgb = self._background_rgb(slot)
         if base_rgb is not None and base_rgb.shape == (*slot.layers.image_shape, 3):

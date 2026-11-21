@@ -251,13 +251,19 @@ class ClassificationLayerModel:
         self._opacity = {class_id: 1.0 for class_id in class_ids}
         self._global_opacity = 1.0
         self._outline_mode = False
+        # Layer stack, bottom to top, like Photoshop's; overlapping classes
+        # paint in this order. Deleted layers keep their masks but are gone
+        # from the stack, the composite and every per-layer listing.
+        self._order: list[int] = list(class_ids)
+        self._removed: set[int] = set()
 
     def with_result(self, result: ClassificationResult) -> "ClassificationLayerModel":
         """Return a model over ``result`` that keeps this one's layer state.
 
         Use after editing class regions (e.g. a vector mask) without
         reclassifying: names, visibility and opacity carry over for every
-        class ID the new result still has, as do the global controls.
+        class ID the new result still has, as do the global controls, the
+        stacking order (new classes go on top) and deleted layers.
         """
 
         model = ClassificationLayerModel(result, names=self._names)
@@ -267,6 +273,9 @@ class ClassificationLayerModel:
                 model._opacity[class_id] = self._opacity[class_id]
         model._global_opacity = self._global_opacity
         model._outline_mode = self._outline_mode
+        kept = [class_id for class_id in self._order if class_id in model._visibility]
+        model._order = kept + [class_id for class_id in model._class_ids if class_id not in kept]
+        model._removed = self._removed & set(model._class_ids)
         return model
 
     @property
@@ -286,8 +295,52 @@ class ClassificationLayerModel:
     @property
     def visible_class_ids(self) -> tuple[int, ...]:
         return tuple(
-            class_id for class_id in self._class_ids if self._visibility[class_id]
+            class_id for class_id in self._class_ids
+            if self._visibility[class_id] and class_id not in self._removed
         )
+
+    @property
+    def paint_order(self) -> tuple[int, ...]:
+        """Class IDs in the layer stack, bottom to top (deleted ones left out)."""
+
+        return tuple(class_id for class_id in self._order if class_id not in self._removed)
+
+    def move_class(self, class_id: int, delta: int) -> bool:
+        """Move a layer ``delta`` places up the stack (negative: down).
+
+        Returns whether it moved; it stops at the top and bottom.
+        """
+
+        normalized = self._require_class(class_id)
+        stack = list(self.paint_order)
+        if normalized not in stack:
+            return False
+        index = stack.index(normalized)
+        target = max(0, min(len(stack) - 1, index + int(delta)))
+        if target == index:
+            return False
+        stack.insert(target, stack.pop(index))
+        self._order = stack + [class_id for class_id in self._order if class_id in self._removed]
+        return True
+
+    def remove_class(self, class_id: int) -> None:
+        """Delete a layer: it leaves the stack and no longer paints or lists."""
+
+        self._removed.add(self._require_class(class_id))
+
+    def class_at(self, row: int, column: int) -> int | None:
+        """The top-most visible class at a pixel, or ``None``."""
+
+        rows, columns = self.image_shape
+        if not (0 <= row < rows and 0 <= column < columns):
+            return None
+        for class_id in reversed(self._visible_stack()):
+            if self._one_hot_masks[self._class_index(class_id), row, column]:
+                return class_id
+        return None
+
+    def _visible_stack(self) -> tuple[int, ...]:
+        return tuple(class_id for class_id in self.paint_order if self._visibility[class_id])
 
     @property
     def global_opacity(self) -> float:
@@ -303,17 +356,17 @@ class ClassificationLayerModel:
 
     @property
     def layers(self) -> tuple[ClassificationLayer, ...]:
-        """Return current layer rows in stable classification order."""
+        """Return current layer rows bottom to top, without deleted layers."""
 
         return tuple(
             ClassificationLayer(
                 class_id=class_id,
                 name=self._names[class_id],
-                pixel_count=self._pixel_counts[index],
+                pixel_count=self._pixel_counts[self._class_index(class_id)],
                 visible=self._visibility[class_id],
                 opacity=self._opacity[class_id],
             )
-            for index, class_id in enumerate(self._class_ids)
+            for class_id in self.paint_order
         )
 
     def mask_for_class(self, class_id: int) -> np.ndarray:
@@ -399,11 +452,7 @@ class ClassificationLayerModel:
     def visible_mask(self) -> np.ndarray:
         """Return a read-only HxW boolean union of all visible classes."""
 
-        indices = [
-            index
-            for index, class_id in enumerate(self._class_ids)
-            if self._visibility[class_id]
-        ]
+        indices = [self._class_index(class_id) for class_id in self.visible_class_ids]
         if indices:
             mask = np.any(self._one_hot_masks[indices].astype(bool), axis=0)
         else:
@@ -432,11 +481,15 @@ class ClassificationLayerModel:
         Returns ``(rgb, alpha)``; ``rgb`` is ``None`` without ``colors``.
         """
 
-        order = self._class_ids if paint_order is None else tuple(paint_order)
+        order = self.paint_order if paint_order is None else tuple(paint_order)
         alpha = np.zeros(self.image_shape, dtype=np.float32)
         rgb = None if colors is None else np.zeros((*self.image_shape, 3), dtype=np.uint8)
         for class_id in order:
-            if class_id not in self._visibility or not self._visibility[class_id]:
+            if (
+                class_id not in self._visibility
+                or not self._visibility[class_id]
+                or class_id in self._removed
+            ):
                 continue
             mask = self._one_hot_masks[self._class_index(class_id)].astype(bool, copy=False)
             if self._outline_mode:

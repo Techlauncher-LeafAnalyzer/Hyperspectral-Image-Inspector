@@ -127,7 +127,7 @@ def test_spectra_boxes_follow_the_inspector_without_emitting(qtbot):
     emitted = []
     panel.spectraToggled.connect(lambda *args: emitted.append(args))
     panel.set_spectra_keys(frozenset({"class:1"}))
-    assert [row._spectra_check.isChecked() for row in panel._rows.values()] == [False, True]
+    assert [panel._rows[c]._spectra_check.isChecked() for c in (0, 1)] == [False, True]
     # Rebuilt rows keep the state.
     panel.set_layers((ClassificationLayer(0, "A", 5, True, 1.0), ClassificationLayer(1, "B", 5, True, 1.0)))
     assert panel._rows[1]._spectra_check.isChecked()

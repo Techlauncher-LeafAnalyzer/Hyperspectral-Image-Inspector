@@ -260,3 +260,28 @@ def test_resample_classification_round_trips_between_sizes():
     assert resample_classification(result, (2, 3)) is result
     with pytest.raises(ClassificationError):
         resample_classification(result, (0, 3))
+
+
+def test_class_layers_reorder_and_delete_and_keep_it_across_edits():
+    class_map = np.zeros((4, 4), dtype=np.int32)
+    class_map[:, 2:] = 1
+    result = apply_vector_masks(_result(class_map), {2: VectorMask((_square(1, 0, 2),))})
+    layers = ClassificationLayerModel(result)
+    assert layers.paint_order == (0, 1, 2)
+    assert layers.class_at(0, 1) == 2  # the drawn class is on top
+    assert layers.move_class(2, -2) and layers.paint_order == (2, 0, 1)
+    assert not layers.move_class(2, -1)  # already at the bottom
+    assert layers.class_at(0, 1) == 0 and layers.class_at(0, 2) == 1
+    colors = {0: (255, 0, 0), 1: (0, 255, 0), 2: (0, 0, 255)}
+    rgb = np.zeros((4, 4, 3), dtype=np.uint8)
+    assert tuple(layers.compose_display(rgb, colors=colors).display_rgb[0, 1]) == (255, 0, 0)
+
+    layers.remove_class(0)
+    assert [layer.class_id for layer in layers.layers] == [2, 1]
+    assert layers.class_at(0, 0) is None and 0 not in layers.visible_class_ids
+    assert tuple(layers.compose_display(rgb, colors=colors).display_rgb[0, 1]) == (0, 0, 255)
+    # Rebuilding over an edited result keeps the stack; new classes go on top.
+    edited = apply_vector_masks(result, {3: VectorMask((_square(0, 2, 1),))})
+    carried = layers.with_result(edited)
+    assert carried.paint_order == (2, 1, 3)
+

@@ -417,6 +417,9 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
     annotationDeleteRequested = pyqtSignal(int)
     pinVisibilityChanged = pyqtSignal(str, bool)
     pinDeleteRequested = pyqtSignal(str)
+    # Class ID, +1 to move it up the layer stack or -1 down.
+    classMoveRequested = pyqtSignal(int, int)
+    classDeleteRequested = pyqtSignal(int)
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -586,9 +589,9 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._rows_layout.setSpacing(7)
         self._rows_layout.addStretch(1)
 
-        self._up_button = self._layer_action("↑ Up", "Bring the selected annotation forward")
-        self._down_button = self._layer_action("↓ Down", "Send the selected annotation back")
-        self._delete_button = self._layer_action("Delete", "Delete the selected annotation or pin")
+        self._up_button = self._layer_action("↑ Up", "Move the selected layer up the stack")
+        self._down_button = self._layer_action("↓ Down", "Move the selected layer down the stack")
+        self._delete_button = self._layer_action("Delete", "Delete the selected layer")
         self._delete_button.setObjectName("annotationDeleteButton")
         self._up_button.clicked.connect(lambda: self._move_selected(1))
         self._down_button.clicked.connect(lambda: self._move_selected(-1))
@@ -706,7 +709,8 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             (layer.class_id for layer in layers), fixed_colors
         )
         means = means or {}
-        for layer in layers:
+        # Top of the stack first, as in Photoshop's Layers panel.
+        for layer in reversed(layers):
             row = _LayerRowWidget(
                 layer,
                 colors[layer.class_id],
@@ -826,32 +830,47 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self.set_selected_layer(key)
         self.layerSelected.emit(key)
 
-    def _selected_annotation(self) -> Optional[int]:
+    def _selected_id(self, prefix: str) -> Optional[int]:
         key = self._selected_key or ""
-        return int(key.split(":", 1)[1]) if key.startswith("annotation:") else None
+        return int(key.split(":", 1)[1]) if key.startswith(prefix) else None
+
+    def _selected_annotation(self) -> Optional[int]:
+        return self._selected_id("annotation:")
 
     def _move_selected(self, delta: int) -> None:
         layer_id = self._selected_annotation()
+        class_id = self._selected_id("class:")
         if layer_id is not None:
             self.annotationMoveRequested.emit(layer_id, delta)
+        elif class_id is not None:
+            self.classMoveRequested.emit(class_id, delta)
 
     def _delete_selected(self) -> None:
         layer_id = self._selected_annotation()
+        class_id = self._selected_id("class:")
         if layer_id is not None:
             self.annotationDeleteRequested.emit(layer_id)
+        elif class_id is not None:
+            self.classDeleteRequested.emit(class_id)
         elif (self._selected_key or "").startswith("pin:"):
             self.pinDeleteRequested.emit(self._selected_key)
 
     def _update_layer_actions(self) -> None:
-        order = list(self._annotation_rows)
-        layer_id = self._selected_annotation()
-        index = order.index(layer_id) if layer_id in order else -1
-        # Rows list the front-most annotation first.
-        self._up_button.setEnabled(index > 0)
-        self._down_button.setEnabled(0 <= index < len(order) - 1)
-        self._delete_button.setEnabled(
-            index >= 0 or (self._selected_key or "").startswith("pin:")
-        )
+        # Annotations and classes each reorder within their own stack; rows
+        # list the top of each stack first. Pins have no order.
+        for group, selected in (
+            (list(self._annotation_rows), self._selected_annotation()),
+            (list(self._rows), self._selected_id("class:")),
+        ):
+            if selected in group:
+                index = group.index(selected)
+                self._up_button.setEnabled(index > 0)
+                self._down_button.setEnabled(index < len(group) - 1)
+                self._delete_button.setEnabled(True)
+                return
+        self._up_button.setEnabled(False)
+        self._down_button.setEnabled(False)
+        self._delete_button.setEnabled((self._selected_key or "").startswith("pin:"))
 
     def update_tool_options(self) -> None:
         """Show the tool options while drawing or with an annotation selected."""

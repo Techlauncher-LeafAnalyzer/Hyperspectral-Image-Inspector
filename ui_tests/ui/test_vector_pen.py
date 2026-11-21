@@ -280,3 +280,45 @@ def test_selecting_a_class_layer_with_the_pen_outlines_it(qtbot):
     page._new_class_button.click()
     assert page.selected_vector_class() is None and panel.selected_layer is None
 
+
+def test_class_layers_reorder_and_delete_from_the_layer_list(qtbot, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    controller, viewer, panel, _source = _make_controller(qtbot)
+    class_map = np.zeros((20, 20), dtype=np.int32)
+    class_map[5:15, 5:15] = 1
+    controller._on_result(_make_unsupervised_result(class_map))
+    viewer.vectorClassDrawn.emit(VectorMask((_square(0, 0, 8),)))
+    slot = controller._current_slot
+    # Rows list the top of the stack first; the drawn class starts on top.
+    assert list(panel._rows) == [2, 1, 0]
+    assert controller.class_id_at(1, 1) == 2
+
+    panel._on_row_clicked("class:2")
+    assert not panel._up_button.isEnabled() and panel._down_button.isEnabled()
+    panel._down_button.click()
+    panel._down_button.click()
+    assert slot.layers.paint_order == (2, 0, 1) and list(panel._rows) == [1, 0, 2]
+    assert controller.class_id_at(1, 1) == 0  # now beneath class 0
+
+    # A classified class asks before it goes; declining keeps it.
+    answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: answers.pop(0)))
+    panel._on_row_clicked("class:0")
+    panel._delete_button.click()
+    assert 0 in panel._rows
+    panel._delete_button.click()
+    assert 0 not in panel._rows and slot.layers.paint_order == (2, 1)
+    assert controller.class_id_at(1, 1) == 2
+    assert 0 not in [layer.class_id for layer in slot.layers.layers]
+
+    # A drawn class is removed with its outline, and Ctrl+Z brings it back.
+    panel._on_row_clicked("class:2")
+    panel._delete_button.click()
+    assert 2 not in panel._rows and not answers
+    page = panel.annotation_page
+    page.set_tool(PEN_TOOL)
+    controller._on_annotation_tool_changed(PEN_TOOL)
+    assert controller.undo_annotation()
+    assert 2 in panel._rows
+
