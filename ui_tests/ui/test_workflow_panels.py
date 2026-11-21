@@ -332,7 +332,6 @@ def test_segment_pill_toggles_the_inspector_and_keeps_results(shown_window):
     left = window.viewer.mapTo(window, QtCore.QPoint()).x()
     assert palette.mapTo(window, QtCore.QPoint(palette.width(), 0)).x() <= left
     assert inspector.mapTo(window, QtCore.QPoint()).x() >= left + window.viewer.width()
-    inspector.set_mode("annotations")
     inspector.set_panel_width(360)
     window.classificationModeTabs.setCurrentWidget(window.unsupervisedClassificationTab)
     # Second click: toolbox and inspector gone, the results stay on the canvas.
@@ -341,7 +340,7 @@ def test_segment_pill_toggles_the_inspector_and_keeps_results(shown_window):
     # Third click: back exactly as it was.
     pill.click()
     assert inspector.isVisible() and pill.isChecked()
-    assert inspector.mode == "annotations" and inspector.panel_width == 360
+    assert inspector.panel_width == 360
     assert window.classificationModeTabs.currentWidget() is window.unsupervisedClassificationTab
     # Other panels open over the canvas without hiding the inspector.
     _tools(window)["calibration"].show()

@@ -326,8 +326,11 @@ def test_pins_draw_numbered_markers_matching_their_spectra(loaded_window, inspec
     # The newest pin is selected and drawn larger.
     assert second.childItems()[0].rect().width() > circle.rect().width()
 
-    # Hiding a spectrum hides its marker; removing renumbers nothing.
+    # The plot and the image marker are shown separately, like a layer's
+    # Spectra box and visibility toggle; removing renumbers nothing.
     inspector._series_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+    assert _marker_numbers(loaded_window.viewer) == ["1", "2"]
+    inspector.set_marker_visible("pin:0", False)
     assert _marker_numbers(loaded_window.viewer) == ["2"]
     inspector.clear()
     assert loaded_window.viewer._pin_marker_items == []
@@ -404,42 +407,41 @@ def _draw_rectangle(window, x, y, width, height):
     return layers[-1]
 
 
-def test_class_spectra_include_selected_annotation_regions(loaded_window, qtbot, inspector):
+def test_all_spectra_views_every_shown_class_and_region(loaded_window, qtbot, inspector):
     window = loaded_window
     _classify(window, qtbot)
     rect = _draw_rectangle(window, 2, 1, 3, 2)  # columns 2-4, rows 1-2
     panel = window.classificationLayerPanel
-    assert rect.layer_id in panel._region_rows
-    region_row = panel._region_rows[rect.layer_id]
-    assert region_row.is_selected()
+    region_row = panel._annotation_rows[rect.layer_id]
+    assert region_row._toggle.isChecked() and region_row.has_spectrum()
     assert panel._spectra_button.isEnabled()
 
     panel._spectra_button.click()
     keys = [s.key for s in inspector.region_spectra()]
     assert f"annotation:{rect.layer_id}" in keys
     assert any(key.startswith("class:") for key in keys)
+    # Every viewed layer's Spectra box is ticked.
+    assert region_row._spectra_check.isChecked()
     region = next(s for s in inspector.region_spectra() if s.key == f"annotation:{rect.layer_id}")
     data = window._display_data()
     cube = data.read_bands(range(data.bands))
     assert region.pixel_count == 6
     np.testing.assert_allclose(region.mean, cube[1:3, 2:5].reshape(-1, data.bands).mean(axis=0), rtol=1e-5)
 
-    # Unticking the region leaves it out of the next plot (and keeps it drawn).
-    region_row._toggle.setChecked(False)
+    # A hidden layer is left out of the next plot.
+    panel._annotation_rows[rect.layer_id]._toggle.setChecked(False)
     panel._spectra_button.click()
     assert f"annotation:{rect.layer_id}" not in [s.key for s in inspector.region_spectra()]
-    assert rect.visible
 
 
-def test_region_selection_survives_moving_the_shape(loaded_window, qtbot):
+def test_spectra_box_survives_moving_the_shape(loaded_window, qtbot):
     window = loaded_window
     rect = _draw_rectangle(window, 1, 1, 3, 3)
     panel = window.classificationLayerPanel
-    panel._region_rows[rect.layer_id]._toggle.setChecked(False)
+    panel._annotation_rows[rect.layer_id]._spectra_check.click()
     window.viewer.annotationGeometryChanged.emit(rect.layer_id, 2, 2, 3, 3)
     window._classification_controller._refresh_regions()
-    assert not panel._region_rows[rect.layer_id].is_selected()
-    assert "0 of 1 classes selected" in panel._summary_label.text()
+    assert panel._annotation_rows[rect.layer_id]._spectra_check.isChecked()
 
 
 def test_regions_work_without_a_classification(loaded_window, inspector):
@@ -451,20 +453,20 @@ def test_regions_work_without_a_classification(loaded_window, inspector):
     assert [s.key for s in inspector.region_spectra()] == [f"annotation:{rect.layer_id}"]
 
 
-def test_inspect_buttons_add_one_class_or_region(loaded_window, qtbot, inspector):
+def test_spectra_boxes_add_and_remove_one_class_or_region(loaded_window, qtbot, inspector):
     window = loaded_window
     _classify(window, qtbot)
     rect = _draw_rectangle(window, 2, 2, 3, 3)
     panel = window.classificationLayerPanel
-    class_row = next(row for row in panel._rows.values() if row._inspect_button.isEnabled())
-    class_row._inspect_button.click()
+    class_row = next(row for row in panel._rows.values() if row.has_spectrum())
+    class_row._spectra_check.click()
     assert [s.key for s in inspector.region_spectra()] == [f"class:{class_row.class_id}"]
     assert inspector.selected_series() == f"class:{class_row.class_id}"
     assert window.spectrumTool.is_open()
 
-    # Inspect adds rather than replacing, and works on hidden classes too.
+    # Boxes add rather than replace, and work on hidden classes too.
     window._classification_controller._on_layer_visibility_changed(class_row.class_id, False)
-    panel._region_rows[rect.layer_id]._inspect_button.click()
+    panel._annotation_rows[rect.layer_id]._spectra_check.click()
     assert [s.key for s in inspector.region_spectra()] == [
         f"class:{class_row.class_id}", f"annotation:{rect.layer_id}",
     ]
@@ -472,17 +474,47 @@ def test_inspect_buttons_add_one_class_or_region(loaded_window, qtbot, inspector
     series = inspector._series_by_key[f"annotation:{rect.layer_id}"]
     assert tuple(round(c * 255) for c in series.color) == tuple(rect.style.stroke[:3])
 
+    # Unticking removes it; removing it in the inspector unticks the box.
+    panel._annotation_rows[rect.layer_id]._spectra_check.click()
+    assert [s.key for s in inspector.region_spectra()] == [f"class:{class_row.class_id}"]
+    inspector.remove_series([f"class:{class_row.class_id}"])
+    assert not panel._rows[class_row.class_id]._spectra_check.isChecked()
 
-def test_select_all_covers_classes_and_regions(loaded_window, qtbot):
+
+def test_pins_are_layers_with_their_own_spectra_and_visibility(loaded_window, inspector):
+    window = loaded_window
+    panel = window.classificationLayerPanel
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(5, 3))
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(1, 6))
+    assert [row.name for row in panel._pin_rows.values()] == ["Pin #1", "Pin #2"]
+    first = panel._pin_rows["pin:0"]
+    assert first._spectra_check.isChecked() and first._toggle.isChecked()
+    assert first._count_label.text() == "Pixel (3, 5)"
+
+    # Unticking Spectra hides the line but keeps the pin and its marker.
+    first._spectra_check.click()
+    assert "pin:0" not in inspector.plotted_keys()
+    assert "pin:0" in panel._pin_rows and _marker_numbers(window.viewer) == ["1", "2"]
+    # The visibility toggle hides just the marker.
+    first._toggle.setChecked(False)
+    assert _marker_numbers(window.viewer) == ["2"]
+    # Deleting the layer removes the pin.
+    panel._on_row_clicked("pin:0")
+    panel._delete_button.click()
+    assert [pin.number for pin in inspector.pinned_spectra()] == [2]
+    assert list(panel._pin_rows) == ["pin:1"]
+
+
+def test_show_all_covers_classes_and_regions(loaded_window, qtbot):
     window = loaded_window
     _classify(window, qtbot)
     rect = _draw_rectangle(window, 1, 1, 2, 2)
     panel = window.classificationLayerPanel
-    panel._toggle_all_button.click()  # everything was selected → deselect all
-    assert not panel._region_rows[rect.layer_id].is_selected()
+    panel._toggle_all_button.click()  # everything was shown → hide all
+    assert not window._classification_controller._annotation_slot.layers.get(rect.layer_id).visible
     assert not any(row._toggle.isChecked() for row in panel._rows.values())
     panel._toggle_all_button.click()
-    assert panel._region_rows[rect.layer_id].is_selected()
+    assert window._classification_controller._annotation_slot.layers.get(rect.layer_id).visible
     assert all(row._toggle.isChecked() for row in panel._rows.values())
 
 
@@ -577,7 +609,7 @@ def test_plotted_spectra_follow_region_edits(loaded_window, qtbot, inspector):
     _classify(window, qtbot)
     rect = _draw_rectangle(window, 0, 0, 2, 2)
     panel = window.classificationLayerPanel
-    panel._region_rows[rect.layer_id]._inspect_button.click()
+    panel._annotation_rows[rect.layer_id]._spectra_check.click()
     key = f"annotation:{rect.layer_id}"
     assert inspector._series_by_key[key].region.pixel_count == 4
 
@@ -599,8 +631,8 @@ def test_plotted_class_spectrum_follows_vector_edits(loaded_window, qtbot, inspe
     window = loaded_window
     _classify(window, qtbot)
     panel = window.classificationLayerPanel
-    row = next(row for row in panel._rows.values() if row._inspect_button.isEnabled())
-    row._inspect_button.click()
+    row = next(row for row in panel._rows.values() if row.has_spectrum())
+    row._spectra_check.click()
     key = f"class:{row.class_id}"
     square = VectorPath((Anchor(0, 0), Anchor(3, 0), Anchor(3, 3), Anchor(0, 3)))
     window.viewer.vectorMaskEdited.emit(row.class_id, VectorMask((square,)), True)

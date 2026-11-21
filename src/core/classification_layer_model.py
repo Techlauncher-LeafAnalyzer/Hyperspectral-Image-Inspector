@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from numbers import Integral, Real
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
 import numpy as np
 
@@ -215,8 +215,8 @@ class ClassificationLayerModel:
             raise ClassificationError("Classification masks must be binary arrays.")
         if np.any((masks != 0) & (masks != 1)):
             raise ClassificationError("Classification masks must contain only 0 and 1.")
-        if np.any(masks.sum(axis=0, dtype=np.int64) > 1):
-            raise ClassificationError("Classification mask layers cannot overlap.")
+        # Layers may overlap (a drawn or outlined class over the classes
+        # beneath it); each mask is that class's whole region.
 
         if isinstance(result, SupervisedClassificationResult):
             class_ids = tuple(int(value) for value in result.class_ids)
@@ -414,22 +414,38 @@ class ClassificationLayerModel:
     def _effective_alpha(self) -> np.ndarray:
         """Return an HxW blend factor: per-class opacity where visible, else 0.
 
-        Class masks are disjoint (enforced in ``__init__``), so classes can be
-        painted independently without any overlap/accumulation to resolve.
-        The result is additionally scaled by ``global_opacity`` and, in
-        ``outline_mode``, restricted to each class region's boundary pixels.
+        Where classes overlap, the one painted last (see ``paint_order``)
+        sets the opacity. The result is additionally scaled by
+        ``global_opacity`` and, in ``outline_mode``, restricted to each class
+        region's boundary pixels.
         """
 
+        return self._paint(None, None)[1]
+
+    def _paint(
+        self,
+        colors: Mapping[int, tuple[int, int, int]] | None,
+        paint_order: Iterable[int] | None,
+    ) -> tuple[np.ndarray | None, np.ndarray]:
+        """Paint visible classes bottom to top: their colours and opacity.
+
+        Returns ``(rgb, alpha)``; ``rgb`` is ``None`` without ``colors``.
+        """
+
+        order = self._class_ids if paint_order is None else tuple(paint_order)
         alpha = np.zeros(self.image_shape, dtype=np.float32)
-        for index, class_id in enumerate(self._class_ids):
-            if not self._visibility[class_id]:
+        rgb = None if colors is None else np.zeros((*self.image_shape, 3), dtype=np.uint8)
+        for class_id in order:
+            if class_id not in self._visibility or not self._visibility[class_id]:
                 continue
-            mask = self._one_hot_masks[index].astype(bool, copy=False)
+            mask = self._one_hot_masks[self._class_index(class_id)].astype(bool, copy=False)
             if self._outline_mode:
                 mask = _boundary_mask(mask)
             alpha[mask] = self._opacity[class_id] * self._global_opacity
+            if rgb is not None:
+                rgb[mask] = colors[class_id]
         alpha.setflags(write=False)
-        return alpha
+        return rgb, alpha
 
     def compose_rgb(
         self,
@@ -451,9 +467,15 @@ class ClassificationLayerModel:
         *,
         background_color: tuple[int, int, int] = (0, 0, 0),
         base_rgb: np.ndarray | None = None,
+        colors: Mapping[int, tuple[int, int, int]] | None = None,
+        paint_order: Iterable[int] | None = None,
     ) -> ClassificationLayerComposite:
         """Apply visibility and opacity to any RGB rendering, including an
         index colormap.
+
+        With ``colors`` (class ID -> RGB), each visible class is instead
+        painted in its colour, bottom to top in ``paint_order`` (default: class
+        order), so overlapping classes show the top-most visible one.
 
         Hidden pixels and faded (partially opaque) pixels are blended toward
         ``base_rgb`` when given -- typically the true-colour image beneath a
@@ -464,7 +486,9 @@ class ClassificationLayerModel:
 
         rgb = self._validated_rgb(display_rgb)
         visible_mask = self.visible_mask()
-        alpha = self._effective_alpha()
+        painted, alpha = self._paint(colors, paint_order)
+        if painted is not None:
+            rgb = painted
         alpha_channel = alpha[..., np.newaxis]
 
         if base_rgb is not None:

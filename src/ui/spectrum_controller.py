@@ -253,6 +253,26 @@ class SpectrumController(QtCore.QObject):
         self.show()
         self._statusbar.showMessage(f"Added {region.label} to the Spectrum Inspector", 5000)
 
+    def set_layer_spectrum(self, key: str, shown: bool) -> None:
+        """Plot or hide one layer's spectrum: a layer row's Spectra checkbox.
+
+        Pins stay listed when hidden (the pin is the layer); class and region
+        spectra are computed when first shown and dropped when hidden.
+        """
+
+        if key.startswith("pin:"):
+            self.inspector.set_series_visible(key, shown)
+        elif not shown:
+            self.inspector.remove_series([key])
+        elif key in self.inspector.plotted_keys() or any(
+            spectrum.key == key for spectrum in self.inspector.region_spectra()
+        ):
+            self.inspector.set_series_visible(key, True)
+        else:
+            self.inspect_region(key)
+            # A layer without pixels has nothing to plot; keep its box honest.
+            self.inspector.seriesChanged.emit()
+
     def schedule_region_refresh(self) -> None:
         """Refresh plotted class and region spectra once control returns to Qt.
 

@@ -55,41 +55,83 @@ def _viewer(qtbot) -> HSIViewer:
     return viewer
 
 
-def test_panel_toggles_between_classes_and_annotations(qtbot):
+def test_panel_lists_every_kind_of_layer_in_one_list(qtbot):
+    from core import ClassificationLayer
+
     panel = ClassificationLayerPanel()
     qtbot.addWidget(panel)
-    panel.show()
-    modes = []
-    panel.modeChanged.connect(modes.append)
-    assert panel.mode == "classes" and panel._body.isVisible()
+    model = AnnotationLayerModel()
+    rect = model.add_shape(AnnotationKind.RECTANGLE, 0, 0, 5, 5, STYLE)
+    arrow = model.add_arrow(0, 0, 5, 5, STYLE)
+    panel.set_layers((ClassificationLayer(0, "Soil", 12, True, 1.0),))
+    panel.set_pins((("pin:0", 1, 2, 3, (10, 20, 30), True),))
+    panel.set_annotations(model.layers, {rect.layer_id: (25, {})})
+    # No Classes/Annotations switch: annotations (front first), pins, classes.
+    assert not hasattr(panel, "set_mode")
+    assert [row.key for row in panel._all_rows()] == [
+        f"annotation:{arrow.layer_id}", f"annotation:{rect.layer_id}", "pin:0", "class:0",
+    ]
+    assert [row.name for row in panel._all_rows()] == [arrow.name, rect.name, "Pin #1", "Soil"]
+    # Every layer has a Spectra box; arrows and text have no spectrum to view.
+    assert not panel.row_for(f"annotation:{arrow.layer_id}").has_spectrum()
+    assert all(panel.row_for(key).has_spectrum()
+               for key in (f"annotation:{rect.layer_id}", "pin:0", "class:0"))
+    assert panel._layer_count_label.text() == "4"
 
-    panel._annotations_mode_button.click()
-    assert panel.mode == "annotations" and panel.annotation_page.isVisible()
-    assert not panel._body.isVisible()
-    panel._classes_mode_button.click()
-    assert panel.mode == "classes" and panel._body.isVisible()
-    assert modes == ["annotations", "classes"]
 
-
-def test_layer_list_is_top_first_and_reports_actions(qtbot):
-    page = AnnotationToolsPage()
-    qtbot.addWidget(page)
+def test_layer_list_selects_reorders_hides_and_deletes(qtbot):
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
     model = AnnotationLayerModel()
     bottom = model.add_shape(AnnotationKind.RECTANGLE, 0, 0, 5, 5, STYLE)
     top = model.add_shape(AnnotationKind.ELLIPSE, 0, 0, 5, 5, STYLE)
-    page.set_layers(model.layers, bottom.layer_id)
-    assert page._list.item(0).text() == top.name
-    assert page.selected_layer_id() == bottom.layer_id
-    assert not page._down_button.isEnabled() and page._up_button.isEnabled()
+    panel.set_annotations(model.layers)
+    panel.set_pins((("pin:0", 1, 2, 3, (10, 20, 30), True),))
+    assert not panel._delete_button.isEnabled()
 
-    with qtbot.waitSignal(page.moveRequested) as moved:
-        page._up_button.click()
+    key = f"annotation:{bottom.layer_id}"
+    with qtbot.waitSignal(panel.layerSelected) as selected:
+        qtbot.mouseClick(panel.row_for(key), QtCore.Qt.MouseButton.LeftButton)
+    assert selected.args == [key] and panel.row_for(key).is_selected()
+    assert not panel._down_button.isEnabled() and panel._up_button.isEnabled()
+    with qtbot.waitSignal(panel.annotationMoveRequested) as moved:
+        panel._up_button.click()
     assert moved.args == [bottom.layer_id, 1]
-    with qtbot.waitSignal(page.deleteRequested):
-        page._delete_button.click()
-    with qtbot.waitSignal(page.visibilityChanged) as vis:
-        page._list.item(0).setCheckState(QtCore.Qt.CheckState.Unchecked)
-    assert vis.args == [top.layer_id, False]
+    with qtbot.waitSignal(panel.annotationDeleteRequested) as deleted:
+        panel._delete_button.click()
+    assert deleted.args == [bottom.layer_id]
+    with qtbot.waitSignal(panel.annotationVisibilityChanged) as shown:
+        panel.row_for(f"annotation:{top.layer_id}")._toggle.setChecked(False)
+    assert shown.args == [top.layer_id, False]
+    with qtbot.waitSignal(panel.spectraToggled) as spectra:
+        panel.row_for(f"annotation:{top.layer_id}")._spectra_check.setChecked(True)
+    assert spectra.args == [f"annotation:{top.layer_id}", True]
+
+    # A pin can be hidden on the image or deleted, but not reordered.
+    qtbot.mouseClick(panel.row_for("pin:0"), QtCore.Qt.MouseButton.LeftButton)
+    assert not panel._up_button.isEnabled() and not panel._down_button.isEnabled()
+    with qtbot.waitSignal(panel.pinDeleteRequested) as pin_deleted:
+        panel._delete_button.click()
+    assert pin_deleted.args == ["pin:0"]
+    with qtbot.waitSignal(panel.pinVisibilityChanged) as pin_shown:
+        panel.row_for("pin:0")._toggle.setChecked(False)
+    assert pin_shown.args == ["pin:0", False]
+
+
+def test_spectra_boxes_follow_the_inspector_without_emitting(qtbot):
+    from core import ClassificationLayer
+
+    panel = ClassificationLayerPanel()
+    qtbot.addWidget(panel)
+    panel.set_layers((ClassificationLayer(0, "A", 5, True, 1.0), ClassificationLayer(1, "B", 5, True, 1.0)))
+    emitted = []
+    panel.spectraToggled.connect(lambda *args: emitted.append(args))
+    panel.set_spectra_keys(frozenset({"class:1"}))
+    assert [row._spectra_check.isChecked() for row in panel._rows.values()] == [False, True]
+    # Rebuilt rows keep the state.
+    panel.set_layers((ClassificationLayer(0, "A", 5, True, 1.0), ClassificationLayer(1, "B", 5, True, 1.0)))
+    assert panel._rows[1]._spectra_check.isChecked()
+    assert emitted == []
 
 
 def test_style_controls_emit_current_style(qtbot):
@@ -290,9 +332,7 @@ def test_tool_buttons_toggle_off_and_fit_the_inspector(qtbot, themed_app, width,
     qtbot.addWidget(panel)
     panel.set_panel_width(width)
     panel.resize(width, height)
-    panel.set_mode("annotations")
     page = panel.annotation_page
-    page.set_layers(())
     panel.show()
     tools = []
     page.toolChanged.connect(tools.append)
@@ -306,6 +346,8 @@ def test_tool_buttons_toggle_off_and_fit_the_inspector(qtbot, themed_app, width,
     assert not any(b.isChecked() for b in page._tool_buttons.values())
     scroll = panel._scroll_area  # the whole inspector scrolls, not the page
     qtbot.waitUntil(lambda: scroll.widget().width() <= scroll.viewport().width())
+    rect.click()  # the options show while a tool is active
+    qtbot.waitUntil(lambda: page.isVisible())
     # The tools are a Photoshop-style column of square icon buttons.
     page.tool_palette.show()  # the window normally places it beside the image
     page.tool_palette.adjustSize()
@@ -325,20 +367,23 @@ def test_tool_buttons_toggle_off_and_fit_the_inspector(qtbot, themed_app, width,
     assert page._fill_check.geometry().bottom() < page._stroke_width.y()
 
 
-def test_choosing_a_tool_from_the_classes_view_shows_its_options(qtbot):
+def test_tool_options_show_while_drawing_or_with_an_annotation_selected(qtbot):
     panel = ClassificationLayerPanel()
     qtbot.addWidget(panel)
-    assert panel.mode == "classes"
-    panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].click()
-    assert panel.mode == "annotations"
-    assert panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].isChecked()
-    panel.set_mode("classes")
-    panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].click()
-    # Turning a tool off does not switch views.
-    panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].click()
-    assert panel.mode == "annotations"
-    panel.set_mode("classes")
-    assert panel.mode == "classes"
+    panel.show()
+    page = panel.annotation_page
+    assert page.isHidden()
+    page._tool_buttons[AnnotationKind.RECTANGLE].click()
+    assert page.isVisible()
+    page._tool_buttons[AnnotationKind.RECTANGLE].click()
+    assert page.isHidden()
+    model = AnnotationLayerModel()
+    layer = model.add_shape(AnnotationKind.RECTANGLE, 0, 0, 5, 5, STYLE)
+    panel.set_annotations(model.layers)
+    panel.set_selected_layer(f"annotation:{layer.layer_id}")
+    assert page.isVisible()
+    panel.set_selected_layer(None)
+    assert page.isHidden()
 
 
 def _log_deselect(viewer, log):
@@ -673,7 +718,7 @@ def test_annotation_spin_box_arrows_are_visible_and_change_values(qtbot, themed_
     qtbot.addWidget(panel)
     panel.set_panel_width(270)
     panel.resize(270, 620)
-    panel.set_mode("annotations")
+    panel.annotation_page._tool_buttons[AnnotationKind.RECTANGLE].click()
     panel.show()
     qtbot.wait(10)
     page = panel.annotation_page
@@ -721,5 +766,5 @@ def test_measure_default_checkmark_is_visible_while_disabled(qtbot, themed_app):
     unchecked = check.grab().toImage()
     check.setChecked(True)
     assert checked != unchecked
-    page.set_layers(())
+    page.set_selected_layer(None)
     assert check.isChecked()

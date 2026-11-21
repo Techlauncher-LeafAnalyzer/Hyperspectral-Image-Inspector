@@ -854,6 +854,24 @@ QWidget#classificationLayerRow[layerVisible="false"] {
     border-color: #dde6e4;
 }
 
+/* The selected layer, as in Photoshop's Layers panel. */
+QWidget#classificationLayerRow[layerSelected="true"] {
+    background: #eef8f5;
+    border: 1px solid #168b7b;
+}
+
+QCheckBox#layerSpectraCheck {
+    color: #526662;
+    font-size: 10px;
+    font-weight: 650;
+    spacing: 4px;
+}
+
+QCheckBox#layerSpectraCheck::indicator {
+    width: 14px;
+    height: 14px;
+}
+
 QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerNameLabel,
 QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerOpacityCaption,
 QWidget#classificationLayerRow[layerVisible="false"] QLabel#layerOpacityValueLabel,
@@ -920,7 +938,6 @@ QPushButton#layerExportButton,
 QPushButton#layerSpectraButton,
 QPushButton#separateLeavesButton,
 QPushButton#vectorizeButton,
-QPushButton#layerInspectButton,
 QPushButton#layerOutlineToggleButton,
 QPushButton#spectrumImageMeanButton,
 QPushButton#spectrumRemoveButton,
@@ -941,7 +958,6 @@ QPushButton#layerExportButton:hover,
 QPushButton#layerSpectraButton:hover,
 QPushButton#separateLeavesButton:hover,
 QPushButton#vectorizeButton:hover,
-QPushButton#layerInspectButton:hover,
 QPushButton#layerOutlineToggleButton:hover,
 QPushButton#spectrumImageMeanButton:hover,
 QPushButton#spectrumRemoveButton:hover,
@@ -957,7 +973,6 @@ QPushButton#layerExportButton:pressed,
 QPushButton#layerSpectraButton:pressed,
 QPushButton#separateLeavesButton:pressed,
 QPushButton#vectorizeButton:pressed,
-QPushButton#layerInspectButton:pressed,
 QPushButton#layerOutlineToggleButton:pressed,
 QPushButton#spectrumImageMeanButton:pressed,
 QPushButton#spectrumRemoveButton:pressed,
@@ -967,14 +982,8 @@ QPushButton#spectrumExportButton:pressed {
     border-color: #6ba99e;
 }
 
-QPushButton#layerInspectButton {
-    min-height: 14px;
-    padding: 3px 8px;
-}
-
 QPushButton#separateLeavesButton:disabled,
 QPushButton#vectorizeButton:disabled,
-QPushButton#layerInspectButton:disabled,
 QPushButton#spectrumImageMeanButton:disabled,
 QPushButton#spectrumRemoveButton:disabled,
 QPushButton#spectrumClearButton:disabled,
@@ -1098,7 +1107,8 @@ QWidget#annotationContent {
     border: 0;
 }
 
-QFrame#annotationAppearance {
+QFrame#annotationAppearance,
+QFrame#annotationPenOptions {
     background: #edf4f2;
     border: 1px solid #d4e2df;
     border-radius: 8px;

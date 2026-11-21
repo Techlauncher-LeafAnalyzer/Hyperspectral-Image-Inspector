@@ -46,6 +46,7 @@ from core import (
     UnsupervisedClassificationResult,
     VectorMask,
     VectorMaskModel,
+    VectorTraceOptions,
     VisualizationMode,
     VisualizationResult,
     apply_vector_masks,
@@ -492,10 +493,9 @@ class ClassificationController(QObject):
         if slot.result is not None and slot.layers is not None and slot.active_data is not None:
             data = slot.active_data
             colors = classification_palette(slot.layers.class_ids, slot.fixed_colors)
-            class_map = slot.result.class_map
             for layer in slot.layers.layers:
                 regions[f"class:{layer.class_id}"] = AnalysisRegion(
-                    layer.name, class_map == layer.class_id,
+                    layer.name, slot.layers.mask_for_class(layer.class_id).astype(bool),
                     colors[layer.class_id], layer.visible,
                 )
         if data is None:
@@ -508,8 +508,7 @@ class ClassificationController(QObject):
                 continue
             regions[f"annotation:{layer.layer_id}"] = AnalysisRegion(
                 layer.name, region_mask(self._display_layer(layer), shape),
-                tuple(layer.style.stroke[:3]),
-                self._layer_panel.is_region_selected(layer.layer_id),
+                tuple(layer.style.stroke[:3]), layer.visible,
             )
         return (data, regions) if regions else None
 
@@ -636,10 +635,6 @@ class ClassificationController(QObject):
         page = self._layer_panel.annotation_page
         page.toolChanged.connect(self._on_annotation_tool_changed)
         page.styleChanged.connect(self._on_annotation_style_changed)
-        page.layerSelected.connect(self._on_annotation_selected)
-        page.visibilityChanged.connect(self._on_annotation_visibility_changed)
-        page.moveRequested.connect(self._on_annotation_move_requested)
-        page.deleteRequested.connect(self._on_annotation_delete_requested)
         page.measureChanged.connect(self._on_annotation_measure_changed)
         page.vectorMaskSelected.connect(self._on_vector_mask_selected)
         page.anchorModeRequested.connect(self._on_anchor_mode_requested)
@@ -662,7 +657,14 @@ class ClassificationController(QObject):
         self._viewer.annotationRotationChanged.connect(self._on_annotation_rotation_changed)
         self._viewer.annotationPicked.connect(self._on_annotation_picked)
         self._viewer.annotationDeselected.connect(self._on_annotation_deselected)
-        self._layer_panel.modeChanged.connect(self._on_panel_mode_changed)
+        self._layer_panel.layerSelected.connect(self._on_layer_selected)
+        self._layer_panel.annotationVisibilityChanged.connect(
+            self._on_annotation_visibility_changed
+        )
+        self._layer_panel.annotationMoveRequested.connect(self._on_annotation_move_requested)
+        self._layer_panel.annotationDeleteRequested.connect(
+            self._on_annotation_delete_requested
+        )
 
         self._num_classes_edit.setValidator(QtGui.QIntValidator(2, 65535, self))
         self._max_iterations_edit.setValidator(QtGui.QIntValidator(1, 10000, self))
@@ -1202,14 +1204,23 @@ class ClassificationController(QObject):
     def _sync_annotations(self) -> None:
         slot = self._annotation_slot
         self._viewer.set_annotations(self._display_layers(), slot.selected_id)
-        self._layer_panel.annotation_page.set_layers(
-            slot.layers.layers, slot.selected_id
-        )
+        self._show_annotation_selection()
         self._refresh_regions()
         self._sync_vectors()
 
+    def _show_annotation_selection(self) -> None:
+        """Mirror the selected annotation in the layer list and tool options."""
+
+        slot = self._annotation_slot
+        selected = slot.layers.selected_or_none(slot.selected_id)
+        self._layer_panel.annotation_page.set_selected_layer(selected)
+        if selected is not None:
+            self._layer_panel.set_selected_layer(f"annotation:{selected.layer_id}")
+        elif (self._layer_panel.selected_layer or "").startswith("annotation:"):
+            self._layer_panel.set_selected_layer(None)
+
     def _refresh_regions(self, *, notify: bool = True) -> None:
-        """Show each measured, visible annotation as a row on the Classes tab.
+        """List every annotation as a layer, with measured regions' means.
 
         Means are recomputed from the annotation's current geometry every time,
         so a region always reflects where its shape is now. ``notify`` also
@@ -1217,17 +1228,14 @@ class ClassificationController(QObject):
         """
 
         self._region_refresh_timer.stop()
-        regions = []
+        measurements = {}
         for layer, measurement in self._measured_regions():
             means = {
                 name: PixelValueEntry(value=mean.value, color=mean.color)
                 for name, mean in measurement.means.items()
             }
-            regions.append(
-                (layer.layer_id, layer.name, layer.style.stroke,
-                 measurement.pixel_count, means)
-            )
-        self._layer_panel.set_regions(tuple(regions))
+            measurements[layer.layer_id] = (measurement.pixel_count, means)
+        self._layer_panel.set_annotations(self._annotation_slot.layers.layers, measurements)
         if notify:
             self.regionsChanged.emit()
 
@@ -1271,13 +1279,46 @@ class ClassificationController(QObject):
             return
         self._refresh_regions()
 
-    def _on_panel_mode_changed(self, mode: str) -> None:
-        # Leaving the annotation view must not leave a drawing tool armed,
-        # otherwise clicks on the class view would silently draw.
-        if mode != "annotations":
-            self._layer_panel.annotation_page.set_tool(None)
-            self._viewer.set_annotation_tool(None)
-            self._viewer.set_pen_tool(False)
+    def _on_layer_selected(self, key: str) -> None:
+        """A layer row was clicked: select an annotation, or let go of one."""
+
+        if key.startswith("annotation:"):
+            self._on_annotation_selected(int(key.split(":", 1)[1]))
+            return
+        if self._annotation_slot.selected_id is not None:
+            self._annotation_slot.selected_id = None
+            self._annotation_slot.layers.break_coalescing()
+            self._viewer.set_annotations(self._display_layers(), None)
+            self._layer_panel.annotation_page.set_selected_layer(None)
+        if key.startswith("class:") and self._viewer.pen_active:
+            self._edit_class_outline(int(key.split(":", 1)[1]))
+
+    def _edit_class_outline(self, class_id: int) -> None:
+        """Aim the Pen at a class layer, tracing its outline the first time.
+
+        A class's outline is its vector mask: once traced, the class region
+        is whatever the outline encloses.
+        """
+
+        slot = self._current_slot
+        if slot.layers is None or class_id not in slot.layers.class_ids:
+            return
+        if class_id not in slot.vectors:
+            mask = trace_mask(
+                slot.layers.mask_for_class(class_id).astype(bool), VectorTraceOptions()
+            )
+            if not mask.paths:
+                self._statusbar.showMessage("This class has no region large enough to outline", 5000)
+                return
+            slot.vectors.set_mask(class_id, mask.scaled(1 / self._display_scale()))
+            slot.vector_selection = (class_id, self._largest_path(mask), -1)
+            slot.vector_class = class_id
+            self._apply_vectors(slot)
+            self._statusbar.showMessage(
+                "Outlined the class; drag its points to reshape it", 5000
+            )
+            return
+        self._on_vector_mask_selected(class_id)
 
     def _on_annotation_tool_changed(self, kind: Optional[AnnotationKind | str]) -> None:
         pen = kind == PEN_TOOL
@@ -1288,8 +1329,8 @@ class ClassificationController(QObject):
         self._sync_vectors()
         if pen and not self._current_slot.vectors:
             self._statusbar.showMessage(
-                "Click points on the image to draw a new class, or on the Classes "
-                "tab choose Vector mask… to edit an existing class's outline",
+                "Click points on the image to draw a new class, or select a class "
+                "layer to edit its outline",
                 8000,
             )
 
@@ -1313,8 +1354,8 @@ class ClassificationController(QObject):
             return
         slot.selected_id = layer_id
         slot.layers.break_coalescing()
-        self._layer_panel.annotation_page.set_style(layer.style)
         self._viewer.set_annotations(self._display_layers(), slot.selected_id)
+        self._show_annotation_selection()
 
     def _on_annotation_visibility_changed(self, layer_id: int, visible: bool) -> None:
         slot = self._annotation_slot
@@ -1403,7 +1444,6 @@ class ClassificationController(QObject):
             return
         slot.selected_id = layer_id
         slot.layers.break_coalescing()
-        self._layer_panel.annotation_page.set_style(layer.style)
         self._sync_annotations()
 
     def _on_annotation_arrow_drawn(
@@ -1442,11 +1482,8 @@ class ClassificationController(QObject):
         changed = slot.layers.redo() if redo else slot.layers.undo()
         if not changed:
             return False
-        selected = slot.layers.selected_or_none(slot.selected_id)
-        if selected is None:
+        if slot.layers.selected_or_none(slot.selected_id) is None:
             slot.selected_id = None
-        else:
-            self._layer_panel.annotation_page.set_style(selected.style)
         self._sync_annotations()
         self._statusbar.showMessage(
             "Annotation change redone" if redo else "Annotation change undone", 4000
@@ -1598,6 +1635,13 @@ class ClassificationController(QObject):
         page = self._layer_panel.annotation_page
         page.set_vector_masks(tuple(entries), slot.vector_class)
         page.set_anchor_state(self._selected_anchor(slot)[1])
+        if self._viewer.pen_active:
+            # The class whose outline the Pen edits is the selected layer.
+            selected = self._layer_panel.selected_layer or ""
+            if slot.vector_class is not None:
+                self._layer_panel.set_selected_layer(f"class:{slot.vector_class}")
+            elif selected.startswith("class:"):
+                self._layer_panel.set_selected_layer(None)
 
     @staticmethod
     def _selected_anchor(
@@ -1643,7 +1687,9 @@ class ClassificationController(QObject):
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
             for class_id in dialog.selected_class_ids():
-                mask = trace_mask(slot.result.class_map == class_id, options)
+                mask = trace_mask(
+                    slot.layers.mask_for_class(class_id).astype(bool), options
+                )
                 if mask.paths:
                     masks[class_id] = mask.scaled(1 / self._display_scale())
         except ClassificationError as exc:
@@ -1665,8 +1711,8 @@ class ClassificationController(QObject):
         slot.vector_selection = (first, self._largest_path(masks[first]), -1)
         self._apply_vectors(slot)
         # Converting is the first step of editing, so go straight to the pen.
-        self._layer_panel.set_mode("annotations")
         self._layer_panel.annotation_page.set_tool(PEN_TOOL)
+        self._layer_panel.update_tool_options()
         self._on_annotation_tool_changed(PEN_TOOL)
         paths = sum(len(mask.paths) for mask in masks.values())
         points = sum(mask.anchor_count for mask in masks.values())
@@ -1863,11 +1909,20 @@ class ClassificationController(QObject):
         slot = self._current_slot
         if slot.rgb is None or slot.layers is None:
             return None
+        # Overlapping layers paint bottom to top: classification classes,
+        # then outlined and drawn classes in the order they were made.
+        paint = dict(
+            colors=classification_palette(slot.layers.class_ids, slot.fixed_colors),
+            paint_order=(
+                *(class_id for class_id in slot.layers.class_ids if class_id not in slot.vectors),
+                *slot.vectors.masks,
+            ),
+        )
         base_rgb = self._background_rgb(slot)
         if base_rgb is not None and base_rgb.shape == (*slot.layers.image_shape, 3):
-            return slot.layers.compose_display(slot.rgb, base_rgb=base_rgb)
+            return slot.layers.compose_display(slot.rgb, base_rgb=base_rgb, **paint)
         return slot.layers.compose_display(
-            slot.rgb, background_color=_LAYER_COMPOSITE_BACKGROUND
+            slot.rgb, background_color=_LAYER_COMPOSITE_BACKGROUND, **paint
         )
 
     def _show_result(self) -> None:

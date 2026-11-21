@@ -1,8 +1,10 @@
-"""Annotation tools and layer stack shown in the classification side panel.
+"""Drawing tools and their options, shown in the segmentation side panel.
 
-Reflects a ``core.AnnotationLayerModel`` without owning it: every edit is
-emitted as a signal and the Controller applies it to the Model. The page also
-hosts the Pen tool and the list of class vector masks it edits.
+The toolbox (:attr:`AnnotationToolsPage.tool_palette`) sits beside the image;
+the page itself holds the options: appearance of the selected or next shape,
+and the class vector masks the Pen edits. Annotation layers are listed with
+every other layer in :class:`~ui.classification_layer_panel.ClassificationLayerPanel`.
+Edits are emitted as signals; the Controller applies them to the Model.
 """
 
 from __future__ import annotations
@@ -49,12 +51,13 @@ _TOOL_ICONS = {
 }
 _PEN_HINT = (
     "Click to place corner points, or drag to pull smooth handles; click the "
-    "first point (or press Enter) to close a new path. With New class chosen "
-    "below, the path becomes a new class; otherwise it is added to the chosen "
-    "mask. Press Esc to go back to New class. Click an outline to "
-    "select it, then click it again to add a point. Drag points and handles "
-    "to reshape; Alt-drag a handle to break it into a corner. Alt-click or "
-    "double-click a point to toggle corner/smooth; Delete removes it."
+    "first point (or press Enter) to close a new path. A closed path becomes "
+    "a new class, or is added to the class layer you select. Select a class "
+    "layer to edit its outline; press Esc to go back to drawing a new class. "
+    "Click an outline to select it, then click it again to add a point. Drag "
+    "points and handles to reshape; Alt-drag a handle to break it into a "
+    "corner. Alt-click or double-click a point to toggle corner/smooth; "
+    "Delete removes it."
 )
 _ANCHOR_MODE_TIPS = {
     AnchorMode.CORNER: "Corner: handles move independently, for a sharp turn",
@@ -117,14 +120,10 @@ class _ColorButton(QtWidgets.QPushButton):
 
 
 class AnnotationToolsPage(QtWidgets.QWidget):
-    """Toolbar, style controls and the stacked layer list."""
+    """The toolbox and the options of the active tool or selected annotation."""
 
     toolChanged = pyqtSignal(object)  # AnnotationKind or None
     styleChanged = pyqtSignal(object)  # AnnotationStyle
-    layerSelected = pyqtSignal(int)
-    visibilityChanged = pyqtSignal(int, bool)
-    moveRequested = pyqtSignal(int, int)
-    deleteRequested = pyqtSignal(int)
     measureChanged = pyqtSignal(int, bool)
     # Vector masks: choose the mask the pen edits/draws into (class ID), or
     # -1 for "New class".
@@ -276,60 +275,8 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._measure_check.setChecked(True)
         self._measure_check.setEnabled(False)
 
-        self._list = QtWidgets.QListWidget(self)
-        self._list.setObjectName("annotationLayerList")
-        self._list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        # Grows to fit every layer (see _fit_height): the whole inspector
-        # scrolls, not the list.
-        self._list.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
-        )
-        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self._list.setSpacing(3)
-        self._list.setIconSize(QSize(16, 16))
-        self._list.setToolTip("Top of the list is drawn on top")
-        self._list.setAccessibleName("Annotation layers, front to back")
-
-        self._up_button = self._small_button("↑ Up", "Move the layer above its neighbour")
-        self._down_button = self._small_button("↓ Down", "Move the layer below its neighbour")
-        self._delete_button = self._small_button("Delete", "Delete the selected layer")
-        self._delete_button.setObjectName("annotationDeleteButton")
-        order_row = QtWidgets.QHBoxLayout()
-        order_row.setContentsMargins(0, 0, 0, 0)
-        order_row.setSpacing(6)
-        for button in (self._up_button, self._down_button, self._delete_button):
-            order_row.addWidget(button, 1)
-
-        self._empty_label = QtWidgets.QLabel(
-            "<b>No annotations yet</b><br><br>"
-            "Choose a drawing tool at the image's<br>left edge, then draw on the image.", self
-        )
-        self._empty_label.setObjectName("annotationEmptyState")
-        self._empty_label.setMinimumHeight(110)
-        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
-        )
-
-        self._layer_count = QtWidgets.QLabel("0", self)
-        self._layer_count.setObjectName("annotationLayerCount")
-        self._layer_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layers_header = QtWidgets.QHBoxLayout()
-        layers_header.setSpacing(7)
-        layers_header.addWidget(self._section_label("Layers"))
-        layers_header.addWidget(self._layer_count)
-        layers_header.addStretch(1)
-        layers_hint = QtWidgets.QLabel("Top layer appears in front.", self)
-        layers_hint.setObjectName("annotationHint")
-        layers_hint.setWordWrap(True)
-        layers_heading = QtWidgets.QVBoxLayout()
-        layers_heading.setSpacing(3)
-        layers_heading.addLayout(layers_header)
-        layers_heading.addWidget(layers_hint)
-
-        vector_section = self._build_vector_section()
+        vector_section = self._vector_section = self._build_vector_section()
+        vector_section.hide()  # shown while the Pen is armed
 
         content = QtWidgets.QWidget(self)
         content.setObjectName("annotationContent")
@@ -340,11 +287,6 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         layout.addWidget(vector_section)
         layout.addWidget(controls)
         layout.addWidget(self._measure_check)
-        layout.addLayout(layers_heading)
-        layout.addWidget(self._empty_label)
-        layout.addWidget(self._list)
-        layout.addLayout(order_row)
-        layout.addStretch(1)
 
         # No scroll area of its own: the class-layer inspector scrolls as one.
         page_layout = QtWidgets.QVBoxLayout(self)
@@ -361,54 +303,33 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         )
         self._opacity.valueChanged.connect(self._emit_style)
         self._measure_check.toggled.connect(self._on_measure_toggled)
-        self._list.currentItemChanged.connect(self._on_current_changed)
-        self._list.itemChanged.connect(self._on_item_changed)
-        self._up_button.clicked.connect(lambda: self._request_move(1))
-        self._down_button.clicked.connect(lambda: self._request_move(-1))
-        self._delete_button.clicked.connect(self._request_delete)
-        self._refreshing = False
-        self._layers_by_id: dict[int, AnnotationLayer] = {}
-        self._update_buttons()
+        # The annotation selected in the layer list, whose options are shown.
+        self._selected_layer: Optional[AnnotationLayer] = None
         self.set_vector_masks(())
 
     def _build_vector_section(self) -> QtWidgets.QFrame:
-        """The vector-mask list and the selected point's smoothing controls."""
+        """What the Pen edits (a class layer's outline) and its point controls."""
 
         section = QtWidgets.QFrame(self)
-        section.setObjectName("annotationAppearance")
+        section.setObjectName("annotationPenOptions")
         layout = QtWidgets.QVBoxLayout(section)
         layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
-        layout.addWidget(self._section_label("Vector masks"))
+        layout.addWidget(self._section_label("Pen"))
 
-        self._vector_empty = QtWidgets.QLabel(
-            "Draw with the Pen to create a new class, or on the Classes tab choose "
-            "<b>Vector mask…</b> to convert class regions into editable outlines.", self
+        # Which class layer the Pen edits; None draws a new class.
+        self._vector_class: Optional[int] = None
+        self._vector_target = QtWidgets.QLabel(self)
+        self._vector_target.setObjectName("annotationHint")
+        self._vector_target.setWordWrap(True)
+        self._new_class_button = self._small_button(
+            "New class", "Stop editing this outline; the next path starts a new class (Esc)"
         )
-        self._vector_empty.setObjectName("annotationHint")
-        self._vector_empty.setWordWrap(True)
+        self._new_class_button.clicked.connect(lambda: self.vectorMaskSelected.emit(_NEW_CLASS_ID))
 
-        self._vector_list = QtWidgets.QListWidget(self)
-        self._vector_list.setObjectName("annotationLayerList")
-        self._vector_list.setSelectionMode(
-            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
-        )
-        self._vector_list.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
-        )
-        self._vector_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._vector_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._vector_list.setSpacing(3)
-        self._vector_list.setIconSize(QSize(16, 16))
-        self._vector_list.setToolTip(
-            "The Pen edits, and draws new paths into, the selected mask; with "
-            "New class selected, it draws a new class"
-        )
-        self._vector_list.setAccessibleName("Class vector masks")
-        self._vector_list.currentItemChanged.connect(self._on_vector_current_changed)
-
-        point_label = self._field_label("Selected point", self._vector_list)
+        point_label = QtWidgets.QLabel("Selected point", self)
+        point_label.setObjectName("annotationFieldLabel")
         self._anchor_mode_buttons: dict[AnchorMode, QtWidgets.QToolButton] = {}
         mode_row = QtWidgets.QHBoxLayout()
         mode_row.setContentsMargins(0, 0, 0, 0)
@@ -448,13 +369,13 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         actions.addWidget(self._delete_anchor_button, 1)
         actions.addWidget(self._revert_vector_button, 1)
 
-        layout.addWidget(self._vector_empty)
-        layout.addWidget(self._vector_list)
+        layout.addWidget(self._vector_target)
+        layout.addWidget(self._new_class_button)
         layout.addWidget(point_label)
         layout.addLayout(mode_row)
         layout.addLayout(actions)
         self._vector_controls = (point_label, self._delete_anchor_button, self._revert_vector_button,
-                                 *self._anchor_mode_buttons.values())
+                                 self._new_class_button, *self._anchor_mode_buttons.values())
         return section
 
     def set_vector_masks(
@@ -462,36 +383,28 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         masks: tuple[tuple[int, str, RGB, int, int], ...],
         selected_class: Optional[int] = None,
     ) -> None:
-        """List vectorized classes as ``(class_id, name, colour, paths, points)``."""
+        """Show which outline the Pen edits.
 
-        self._vector_list.blockSignals(True)
-        self._vector_list.clear()
-        new_item = QtWidgets.QListWidgetItem("New class")
-        new_item.setIcon(QtGui.QIcon(str(_ASSETS / _TOOL_ICONS[PEN_TOOL])))
-        new_item.setData(_LAYER_ID_ROLE, _NEW_CLASS_ID)
-        new_item.setToolTip("Paths drawn with the Pen each start a new class")
-        self._vector_list.addItem(new_item)
-        self._vector_list.setCurrentItem(new_item)
-        for class_id, name, color, path_count, anchor_count in masks:
-            item = QtWidgets.QListWidgetItem(
-                f"{name}  ·  {path_count} path{'s' if path_count != 1 else ''}, "
+        ``masks`` lists outlined classes as ``(class_id, name, colour, paths,
+        points)``; ``selected_class`` is the one being edited, or ``None``
+        when the Pen draws a new class.
+        """
+
+        entries = {entry[0]: entry for entry in masks}
+        entry = entries.get(selected_class)
+        self._vector_class = None if entry is None else selected_class
+        if entry is None:
+            self._vector_target.setText(
+                "Drawing a new class. Select a class layer to edit its outline."
+            )
+        else:
+            _class_id, name, _color, path_count, anchor_count = entry
+            self._vector_target.setText(
+                f"Editing <b>{name}</b> · {path_count} path{'s' if path_count != 1 else ''}, "
                 f"{anchor_count} points"
             )
-            swatch = QtGui.QPixmap(16, 16)
-            swatch.fill(QtGui.QColor(*color))
-            item.setIcon(QtGui.QIcon(swatch))
-            item.setData(_LAYER_ID_ROLE, class_id)
-            item.setToolTip(f"{name}: select to edit with the Pen")
-            self._vector_list.addItem(item)
-            if class_id == selected_class:
-                self._vector_list.setCurrentItem(item)
-        self._vector_list.blockSignals(False)
-        has_masks = bool(masks)
-        self._vector_empty.setVisible(not has_masks)
         for widget in self._vector_controls:
-            widget.setVisible(has_masks)
-        self._revert_vector_button.setEnabled(self.selected_vector_class() is not None)
-        self._fit_height(self._vector_list)
+            widget.setVisible(entry is not None)
 
     def set_anchor_state(self, mode: Optional[AnchorMode]) -> None:
         """Show the selected point's mode; ``None`` when no point is selected."""
@@ -502,17 +415,9 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._delete_anchor_button.setEnabled(mode is not None)
 
     def selected_vector_class(self) -> Optional[int]:
-        """The mask the pen draws into; ``None`` when it draws a new class."""
+        """The class whose outline the Pen edits; ``None`` when it draws a new class."""
 
-        item = self._vector_list.currentItem()
-        if item is None or int(item.data(_LAYER_ID_ROLE)) == _NEW_CLASS_ID:
-            return None
-        return int(item.data(_LAYER_ID_ROLE))
-
-    def _on_vector_current_changed(self, current, _previous) -> None:
-        self._revert_vector_button.setEnabled(self.selected_vector_class() is not None)
-        if current is not None:
-            self.vectorMaskSelected.emit(int(current.data(_LAYER_ID_ROLE)))
+        return self._vector_class
 
     def _request_vector_revert(self) -> None:
         class_id = self.selected_vector_class()
@@ -553,6 +458,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         for tool, button in self._tool_buttons.items():
             button.setChecked(tool == kind)
         self._pen_hint.setVisible(kind == PEN_TOOL)
+        self._vector_section.setVisible(kind == PEN_TOOL)
 
     def clear_tool(self) -> None:
         """Turn off the active tool, if any, as if its button were clicked."""
@@ -566,57 +472,15 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self.toolChanged.emit(kind if checked else None)
 
     def selected_layer_id(self) -> Optional[int]:
-        item = self._list.currentItem()
-        return None if item is None else int(item.data(_LAYER_ID_ROLE))
+        return None if self._selected_layer is None else self._selected_layer.layer_id
 
-    def set_layers(
-        self,
-        layers: tuple[AnnotationLayer, ...],
-        selected_id: Optional[int] = None,
-    ) -> None:
-        """Rebuild the list top layer first, keeping ``selected_id`` selected."""
+    def set_selected_layer(self, layer: Optional[AnnotationLayer]) -> None:
+        """Show ``layer``'s options (its style and measuring); ``None`` clears it."""
 
-        self._refreshing = True
-        self._layers_by_id = {layer.layer_id: layer for layer in layers}
-        self._list.clear()
-        for layer in reversed(layers):
-            item = QtWidgets.QListWidgetItem(layer.name)
-            item.setIcon(QtGui.QIcon(str(_ASSETS / _TOOL_ICONS[layer.kind])))
-            item.setToolTip(f"{layer.name}\nUncheck to hide this annotation.")
-            item.setData(_LAYER_ID_ROLE, layer.layer_id)
-            item.setFlags(
-                item.flags()
-                | Qt.ItemFlag.ItemIsUserCheckable
-                | Qt.ItemFlag.ItemIsSelectable
-            )
-            item.setCheckState(
-                Qt.CheckState.Checked if layer.visible else Qt.CheckState.Unchecked
-            )
-            self._list.addItem(item)
-            if layer.layer_id == selected_id:
-                self._list.setCurrentItem(item)
-        self._refreshing = False
+        self._selected_layer = layer
+        if layer is not None:
+            self.set_style(layer.style)
         self._update_measure_check()
-        has_layers = bool(layers)
-        self._layer_count.setText(str(len(layers)))
-        self._layer_count.setAccessibleName(f"{len(layers)} annotation layers")
-        self._list.setVisible(has_layers)
-        self._empty_label.setVisible(not has_layers)
-        self._fit_height(self._list)
-        self._update_buttons()
-
-    @staticmethod
-    def _fit_height(widget: QtWidgets.QListWidget) -> None:
-        """Make a list exactly as tall as its rows, so it never scrolls."""
-
-        rows = widget.count()
-        if not rows:
-            return
-        widget.doItemsLayout()
-        last = widget.visualItemRect(widget.item(rows - 1))
-        bottom = last.bottom() + widget.verticalOffset()
-        frame = 2 * widget.frameWidth()
-        widget.setFixedHeight(bottom + 1 + widget.spacing() + frame)
 
     # ------------------------------------------------------------------ #
 
@@ -644,8 +508,7 @@ class AnnotationToolsPage(QtWidgets.QWidget):
     def _update_measure_check(self) -> None:
         """Enable the measure box for a selected rectangle/circle, showing its state."""
 
-        selected_id = self.selected_layer_id()
-        layer = self._layers_by_id.get(selected_id) if selected_id is not None else None
+        layer = self._selected_layer
         measurable = layer is not None and layer.kind in MEASURABLE_KINDS
         self._measure_check.blockSignals(True)
         self._measure_check.setEnabled(measurable)
@@ -656,36 +519,3 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         layer_id = self.selected_layer_id()
         if layer_id is not None:
             self.measureChanged.emit(layer_id, checked)
-
-    def _on_current_changed(self, current, _previous) -> None:
-        self._update_buttons()
-        if not self._refreshing:
-            self._update_measure_check()
-        if not self._refreshing and current is not None:
-            self.layerSelected.emit(int(current.data(_LAYER_ID_ROLE)))
-
-    def _on_item_changed(self, item: QtWidgets.QListWidgetItem) -> None:
-        if self._refreshing:
-            return
-        self.visibilityChanged.emit(
-            int(item.data(_LAYER_ID_ROLE)),
-            item.checkState() == Qt.CheckState.Checked,
-        )
-
-    def _request_move(self, delta: int) -> None:
-        layer_id = self.selected_layer_id()
-        if layer_id is not None:
-            self.moveRequested.emit(layer_id, delta)
-
-    def _request_delete(self) -> None:
-        layer_id = self.selected_layer_id()
-        if layer_id is not None:
-            self.deleteRequested.emit(layer_id)
-
-    def _update_buttons(self) -> None:
-        row = self._list.currentRow()
-        count = self._list.count()
-        selected = row >= 0
-        self._up_button.setEnabled(selected and row > 0)
-        self._down_button.setEnabled(selected and row < count - 1)
-        self._delete_button.setEnabled(selected)

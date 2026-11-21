@@ -175,9 +175,9 @@ def test_layer_summary_tracks_visible_classes(qtbot):
     qtbot.addWidget(panel)
     panel.set_layers(_make_layers(count=3))
 
-    assert panel._summary_label.text() == "3 of 3 classes selected"
+    assert panel._summary_label.text() == "3 of 3 layers shown"
     panel._rows[1]._toggle.setChecked(False)
-    assert panel._summary_label.text() == "2 of 3 classes selected"
+    assert panel._summary_label.text() == "2 of 3 layers shown"
 
 
 def test_panel_has_no_collapse_control(qtbot):
@@ -237,7 +237,7 @@ def test_toggle_all_button_disables_then_enables_every_row(qtbot):
     panel = ClassificationLayerPanel()
     qtbot.addWidget(panel)
     panel.set_layers(_make_layers(count=3))
-    assert panel._toggle_all_button.text() == "Deselect all"
+    assert panel._toggle_all_button.text() == "Hide all"
 
     with qtbot.waitSignal(panel.setAllVisibleRequested, timeout=1000) as blocker:
         panel._toggle_all_button.click()
@@ -255,7 +255,7 @@ def test_toggle_all_button_disables_then_enables_every_row(qtbot):
         for layer in _make_layers(count=3)
     )
     panel.set_layers(hidden_layers)
-    assert panel._toggle_all_button.text() == "Select all"
+    assert panel._toggle_all_button.text() == "Show all"
 
     with qtbot.waitSignal(panel.setAllVisibleRequested, timeout=1000) as blocker:
         panel._toggle_all_button.click()
@@ -268,10 +268,10 @@ def test_toggle_all_button_text_follows_a_single_row_toggle(qtbot):
     panel.set_layers(_make_layers(count=2))
 
     panel._rows[0]._toggle.setChecked(False)
-    assert panel._toggle_all_button.text() == "Deselect all"
+    assert panel._toggle_all_button.text() == "Hide all"
 
     panel._rows[1]._toggle.setChecked(False)
-    assert panel._toggle_all_button.text() == "Select all"
+    assert panel._toggle_all_button.text() == "Show all"
 
 
 def test_outline_toggle_button_emits_outline_mode_changed(qtbot):
@@ -818,13 +818,13 @@ def test_measured_shape_appears_as_a_region_row_and_recalculates_on_move(qtbot):
 
     controller, panel = _region_setup(qtbot)
     layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
-    assert layer_id in panel._region_rows
-    row = panel._region_rows[layer_id]
+    assert layer_id in panel._annotation_rows
+    row = panel._annotation_rows[layer_id]
     assert "NDVI: 0.000" in row._means_label.text()
 
     controller._on_annotation_geometry_changed(layer_id, 12, 0, 5, 5)
     qtbot.waitUntil(
-        lambda: "NDVI: 1.000" in panel._region_rows[layer_id]._means_label.text(),
+        lambda: "NDVI: 1.000" in panel._annotation_rows[layer_id]._means_label.text(),
         timeout=1000,
     )
 
@@ -835,18 +835,21 @@ def test_region_rows_follow_measure_toggle_visibility_and_delete(qtbot):
     controller, panel = _region_setup(qtbot)
     layer_id = _draw(controller, AnnotationKind.ELLIPSE, 2, 2, 6, 6)
     controller._on_annotation_measure_changed(layer_id, True)
-    assert layer_id in panel._region_rows
+    assert panel._annotation_rows[layer_id].measured
 
+    # Every annotation stays listed as a layer; hidden or unmeasured ones
+    # just have no means.
     controller._on_annotation_visibility_changed(layer_id, False)
-    assert not panel._region_rows
+    row = panel._annotation_rows[layer_id]
+    assert not row._toggle.isChecked() and not row.measured
     controller._on_annotation_visibility_changed(layer_id, True)
-    assert layer_id in panel._region_rows
+    assert panel._annotation_rows[layer_id].measured
 
     controller._on_annotation_measure_changed(layer_id, False)
-    assert not panel._region_rows
+    assert not panel._annotation_rows[layer_id].measured
     controller._on_annotation_measure_changed(layer_id, True)
     controller._on_annotation_delete_requested(layer_id)
-    assert not panel._region_rows
+    assert not panel._annotation_rows
 
 
 def test_measure_checkbox_tracks_selected_shape_kind(qtbot):
@@ -861,7 +864,7 @@ def test_measure_checkbox_tracks_selected_shape_kind(qtbot):
         page._measure_check.setChecked(False)
     assert blocker.args == [rect_id, False]
     assert not controller._annotation_slot.layers.get(rect_id).measure_index
-    assert not panel._region_rows
+    assert not panel._annotation_rows[rect_id].measured
 
     from PyQt6.QtCore import QPointF
 
@@ -877,9 +880,9 @@ def test_region_rows_do_not_change_class_rows(qtbot):
     layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
     controller._on_annotation_measure_changed(layer_id, True)
     assert len(panel._rows) == 2
-    assert len(panel._region_rows) == 1
-    panel.set_layers(_make_layers(count=2))  # class refresh keeps region rows
-    assert len(panel._region_rows) == 1
+    assert len(panel._annotation_rows) == 1
+    panel.set_layers(_make_layers(count=2))  # class refresh keeps annotation rows
+    assert len(panel._annotation_rows) == 1
 
 
 def test_region_row_is_renamed_by_double_click_editor(qtbot):
@@ -888,16 +891,14 @@ def test_region_row_is_renamed_by_double_click_editor(qtbot):
     controller, panel = _region_setup(qtbot)
     panel.show()  # the inline editor only commits while it is visible
     layer_id = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
-    row = panel._region_rows[layer_id]
+    row = panel._annotation_rows[layer_id]
 
     row.begin_rename()
     row._name_edit.setText("Leaf patch")
     row._name_edit.editingFinished.emit()
 
     assert controller._annotation_slot.layers.get(layer_id).name == "Leaf patch"
-    assert panel._region_rows[layer_id]._name_label.text() == "Leaf patch"
-    names = [panel.annotation_page._list.item(i).text() for i in range(panel.annotation_page._list.count())]
-    assert "Leaf patch" in names
+    assert panel._annotation_rows[layer_id]._name_label.text() == "Leaf patch"
     # Renaming is one undoable step.
     controller.undo_annotation()
     assert controller._annotation_slot.layers.get(layer_id).name == "Rectangle 1"
@@ -979,16 +980,16 @@ def test_measure_defaults_on_at_startup_and_preserves_individual_opt_out(qtbot):
     page = panel.annotation_page
     assert page._measure_check.isChecked()
     assert not page._measure_check.isEnabled()
-    page.set_layers(())
+    page.set_selected_layer(None)
     assert page._measure_check.isChecked()
 
     rect = _draw(controller, AnnotationKind.RECTANGLE, 0, 0, 5, 5)
-    assert page._measure_check.isChecked() and rect in panel._region_rows
+    assert page._measure_check.isChecked() and panel._annotation_rows[rect].measured
     page._measure_check.setChecked(False)
-    assert rect not in panel._region_rows
+    assert not panel._annotation_rows[rect].measured
 
     ellipse = _draw(controller, AnnotationKind.ELLIPSE, 2, 2, 6, 6)
-    assert page._measure_check.isChecked() and ellipse in panel._region_rows
+    assert page._measure_check.isChecked() and panel._annotation_rows[ellipse].measured
     controller._on_annotation_picked(rect)
     assert not page._measure_check.isChecked()
     controller._on_annotation_deselected()
@@ -1002,14 +1003,11 @@ def test_whole_inspector_is_the_only_scrolling_element(qtbot):
     panel.set_layers(_make_layers(count=8))
     panel.show()
     qtbot.wait(20)
-    # One scroll area wraps everything: header, mode switch and page.
+    # One scroll area wraps everything: header, tool options and layers.
     scroll_areas = panel.findChildren(QtWidgets.QScrollArea)
     assert scroll_areas == [panel._scroll_area]
     assert panel._scroll_area.widget().isAncestorOf(panel._rows_container)
-    assert panel._scroll_area.widget().isAncestorOf(panel._mode_row)
+    assert panel._scroll_area.widget().isAncestorOf(panel.annotation_page)
     # The class rows take their full height, so the inspector scrolls.
     assert panel._rows_container.height() >= panel._rows_container.sizeHint().height()
     assert panel._scroll_area.verticalScrollBar().maximum() > 0
-    # The annotation layer list never scrolls on its own.
-    layer_list = panel.annotation_page.findChild(QtWidgets.QListWidget, "annotationLayerList")
-    assert layer_list.verticalScrollBarPolicy() == QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff

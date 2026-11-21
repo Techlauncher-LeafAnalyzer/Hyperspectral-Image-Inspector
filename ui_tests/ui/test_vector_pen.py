@@ -156,7 +156,7 @@ def test_vectorize_and_edit_updates_the_class_region(qtbot, monkeypatch):
     panel.vectorizeRequested.emit()
     slot = controller._current_slot
     assert 1 in slot.vectors and viewer.pen_active
-    assert panel.mode == "annotations"
+    assert panel.annotation_page.isVisibleTo(panel)  # the Pen's options show
     page = panel.annotation_page
     assert page._tool_buttons[PEN_TOOL].isChecked()
     np.testing.assert_array_equal(slot.result.class_map == 1, class_map == 1)
@@ -230,12 +230,14 @@ def test_pen_draws_classes_from_scratch_without_a_classification(qtbot):
     assert slot.layers.class_ids == (0,)
     assert controller.redo_annotation()
     assert slot.layers.layers[1].name == "Drawn class 2"
-    page._vector_list.setCurrentRow(2)  # row 0 is "New class"
+    # Selecting a class layer aims the Pen at its outline.
+    panel._on_row_clicked("class:1")
+    assert page.selected_vector_class() == 1 and panel.selected_layer == "class:1"
     page._revert_vector_button.click()
     assert slot.layers.class_ids == (0,)
 
     # Removing a class below another leaves an empty slot, reused next time.
-    page._vector_list.setCurrentRow(1)
+    panel._on_row_clicked("class:0")
     page._revert_vector_button.click()
     assert slot.layers.class_ids == () or slot.layers.layers[0].pixel_count == 0
     viewer.vectorClassDrawn.emit(VectorMask((_square(10, 10, 4),)))
@@ -251,5 +253,30 @@ def test_drawn_class_joins_an_existing_classification(qtbot):
     slot = controller._current_slot
     assert slot.layers.class_ids == (0, 1, 2)
     assert (slot.result.class_map[:8, :8] == 2).all()
-    # The drawn class claims its pixels from the classes beneath it.
-    assert slot.layers.layers[1].pixel_count == 100 - 9
+    # The drawn class overlaps the classes beneath it; they keep their pixels.
+    assert slot.layers.layers[1].pixel_count == 100
+
+
+def test_selecting_a_class_layer_with_the_pen_outlines_it(qtbot):
+    controller, viewer, panel, _source = _make_controller(qtbot)
+    class_map = np.zeros((20, 20), dtype=np.int32)
+    class_map[5:15, 5:15] = 1
+    controller._on_result(_make_unsupervised_result(class_map))
+    page = panel.annotation_page
+    slot = controller._current_slot
+
+    # Without the Pen, selecting a class layer just selects it.
+    panel._on_row_clicked("class:1")
+    assert 1 not in slot.vectors
+
+    page.set_tool(PEN_TOOL)
+    controller._on_annotation_tool_changed(PEN_TOOL)
+    panel._on_row_clicked("class:1")
+    # The class is traced into an editable outline enclosing the same pixels.
+    assert 1 in slot.vectors and page.selected_vector_class() == 1
+    assert slot.layers.layers[1].pixel_count == 100
+    assert "Editing" in page._vector_target.text()
+    # "New class" lets go of it again.
+    page._new_class_button.click()
+    assert page.selected_vector_class() is None and panel.selected_layer is None
+

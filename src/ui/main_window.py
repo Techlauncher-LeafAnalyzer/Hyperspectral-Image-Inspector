@@ -294,9 +294,15 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.classificationLayerPanel.classSpectraRequested.connect(
             self._spectrum_controller.show_class_spectra
         )
-        self.classificationLayerPanel.inspectRequested.connect(
-            self._spectrum_controller.inspect_region
+        # Every layer row's Spectra box, and pins listed as layers.
+        panel, inspector = self.classificationLayerPanel, self._spectrum_controller.inspector
+        panel.spectraToggled.connect(self._spectrum_controller.set_layer_spectrum)
+        panel.pinVisibilityChanged.connect(inspector.set_marker_visible)
+        panel.pinDeleteRequested.connect(lambda key: inspector.remove_series([key]))
+        panel.layerSelected.connect(
+            lambda key: key.startswith("pin:") and inspector.select_series(key)
         )
+        inspector.seriesChanged.connect(self._sync_spectrum_layers)
         self._classification_controller.regionsChanged.connect(
             self._spectrum_controller.schedule_region_refresh
         )
@@ -1642,6 +1648,17 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         if not self._hsi_data.is_loaded():
             return None
         return self._display_data()
+
+    def _sync_spectrum_layers(self) -> None:
+        """List pins as layers and tick the Spectra box of every plotted layer."""
+
+        inspector = self._spectrum_controller.inspector
+        self.classificationLayerPanel.set_spectra_keys(inspector.plotted_keys())
+        self.classificationLayerPanel.set_pins(tuple(
+            (key, pin.number, pin.row, pin.column,
+             tuple(round(channel * 255) for channel in pin.color), marker_visible)
+            for key, pin, marker_visible, _plotted in inspector.pin_layers()
+        ))
 
     def _on_spectrum_plot(self, pos: QPointF) -> None:
         viewer = self.sender()

@@ -512,11 +512,13 @@ def apply_vector_masks(
 ) -> ClassificationResult:
     """Return ``result`` with each vectorized class's pixels set by its outline.
 
-    A vectorized class gives up its original pixels and takes exactly the
-    pixels its outline covers, claiming them from any other class. Pixels a
-    vectorized class releases go back to whichever un-vectorized class held
-    them originally, or become unclassified (``-1``) when the class itself
-    held them. Where outlines overlap, the later entry in ``masks`` wins.
+    Layers may overlap, as in Photoshop: a vectorized class takes exactly the
+    pixels its outline covers, and every other class keeps its own. Pixels a
+    vectorized class gives up become unclassified (``-1``) unless another
+    class holds them. ``one_hot_masks`` hold each class's full region, so
+    overlapping classes each count the shared pixels; ``class_map`` names the
+    top-most class at each pixel, with vectorized classes above the rest and
+    later entries in ``masks`` above earlier ones.
 
     A mask whose class ID ``result`` lacks adds that class, so a class can be
     drawn from scratch. A K-means result's IDs must stay ``0..K-1``, so any
@@ -532,13 +534,16 @@ def apply_vector_masks(
         result = _with_empty_classes(result, added)
     class_ids = _result_class_ids(result)
     base = np.asarray(result.class_map)
+    regions = {class_id: mask.rasterize(base.shape) for class_id, mask in masks.items()}
+    one_hot_masks = np.stack([
+        regions[class_id] if class_id in regions else base == class_id
+        for class_id in class_ids
+    ]).astype(np.uint8)
     class_map = np.array(base, dtype=np.int32, copy=True)
-    for class_id in masks:
+    for class_id in regions:
         class_map[base == class_id] = -1
-    for class_id, mask in masks.items():
-        class_map[mask.rasterize(base.shape)] = class_id
-    id_array = np.asarray(class_ids, dtype=np.int32)[:, None, None]
-    one_hot_masks = (class_map[None, :, :] == id_array).astype(np.uint8)
+    for class_id, region in regions.items():
+        class_map[region] = class_id
     counts = one_hot_masks.reshape(len(class_ids), -1).sum(axis=1, dtype=np.int64)
     for array in (class_map, one_hot_masks, counts):
         array.setflags(write=False)

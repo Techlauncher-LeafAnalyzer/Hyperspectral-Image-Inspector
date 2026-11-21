@@ -1,8 +1,10 @@
-"""Layer inspector for classification results.
+"""Segmentation inspector: the classifier, tool options and one layer list.
 
-Reflects a ``core.ClassificationLayerModel`` without owning classification
-state. A Controller applies emitted changes to the Model and re-renders the
-composited image.
+Every layer is listed together, like Photoshop's Layers panel: annotations
+(front-most first), Ctrl+Click pins, then classification and drawn classes.
+Each row shows or hides its layer and ticks whether its spectrum is viewed in
+the Spectrum Inspector. The panel owns no state: Controllers apply emitted
+changes to their Models and send the result back.
 """
 
 from __future__ import annotations
@@ -13,7 +15,8 @@ from typing import Mapping, Optional
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from core import ClassificationLayer
+from core import AnnotationKind, AnnotationLayer, ClassificationLayer
+from core.annotation_model import MEASURABLE_KINDS
 from ui.annotation_panel import AnnotationToolsPage
 from ui.classification_colors import RGBColor, classification_palette
 from ui.theme import INSPECTOR_PANEL_WIDTH
@@ -85,92 +88,73 @@ class _ResizeGrip(QtWidgets.QWidget):
         self._drag_origin = None
 
 
-def _make_inspect_button(name: str, parent: QtWidgets.QWidget) -> QtWidgets.QPushButton:
-    """The per-row button that adds one class/region to the Spectrum Inspector."""
+class _LayerRow(QtWidgets.QWidget):
+    """One row of the layer list: visibility, name, colour and Spectra.
 
-    button = QtWidgets.QPushButton("Inspect", parent)
-    button.setObjectName("layerInspectButton")
-    button.setToolTip(f"Add the mean spectrum of {name} to the Spectrum Inspector")
-    button.setAccessibleName(f"Inspect {name} spectrum")
-    button.setCursor(Qt.CursorShape.PointingHandCursor)
-    return button
+    ``key`` names the layer (``"class:3"``, ``"annotation:7"``, ``"pin:0"``).
+    Clicking the row selects the layer; double-clicking its name renames it.
+    """
 
-
-class _LayerRowWidget(QtWidgets.QWidget):
-    """One class row with selection, colour, count, and opacity controls."""
-
-    visibilityChanged = pyqtSignal(int, bool)
-    opacityChanged = pyqtSignal(int, float)
-    renameRequested = pyqtSignal(int, str)
-    inspectRequested = pyqtSignal(int)
+    clicked = pyqtSignal(str)
+    renamed = pyqtSignal(str, str)
+    shownChanged = pyqtSignal(str, bool)
+    spectraToggled = pyqtSignal(str, bool)
 
     def __init__(
         self,
-        layer: ClassificationLayer,
+        key: str,
+        name: str,
         color: RGBColor,
-        means: Optional[Mapping[str, PixelValueEntry]] = None,
+        details: str,
         parent: Optional[QtWidgets.QWidget] = None,
         *,
-        vectorized: bool = False,
+        visible: bool = True,
+        spectra: Optional[bool] = False,
+        renamable: bool = True,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("classificationLayerRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.class_id = layer.class_id
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.key = key
+        self._name = name
 
         self._toggle = QtWidgets.QCheckBox(self)
         self._toggle.setObjectName("layerVisibilityToggle")
-        self._toggle.setChecked(layer.visible)
-        self._toggle.setToolTip(f"Show or hide {layer.name}")
-        self._toggle.setAccessibleName(f"Show {layer.name}")
+        self._toggle.setChecked(visible)
+        self._toggle.setToolTip(f"Show or hide {name}")
+        self._toggle.setAccessibleName(f"Show {name}")
         self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self._name = layer.name
-        self._name_label = QtWidgets.QLabel(layer.name, self)
+        self._name_label = QtWidgets.QLabel(name, self)
         self._name_label.setObjectName("layerNameLabel")
         self._name_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        self._name_label.setToolTip("Double-click to rename")
-        self._name_label.installEventFilter(self)
-
         self._name_edit = QtWidgets.QLineEdit(self)
         self._name_edit.setObjectName("layerNameEdit")
-        self._name_edit.setAccessibleName(f"Rename {layer.name}")
+        self._name_edit.setAccessibleName(f"Rename {name}")
         self._name_edit.hide()
         self._name_edit.editingFinished.connect(self._finish_rename)
+        if renamable:
+            self._name_label.setToolTip("Double-click to rename")
+            self._name_label.installEventFilter(self)
 
         self._color_swatch = _ColorSwatch(color, self)
-        self._inspect_button = _make_inspect_button(layer.name, self)
-        self._inspect_button.setEnabled(layer.pixel_count > 0)
-        self._inspect_button.clicked.connect(lambda: self.inspectRequested.emit(self.class_id))
-
-        count_text = f"{layer.pixel_count:,} pixels"
-        if vectorized:
-            count_text += " · vector mask"
-        self._count_label = QtWidgets.QLabel(count_text, self)
+        self._count_label = QtWidgets.QLabel(details, self)
         self._count_label.setObjectName("layerPixelCountLabel")
-        if vectorized:
-            self._count_label.setToolTip(
-                "This class's region is set by its vector mask; edit it with the "
-                "Pen on the Annotations tab"
-            )
 
-        self._opacity_caption = QtWidgets.QLabel("Opacity", self)
-        self._opacity_caption.setObjectName("layerOpacityCaption")
-
-        self._opacity_slider = QtWidgets.QSlider(Qt.Orientation.Horizontal, self)
-        self._opacity_slider.setObjectName("layerOpacitySlider")
-        self._opacity_slider.setRange(0, 100)
-        self._opacity_slider.setValue(round(layer.opacity * 100))
-        self._opacity_slider.setToolTip(f"Adjust {layer.name} opacity")
-        self._opacity_slider.setAccessibleName(f"{layer.name} opacity")
-
-        self._opacity_value_label = QtWidgets.QLabel(
-            f"{round(layer.opacity * 100)}%", self
+        # None: this kind of layer has no spectrum (arrows, text).
+        self._spectra_check = QtWidgets.QCheckBox("Spectra", self)
+        self._spectra_check.setObjectName("layerSpectraCheck")
+        self._spectra_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._spectra_check.setChecked(bool(spectra))
+        self._spectra_check.setEnabled(spectra is not None)
+        self._spectra_check.setToolTip(
+            f"View {name} in the Spectrum Inspector" if spectra is not None
+            else "Arrows and text enclose no pixels, so they have no spectrum"
         )
-        self._opacity_value_label.setObjectName("layerOpacityValueLabel")
-        self._opacity_value_label.setFixedWidth(34)
-        self._opacity_value_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        self._spectra_check.setAccessibleName(f"View {name} in the Spectrum Inspector")
+        self._spectra_check.toggled.connect(
+            lambda checked: self.spectraToggled.emit(self.key, checked)
         )
 
         name_row = QtWidgets.QHBoxLayout()
@@ -191,38 +175,54 @@ class _LayerRowWidget(QtWidgets.QWidget):
         header_row.setSpacing(10)
         header_row.addWidget(self._toggle, 0, Qt.AlignmentFlag.AlignTop)
         header_row.addLayout(name_column, 1)
-        header_row.addWidget(self._inspect_button, 0, Qt.AlignmentFlag.AlignTop)
+        header_row.addWidget(self._spectra_check, 0, Qt.AlignmentFlag.AlignTop)
 
-        opacity_header = QtWidgets.QHBoxLayout()
-        opacity_header.setContentsMargins(0, 0, 0, 0)
-        opacity_header.setSpacing(6)
-        opacity_header.addWidget(self._opacity_caption)
-        opacity_header.addStretch(1)
-        opacity_header.addWidget(self._opacity_value_label)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(11, 10, 11, 10)
-        layout.setSpacing(7)
-        layout.addLayout(header_row)
-        layout.addLayout(opacity_header)
-        layout.addWidget(self._opacity_slider)
-
-        # Per-class means of each cached visualization, drawn with the same
-        # swatch-and-value markup as the viewer's hover pixel-value overlay.
+        self._layout = QtWidgets.QVBoxLayout(self)
+        self._layout.setContentsMargins(11, 10, 11, 10)
+        self._layout.setSpacing(7)
+        self._layout.addLayout(header_row)
         self._means_label: Optional[QtWidgets.QLabel] = None
-        if means is not None:
-            means_caption = QtWidgets.QLabel("Index means", self)
-            means_caption.setObjectName("layerIndexMeansCaption")
-            self._means_label = QtWidgets.QLabel(self)
-            self._means_label.setObjectName("layerIndexMeansLabel")
-            self._means_label.setTextFormat(Qt.TextFormat.RichText)
-            self._means_label.setText(format_pixel_values_html(means))
-            layout.addWidget(means_caption)
-            layout.addWidget(self._means_label)
 
         self._toggle.toggled.connect(self._on_toggled)
-        self._opacity_slider.valueChanged.connect(self._on_slider_changed)
-        self._set_visible_property(layer.visible)
+        self._set_property("layerVisible", visible)
+        self._set_property("layerSelected", False)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def has_spectrum(self) -> bool:
+        return self._spectra_check.isEnabled()
+
+    def set_spectra_shown(self, shown: bool) -> None:
+        """Tick the Spectra box to match the inspector, without emitting."""
+
+        self._spectra_check.blockSignals(True)
+        self._spectra_check.setChecked(shown)
+        self._spectra_check.blockSignals(False)
+
+    def set_selected(self, selected: bool) -> None:
+        self._set_property("layerSelected", selected)
+
+    def is_selected(self) -> bool:
+        return bool(self.property("layerSelected"))
+
+    def _add_means(self, means: Optional[Mapping[str, PixelValueEntry]]) -> None:
+        """Per-visualization means, drawn like the viewer's hover pixel values."""
+
+        caption = QtWidgets.QLabel("Index means", self)
+        caption.setObjectName("layerIndexMeansCaption")
+        self._means_label = QtWidgets.QLabel(self)
+        self._means_label.setObjectName("layerIndexMeansLabel")
+        self._means_label.setTextFormat(Qt.TextFormat.RichText)
+        self._means_label.setText(format_pixel_values_html(means))
+        self._layout.addWidget(caption)
+        self._layout.addWidget(self._means_label)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.key)
+        super().mousePressEvent(event)
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
         if (
@@ -251,163 +251,150 @@ class _LayerRowWidget(QtWidgets.QWidget):
         self._name_edit.hide()
         self._name_label.show()
         if new_name and new_name != self._name:
-            self.renameRequested.emit(self.class_id, new_name)
+            self.renamed.emit(self.key, new_name)
 
-    def _set_visible_property(self, visible: bool) -> None:
-        self.setProperty("layerVisible", visible)
+    def _set_property(self, name: str, value: bool) -> None:
+        self.setProperty(name, value)
         self.style().unpolish(self)
         self.style().polish(self)
 
     def _on_toggled(self, checked: bool) -> None:
-        self._set_visible_property(checked)
-        self.visibilityChanged.emit(self.class_id, checked)
+        self._set_property("layerVisible", checked)
+        self.shownChanged.emit(self.key, checked)
+
+
+class _LayerRowWidget(_LayerRow):
+    """A class layer: a classification class or a class drawn with the Pen."""
+
+    visibilityChanged = pyqtSignal(int, bool)
+    opacityChanged = pyqtSignal(int, float)
+    renameRequested = pyqtSignal(int, str)
+
+    def __init__(
+        self,
+        layer: ClassificationLayer,
+        color: RGBColor,
+        means: Optional[Mapping[str, PixelValueEntry]] = None,
+        parent: Optional[QtWidgets.QWidget] = None,
+        *,
+        vectorized: bool = False,
+        spectra: bool = False,
+    ) -> None:
+        details = f"{layer.pixel_count:,} pixels"
+        if vectorized:
+            details += " · vector mask"
+        super().__init__(
+            f"class:{layer.class_id}", layer.name, color, details, parent,
+            visible=layer.visible, spectra=spectra if layer.pixel_count > 0 else False,
+        )
+        self.class_id = layer.class_id
+        self._spectra_check.setEnabled(layer.pixel_count > 0)
+        if vectorized:
+            self._count_label.setToolTip(
+                "This class's region is set by its vector mask; edit it with the Pen"
+            )
+
+        self._opacity_caption = QtWidgets.QLabel("Opacity", self)
+        self._opacity_caption.setObjectName("layerOpacityCaption")
+        self._opacity_slider = QtWidgets.QSlider(Qt.Orientation.Horizontal, self)
+        self._opacity_slider.setObjectName("layerOpacitySlider")
+        self._opacity_slider.setRange(0, 100)
+        self._opacity_slider.setValue(round(layer.opacity * 100))
+        self._opacity_slider.setToolTip(f"Adjust {layer.name} opacity")
+        self._opacity_slider.setAccessibleName(f"{layer.name} opacity")
+        self._opacity_value_label = QtWidgets.QLabel(
+            f"{round(layer.opacity * 100)}%", self
+        )
+        self._opacity_value_label.setObjectName("layerOpacityValueLabel")
+        self._opacity_value_label.setFixedWidth(34)
+        self._opacity_value_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        opacity_header = QtWidgets.QHBoxLayout()
+        opacity_header.setContentsMargins(0, 0, 0, 0)
+        opacity_header.setSpacing(6)
+        opacity_header.addWidget(self._opacity_caption)
+        opacity_header.addStretch(1)
+        opacity_header.addWidget(self._opacity_value_label)
+        self._layout.addLayout(opacity_header)
+        self._layout.addWidget(self._opacity_slider)
+        if means is not None:
+            self._add_means(means)
+
+        self.shownChanged.connect(lambda _key, shown: self.visibilityChanged.emit(self.class_id, shown))
+        self.renamed.connect(lambda _key, name: self.renameRequested.emit(self.class_id, name))
+        self._opacity_slider.valueChanged.connect(self._on_slider_changed)
 
     def _on_slider_changed(self, value: int) -> None:
         self._opacity_value_label.setText(f"{value}%")
         self.opacityChanged.emit(self.class_id, value / 100.0)
 
 
-class _RegionRowWidget(QtWidgets.QWidget):
-    """Read-only row for an annotation region: name, pixel count, index means.
+_ANNOTATION_KIND_NAMES = {
+    AnnotationKind.RECTANGLE: "Rectangle",
+    AnnotationKind.ELLIPSE: "Circle",
+    AnnotationKind.ARROW: "Arrow",
+    AnnotationKind.TEXT: "Text",
+}
 
-    Styled like a class row so the measured region reads as one more class.
-    Double-click the name to rename the annotation.
-    """
 
-    renameRequested = pyqtSignal(int, str)
-    # The row's checkbox: whether "Class spectra" includes this region. It
-    # does not hide the annotation (that lives on the Annotations tab).
-    selectionChanged = pyqtSignal(int, bool)
-    inspectRequested = pyqtSignal(int)
+class _AnnotationRowWidget(_LayerRow):
+    """An annotation layer. Rectangles and circles are regions with means and
+    a spectrum; arrows and text are shown but have neither."""
 
     def __init__(
         self,
-        annotation_id: int,
-        name: str,
-        color: RGBColor,
-        pixel_count: int,
-        means: Optional[Mapping[str, PixelValueEntry]],
+        layer: AnnotationLayer,
+        measurement: Optional[tuple[int, Optional[Mapping[str, PixelValueEntry]]]],
         parent: Optional[QtWidgets.QWidget] = None,
         *,
-        selected: bool = True,
+        spectra: bool = False,
     ) -> None:
-        super().__init__(parent)
-        self.setObjectName("classificationLayerRow")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setProperty("layerVisible", True)
-        self.annotation_id = annotation_id
-        self._name = name
-        self.setToolTip(f"{name}: measured from the annotation drawn on the image")
-
-        self._name_label = QtWidgets.QLabel(name, self)
-        self._name_label.setObjectName("layerNameLabel")
-        self._name_label.setToolTip("Double-click to rename")
-        self._name_label.installEventFilter(self)
-        self._name_edit = QtWidgets.QLineEdit(self)
-        self._name_edit.setObjectName("layerNameEdit")
-        self._name_edit.setAccessibleName(f"Rename {name}")
-        self._name_edit.hide()
-        self._name_edit.editingFinished.connect(self._finish_rename)
-        swatch = _ColorSwatch(color, self)
-        self._toggle = QtWidgets.QCheckBox(self)
-        self._toggle.setObjectName("layerVisibilityToggle")
-        self._toggle.setChecked(selected)
-        self._toggle.setToolTip(f"Include {name} when plotting class spectra")
-        self._toggle.setAccessibleName(f"Select {name}")
-        self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._toggle.toggled.connect(self._on_toggled)
-        self._inspect_button = _make_inspect_button(name, self)
-        self._inspect_button.setEnabled(pixel_count > 0)
-        self._inspect_button.clicked.connect(
-            lambda: self.inspectRequested.emit(self.annotation_id)
+        kind = _ANNOTATION_KIND_NAMES[layer.kind]
+        region = layer.kind in MEASURABLE_KINDS
+        details = kind
+        if region and measurement is not None:
+            pixel_count, _means = measurement
+            details = (
+                f"{kind} · {pixel_count:,} pixels" if pixel_count else f"{kind} · outside the image"
+            )
+        super().__init__(
+            f"annotation:{layer.layer_id}", layer.name, tuple(layer.style.stroke[:3]),
+            details, parent, visible=layer.visible, spectra=spectra if region else None,
         )
-        self._count_label = QtWidgets.QLabel(f"{pixel_count:,} pixels · annotation", self)
-        self._count_label.setObjectName("layerPixelCountLabel")
+        self.annotation_id = layer.layer_id
+        # Measured: a visible rectangle or circle whose pixels are summarised.
+        self.measured = region and measurement is not None
+        if region and measurement is not None and measurement[1]:
+            self._add_means(measurement[1])
 
-        name_row = QtWidgets.QHBoxLayout()
-        name_row.setContentsMargins(0, 0, 0, 0)
-        name_row.setSpacing(8)
-        name_row.addWidget(self._name_label, 1)
-        name_row.addWidget(self._name_edit, 1)
-        name_row.addWidget(swatch, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        name_column = QtWidgets.QVBoxLayout()
-        name_column.setContentsMargins(0, 0, 0, 0)
-        name_column.setSpacing(1)
-        name_column.addLayout(name_row)
-        name_column.addWidget(self._count_label)
+class _PinRowWidget(_LayerRow):
+    """A Ctrl+Click pin: one pixel's spectrum, numbered like its image marker."""
 
-        header_row = QtWidgets.QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(10)
-        header_row.addWidget(self._toggle, 0, Qt.AlignmentFlag.AlignTop)
-        header_row.addLayout(name_column, 1)
-        header_row.addWidget(self._inspect_button, 0, Qt.AlignmentFlag.AlignTop)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(11, 10, 11, 10)
-        layout.setSpacing(5)
-        layout.addLayout(header_row)
-
-        self._means_label: Optional[QtWidgets.QLabel] = None
-        if means:
-            caption = QtWidgets.QLabel("Index means", self)
-            caption.setObjectName("layerIndexMeansCaption")
-            self._means_label = QtWidgets.QLabel(self)
-            self._means_label.setObjectName("layerIndexMeansLabel")
-            self._means_label.setTextFormat(Qt.TextFormat.RichText)
-            self._means_label.setText(format_pixel_values_html(means))
-            layout.addWidget(caption)
-            layout.addWidget(self._means_label)
-        elif pixel_count == 0:
-            self._count_label.setText("Outside the image")
-        self._set_selected_property(selected)
-
-    def is_selected(self) -> bool:
-        return self._toggle.isChecked()
-
-    def _set_selected_property(self, selected: bool) -> None:
-        self.setProperty("layerVisible", selected)
-        self.style().unpolish(self)
-        self.style().polish(self)
-
-    def _on_toggled(self, checked: bool) -> None:
-        self._set_selected_property(checked)
-        self.selectionChanged.emit(self.annotation_id, checked)
-
-    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if (
-            watched is self._name_label
-            and event.type() == QtCore.QEvent.Type.MouseButtonDblClick
-        ):
-            self.begin_rename()
-            return True
-        return super().eventFilter(watched, event)
-
-    def begin_rename(self) -> None:
-        """Swap the name label for an inline editor."""
-
-        self._name_edit.setText(self._name)
-        self._name_label.hide()
-        self._name_edit.show()
-        self._name_edit.setFocus()
-        self._name_edit.selectAll()
-
-    def _finish_rename(self) -> None:
-        # editingFinished fires on Enter and again on focus loss.
-        if not self._name_edit.isVisible():
-            return
-        new_name = self._name_edit.text().strip()
-        self._name_edit.hide()
-        self._name_label.show()
-        if new_name and new_name != self._name:
-            self.renameRequested.emit(self.annotation_id, new_name)
+    def __init__(
+        self,
+        key: str,
+        number: int,
+        row: int,
+        column: int,
+        color: RGBColor,
+        parent: Optional[QtWidgets.QWidget] = None,
+        *,
+        visible: bool = True,
+        spectra: bool = True,
+    ) -> None:
+        super().__init__(
+            key, f"Pin #{number}", color, f"Pixel ({row}, {column})", parent,
+            visible=visible, spectra=spectra, renamable=False,
+        )
+        self._toggle.setToolTip(f"Show or hide Pin #{number}'s marker on the image")
 
 
 class ClassificationLayerPanel(QtWidgets.QWidget):
-    """Side inspector for segmentation: classifier controls, class layers and
-    annotations. Resizable by its left-edge grip; shown and hidden as a whole
-    by the Segment pill on the right stripe."""
+    """Side inspector for segmentation: classifier controls, the options of the
+    drawing tool, and every layer. Resizable by its left-edge grip; shown and
+    hidden as a whole by the Segment pill on the right stripe."""
 
     visibilityChanged = pyqtSignal(int, bool)
     opacityChanged = pyqtSignal(int, float)
@@ -420,10 +407,16 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
     # Convert class regions into editable vector masks.
     vectorizeRequested = pyqtSignal()
     regionRenameRequested = pyqtSignal(int, str)
-    # Inspect one class or region: "class:<id>" or "annotation:<id>".
-    inspectRequested = pyqtSignal(str)
-    # "classes" or "annotations"
-    modeChanged = pyqtSignal(str)
+    # A row was clicked: its layer key ("class:3", "annotation:7", "pin:0").
+    layerSelected = pyqtSignal(str)
+    # A row's Spectra box: view (or stop viewing) that layer's spectrum.
+    spectraToggled = pyqtSignal(str, bool)
+    annotationVisibilityChanged = pyqtSignal(int, bool)
+    # Annotation ID, +1 to bring it forward or -1 to send it back.
+    annotationMoveRequested = pyqtSignal(int, int)
+    annotationDeleteRequested = pyqtSignal(int)
+    pinVisibilityChanged = pyqtSignal(str, bool)
+    pinDeleteRequested = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -439,7 +432,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._resize_grip = _ResizeGrip(self)
         self._resize_grip.widthRequested.connect(self.set_panel_width)
 
-        self._title = QtWidgets.QLabel("Class layers", self)
+        self._title = QtWidgets.QLabel("Layers", self)
         self._title.setObjectName("classificationLayerPanelTitle")
 
         self._layer_count_label = QtWidgets.QLabel("0", self)
@@ -467,15 +460,14 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         header_layout.setSpacing(5)
         header_layout.addWidget(self._header_details, 1)
 
-        self._summary_label = QtWidgets.QLabel("No classes available", self)
+        self._summary_label = QtWidgets.QLabel("No layers yet", self)
         self._summary_label.setObjectName("classificationLayerSummary")
 
-        self._toggle_all_button = QtWidgets.QPushButton("Select all", self)
+        self._toggle_all_button = QtWidgets.QPushButton("Show all", self)
         self._toggle_all_button.setObjectName("layerToggleAllButton")
-        self._toggle_all_button.setToolTip("Select or deselect every class")
+        self._toggle_all_button.setToolTip("Show or hide every layer")
         self._toggle_all_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle_all_button.clicked.connect(self._on_toggle_all_clicked)
-        self.visibilityChanged.connect(lambda *_: self._update_layer_summary())
 
         self._outline_toggle_button = QtWidgets.QPushButton("Borders only", self)
         self._outline_toggle_button.setObjectName("layerOutlineToggleButton")
@@ -500,11 +492,11 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._export_button.clicked.connect(self.exportRequested)
 
-        self._spectra_button = QtWidgets.QPushButton("Class spectra", self)
+        self._spectra_button = QtWidgets.QPushButton("All spectra", self)
         self._spectra_button.setObjectName("layerSpectraButton")
         self._spectra_button.setToolTip(
-            "Plot the mean spectrum (±1σ) of every selected class and measured "
-            "annotation region, and compare how separable they are"
+            "View the mean spectrum (±1σ) of every shown class and region in the "
+            "Spectrum Inspector, and compare how separable they are"
         )
         self._spectra_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._spectra_button.clicked.connect(self.classSpectraRequested)
@@ -516,7 +508,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self.separate_leaves_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.separate_leaves_button.setEnabled(False)
 
-        self._vectorize_button = QtWidgets.QPushButton("Vector mask…", self)
+        self._vectorize_button = QtWidgets.QPushButton("Outline classes…", self)
         self._vectorize_button.setObjectName("vectorizeButton")
         self._vectorize_button.setIcon(
             QtGui.QIcon(str(Path(__file__).parent / "assets" / "vector_mask.svg"))
@@ -524,7 +516,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._vectorize_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._vectorize_button.setToolTip(
             "Convert class regions into vector masks with editable Bézier "
-            "outlines, then reshape them with the Pen on the Annotations tab"
+            "outlines, then reshape them with the Pen"
         )
         self._vectorize_button.setEnabled(False)
         self._vectorize_button.clicked.connect(self.vectorizeRequested)
@@ -575,11 +567,12 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         controls_layout.addLayout(global_opacity_header)
         controls_layout.addWidget(self._global_opacity_slider)
 
-        classes_label = QtWidgets.QLabel("Classes", self)
-        classes_label.setObjectName("classificationLayerSectionLabel")
+        layers_label = QtWidgets.QLabel("Layers", self)
+        layers_label.setObjectName("classificationLayerSectionLabel")
 
         self._empty_label = QtWidgets.QLabel(
-            "No classification yet\nRun a classification to create class layers.", self
+            "No layers yet\nClassify the image, draw with the toolbox, or "
+            "Ctrl+Click a pixel to pin its spectrum.", self
         )
         self._empty_label.setObjectName("classificationLayerPanelEmpty")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -593,52 +586,37 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self._rows_layout.setSpacing(7)
         self._rows_layout.addStretch(1)
 
+        self._up_button = self._layer_action("↑ Up", "Bring the selected annotation forward")
+        self._down_button = self._layer_action("↓ Down", "Send the selected annotation back")
+        self._delete_button = self._layer_action("Delete", "Delete the selected annotation or pin")
+        self._delete_button.setObjectName("annotationDeleteButton")
+        self._up_button.clicked.connect(lambda: self._move_selected(1))
+        self._down_button.clicked.connect(lambda: self._move_selected(-1))
+        self._delete_button.clicked.connect(self._delete_selected)
+        actions_row = QtWidgets.QHBoxLayout()
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(6)
+        for button in (self._up_button, self._down_button, self._delete_button):
+            actions_row.addWidget(button, 1)
+
+        # The options of the active drawing tool or selected annotation.
+        self.annotation_page = AnnotationToolsPage(self)
+        self.annotation_page.toolChanged.connect(lambda _kind: self.update_tool_options())
+
         self._body = QtWidgets.QWidget(self)
         self._body.setObjectName("classificationLayerBody")
         body_layout = QtWidgets.QVBoxLayout(self._body)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(10)
+        body_layout.addWidget(self.annotation_page)
         body_layout.addWidget(self._summary_label)
         body_layout.addWidget(controls)
-        body_layout.addWidget(classes_label)
-        body_layout.addWidget(self._empty_label, 1)
+        body_layout.addWidget(layers_label)
+        body_layout.addWidget(self._empty_label)
         # Rows take their natural height; the whole inspector scrolls.
-        body_layout.addWidget(self._rows_container, 1)
-
-        self.annotation_page = AnnotationToolsPage(self)
-        # The toolbox sits beside the image, so a tool can be picked from the
-        # Classes view; show the tool's options and layers when it is.
-        # Connected before any Controller, so the mode switch (which disarms
-        # tools when leaving Annotations) runs before the tool is armed.
-        self.annotation_page.toolChanged.connect(
-            lambda kind: kind is not None and self.set_mode("annotations")
-        )
-
-        self._classes_mode_button = self._make_mode_button("Classes", "Show class layers")
-        self._annotations_mode_button = self._make_mode_button(
-            "Annotations", "Show annotation tools and layers"
-        )
-        self._classes_mode_button.setChecked(True)
-        mode_group = QtWidgets.QButtonGroup(self)
-        mode_group.setExclusive(True)
-        mode_group.addButton(self._classes_mode_button)
-        mode_group.addButton(self._annotations_mode_button)
-        self._classes_mode_button.clicked.connect(lambda: self.set_mode("classes"))
-        self._annotations_mode_button.clicked.connect(
-            lambda: self.set_mode("annotations")
-        )
-        self._mode_row = QtWidgets.QWidget(self)
-        self._mode_row.setObjectName("classificationLayerHeaderDetails")
-        mode_layout = QtWidgets.QHBoxLayout(self._mode_row)
-        mode_layout.setContentsMargins(0, 0, 0, 0)
-        mode_layout.setSpacing(0)
-        mode_layout.addWidget(self._classes_mode_button)
-        mode_layout.addWidget(self._annotations_mode_button)
-
-        self._stack = QtWidgets.QStackedWidget(self)
-        self._stack.setObjectName("classificationLayerBody")
-        self._stack.addWidget(self._body)
-        self._stack.addWidget(self.annotation_page)
+        body_layout.addWidget(self._rows_container)
+        body_layout.addLayout(actions_row)
+        body_layout.addStretch(1)
 
         # Everything scrolls together as one sidebar: no inner scroll areas.
         self._content = QtWidgets.QWidget(self)
@@ -648,8 +626,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         layout.setSpacing(10)
         layout.addWidget(header)
         layout.setAlignment(header, Qt.AlignmentFlag.AlignTop)
-        layout.addWidget(self._mode_row)
-        layout.addWidget(self._stack, 1)
+        layout.addWidget(self._body, 1)
         self._scroll_area = QtWidgets.QScrollArea(self)
         self._scroll_area.setObjectName("classificationLayerScrollArea")
         self._scroll_area.setWidgetResizable(True)
@@ -661,55 +638,22 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._scroll_area)
-        self._fit_stack_to_page()
 
         self._rows: dict[int, _LayerRowWidget] = {}
-        self._region_rows: dict[int, _RegionRowWidget] = {}
-        # Region rows are rebuilt on every geometry change; keep their
-        # selection by annotation ID so a drag doesn't reset it.
-        self._region_selected: dict[int, bool] = {}
+        self._annotation_rows: dict[int, _AnnotationRowWidget] = {}
+        self._pin_rows: dict[str, _PinRowWidget] = {}
+        # Keys of the layers whose spectrum the Spectrum Inspector shows.
+        self._spectra_keys: frozenset[str] = frozenset()
+        self._selected_key: Optional[str] = None
+        self.update_tool_options()
         self._update_empty_state()
 
-    def _make_mode_button(self, text: str, tip: str) -> QtWidgets.QPushButton:
+    def _layer_action(self, text: str, tip: str) -> QtWidgets.QPushButton:
         button = QtWidgets.QPushButton(text, self)
-        button.setObjectName("layerModeButton")
-        button.setCheckable(True)
+        button.setObjectName("annotationLayerAction")
         button.setToolTip(tip)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         return button
-
-    @property
-    def mode(self) -> str:
-        return "annotations" if self._stack.currentWidget() is self.annotation_page else "classes"
-
-    def set_mode(self, mode: str) -> None:
-        """Switch between the class layers and the annotation tools/layers."""
-
-        if mode not in ("classes", "annotations"):
-            raise ValueError(f"Unknown layer panel mode: {mode!r}")
-        annotations = mode == "annotations"
-        self._classes_mode_button.setChecked(not annotations)
-        self._annotations_mode_button.setChecked(annotations)
-        self._title.setText("Annotations" if annotations else "Class layers")
-        self._layer_count_label.setVisible(not annotations)
-        self._stack.setCurrentWidget(self.annotation_page if annotations else self._body)
-        self._fit_stack_to_page()
-        if mode != getattr(self, "_announced_mode", "classes"):
-            self._announced_mode = mode
-            self.modeChanged.emit(mode)
-
-    def _fit_stack_to_page(self) -> None:
-        """Size the page stack to the shown page, so the scroll length is
-        the current mode's content rather than the taller of the two."""
-
-        for index in range(self._stack.count()):
-            page = self._stack.widget(index)
-            vertical = (
-                QtWidgets.QSizePolicy.Policy.Preferred if page is self._stack.currentWidget()
-                else QtWidgets.QSizePolicy.Policy.Ignored
-            )
-            page.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, vertical)
-        self._stack.updateGeometry()
 
     @property
     def panel_width(self) -> int:
@@ -725,7 +669,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self.updateGeometry()
 
     def set_classifier_controls(self, controls: QtWidgets.QWidget) -> None:
-        """Show the classifier form at the top of the Classes page."""
+        """Show the classifier form at the top of the inspector."""
 
         controls.setParent(self._body)
         self._body.layout().insertWidget(0, controls)
@@ -769,52 +713,160 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
                 means.get(layer.class_id),
                 self._rows_container,
                 vectorized=layer.class_id in vector_class_ids,
+                spectra=f"class:{layer.class_id}" in self._spectra_keys,
             )
             row.visibilityChanged.connect(self.visibilityChanged)
+            row.visibilityChanged.connect(lambda *_: self._update_layer_summary())
             row.opacityChanged.connect(self.opacityChanged)
             row.renameRequested.connect(self.renameRequested)
-            row.inspectRequested.connect(
-                lambda class_id: self.inspectRequested.emit(f"class:{class_id}")
-            )
-            # Class rows stay above any measured-region rows.
-            self._rows_layout.insertWidget(len(self._rows), row)
+            self._adopt(row)
             self._rows[layer.class_id] = row
         self._apply_global_controls(global_opacity, outline_mode)
-        self._update_empty_state()
+        self._order_rows()
 
-    def set_regions(
+    def set_annotations(
         self,
-        regions: tuple[tuple[int, str, RGBColor, int, Optional[Mapping[str, PixelValueEntry]]], ...],
+        layers: tuple[AnnotationLayer, ...],
+        measurements: Optional[
+            Mapping[int, tuple[int, Optional[Mapping[str, PixelValueEntry]]]]
+        ] = None,
     ) -> None:
-        """Show measured annotation regions after the class rows.
+        """List every annotation, front-most first, above the pins and classes.
 
-        Each entry is ``(annotation_id, name, colour, pixel_count, means)``.
-        Class rows are left untouched, so this is cheap to call while a shape
-        is being dragged.
+        ``measurements`` maps a measured rectangle or circle's ID to its
+        ``(pixel_count, means)``. Class rows are left untouched, so this is
+        cheap enough to call while a shape is being dragged.
         """
 
-        self._clear_region_rows()
-        for annotation_id, name, color, pixel_count, means in regions:
-            row = _RegionRowWidget(
-                annotation_id, name, color, pixel_count, means, self._rows_container,
-                selected=self._region_selected.get(annotation_id, True),
+        self._clear_group(self._annotation_rows)
+        measurements = measurements or {}
+        for layer in reversed(layers):
+            row = _AnnotationRowWidget(
+                layer, measurements.get(layer.layer_id), self._rows_container,
+                spectra=f"annotation:{layer.layer_id}" in self._spectra_keys,
             )
-            row.renameRequested.connect(self.regionRenameRequested)
-            row.selectionChanged.connect(self._on_region_selection_changed)
-            row.inspectRequested.connect(
-                lambda region_id: self.inspectRequested.emit(f"annotation:{region_id}")
+            row.shownChanged.connect(
+                lambda _key, shown, layer_id=layer.layer_id:
+                    self.annotationVisibilityChanged.emit(layer_id, shown)
             )
-            self._region_rows[annotation_id] = row
-            self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
+            row.renamed.connect(
+                lambda _key, name, layer_id=layer.layer_id:
+                    self.regionRenameRequested.emit(layer_id, name)
+            )
+            self._adopt(row)
+            self._annotation_rows[layer.layer_id] = row
+        self._order_rows()
+
+    def set_pins(
+        self, pins: tuple[tuple[str, int, int, int, RGBColor, bool], ...]
+    ) -> None:
+        """List pins as ``(key, number, row, column, colour, shown on the image)``."""
+
+        self._clear_group(self._pin_rows)
+        for key, number, row_index, column, color, marker_visible in pins:
+            row = _PinRowWidget(
+                key, number, row_index, column, color, self._rows_container,
+                visible=marker_visible, spectra=key in self._spectra_keys,
+            )
+            row.shownChanged.connect(self.pinVisibilityChanged)
+            self._adopt(row)
+            self._pin_rows[key] = row
+        self._order_rows()
+
+    def set_spectra_keys(self, keys: frozenset[str]) -> None:
+        """Tick the Spectra box of exactly the layers in ``keys``."""
+
+        self._spectra_keys = frozenset(keys)
+        for row in self._all_rows():
+            row.set_spectra_shown(row.key in self._spectra_keys)
+
+    def set_selected_layer(self, key: Optional[str]) -> None:
+        """Highlight the layer ``key`` (``None`` clears), without emitting."""
+
+        self._selected_key = key
+        for row in self._all_rows():
+            row.set_selected(row.key == key)
+        self._update_layer_actions()
+        self.update_tool_options()
+
+    @property
+    def selected_layer(self) -> Optional[str]:
+        return self._selected_key
+
+    def row_for(self, key: str) -> Optional[_LayerRow]:
+        return next((row for row in self._all_rows() if row.key == key), None)
+
+    def _all_rows(self) -> tuple[_LayerRow, ...]:
+        return (*self._annotation_rows.values(), *self._pin_rows.values(), *self._rows.values())
+
+    def _adopt(self, row: _LayerRow) -> None:
+        row.clicked.connect(self._on_row_clicked)
+        row.spectraToggled.connect(self.spectraToggled)
+        row.set_selected(row.key == self._selected_key)
+
+    def _order_rows(self) -> None:
+        """Annotations (front first), then pins, then classes, then the stretch."""
+
+        for index, row in enumerate(self._all_rows()):
+            self._rows_layout.removeWidget(row)
+            self._rows_layout.insertWidget(index, row)
+        if self._selected_key is not None and self.row_for(self._selected_key) is None:
+            self._selected_key = None
+        self._update_layer_actions()
+        self.update_tool_options()
         self._update_empty_state()
+
+    def _clear_group(self, rows: dict) -> None:
+        for row in rows.values():
+            self._rows_layout.removeWidget(row)
+            row.deleteLater()
+        rows.clear()
+
+    def _on_row_clicked(self, key: str) -> None:
+        self.set_selected_layer(key)
+        self.layerSelected.emit(key)
+
+    def _selected_annotation(self) -> Optional[int]:
+        key = self._selected_key or ""
+        return int(key.split(":", 1)[1]) if key.startswith("annotation:") else None
+
+    def _move_selected(self, delta: int) -> None:
+        layer_id = self._selected_annotation()
+        if layer_id is not None:
+            self.annotationMoveRequested.emit(layer_id, delta)
+
+    def _delete_selected(self) -> None:
+        layer_id = self._selected_annotation()
+        if layer_id is not None:
+            self.annotationDeleteRequested.emit(layer_id)
+        elif (self._selected_key or "").startswith("pin:"):
+            self.pinDeleteRequested.emit(self._selected_key)
+
+    def _update_layer_actions(self) -> None:
+        order = list(self._annotation_rows)
+        layer_id = self._selected_annotation()
+        index = order.index(layer_id) if layer_id in order else -1
+        # Rows list the front-most annotation first.
+        self._up_button.setEnabled(index > 0)
+        self._down_button.setEnabled(0 <= index < len(order) - 1)
+        self._delete_button.setEnabled(
+            index >= 0 or (self._selected_key or "").startswith("pin:")
+        )
+
+    def update_tool_options(self) -> None:
+        """Show the tool options while drawing or with an annotation selected."""
+
+        page = self.annotation_page
+        drawing = any(button.isChecked() for button in page._tool_buttons.values())
+        page.setVisible(drawing or self._selected_annotation() is not None)
 
     def clear(self) -> None:
         """Remove all rows, reset global controls, and show the empty state."""
 
         self._clear_rows()
-        self._clear_region_rows()
+        self._clear_group(self._annotation_rows)
         self._reset_global_controls()
-        self._update_empty_state()
+        self._order_rows()
 
     def _clear_rows(self) -> None:
         for row in self._rows.values():
@@ -822,29 +874,14 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             row.deleteLater()
         self._rows.clear()
 
-    def _clear_region_rows(self) -> None:
-        for row in self._region_rows.values():
-            self._rows_layout.removeWidget(row)
-            row.deleteLater()
-        self._region_rows.clear()
-
-    def is_region_selected(self, annotation_id: int) -> bool:
-        """Whether the region's row is ticked (new regions start ticked)."""
-
-        return self._region_selected.get(annotation_id, True)
-
-    def _on_region_selection_changed(self, annotation_id: int, selected: bool) -> None:
-        self._region_selected[annotation_id] = selected
-        self._update_layer_summary()
-
     def _on_toggle_all_clicked(self) -> None:
-        # Classes and regions are selected together, as one list of classes.
-        rows = (*self._rows.values(), *self._region_rows.values())
-        select = not any(row._toggle.isChecked() for row in rows)
-        for row in self._region_rows.values():
-            row._toggle.setChecked(select)
+        # Every layer is shown or hidden together, as in one layer stack.
+        show = not any(row._toggle.isChecked() for row in self._all_rows())
+        for row in (*self._annotation_rows.values(), *self._pin_rows.values()):
+            row._toggle.setChecked(show)
         if self._rows:
-            self.setAllVisibleRequested.emit(select)
+            self.setAllVisibleRequested.emit(show)
+        self._update_layer_summary()
 
     def _on_outline_toggled(self, checked: bool) -> None:
         self._outline_toggle_button.setText(
@@ -875,32 +912,32 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
 
     def _update_empty_state(self) -> None:
         has_rows = bool(self._rows)
-        has_content = has_rows or bool(self._region_rows)
+        has_content = bool(self._all_rows())
         self._empty_label.setVisible(not has_content)
         self._rows_container.setVisible(has_content)
         self._toggle_all_button.setEnabled(has_content)
         self._outline_toggle_button.setEnabled(has_rows)
         self._vectorize_button.setEnabled(has_rows)
-        self._export_button.setEnabled(has_content)
-        self._spectra_button.setEnabled(has_content)
+        self._export_button.setEnabled(
+            has_rows or any(row.measured for row in self._annotation_rows.values())
+        )
+        self._spectra_button.setEnabled(
+            any(row.has_spectrum() for row in (*self._rows.values(), *self._annotation_rows.values()))
+        )
         self._global_opacity_slider.setEnabled(has_rows)
-        self._layer_count_label.setText(str(len(self._rows)))
+        self._layer_count_label.setText(str(len(self._all_rows())))
         self._update_layer_summary()
 
     def _update_layer_summary(self) -> None:
-        rows = (*self._rows.values(), *self._region_rows.values())
+        rows = self._all_rows()
         visible_count = sum(row._toggle.isChecked() for row in rows)
         total_count = len(rows)
         if total_count:
-            self._summary_label.setText(
-                f"{visible_count} of {total_count} classes selected"
-            )
-            self._toggle_all_button.setText(
-                "Deselect all" if visible_count else "Select all"
-            )
+            self._summary_label.setText(f"{visible_count} of {total_count} layers shown")
+            self._toggle_all_button.setText("Hide all" if visible_count else "Show all")
         else:
-            self._summary_label.setText("No classes available")
-            self._toggle_all_button.setText("Select all")
+            self._summary_label.setText("No layers yet")
+            self._toggle_all_button.setText("Show all")
 
     def _update_toggle_all_button_text(self) -> None:
         """Compatibility wrapper for callers that refresh aggregate text."""

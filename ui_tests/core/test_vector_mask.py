@@ -154,21 +154,38 @@ def test_closest_point_finds_the_segment():
     assert segment == 1 and t == pytest.approx(0.5) and distance == pytest.approx(0.5)
 
 
-def test_apply_vector_masks_claims_releases_and_restores():
+def test_apply_vector_masks_overlaps_and_releases():
     class_map = np.zeros((10, 10), dtype=np.int32)
     class_map[:, 5:] = 1
     result = _result(class_map)
-    # Class 0 becomes the top-left 7x7 square, taking 14 pixels from class 1.
+    # Class 0 becomes the top-left 7x7 square, overlapping class 1.
     grown = apply_vector_masks(result, {0: VectorMask((_square(0, 0, 7),))})
-    np.testing.assert_array_equal(grown.class_map[:7, :7], 0)
+    np.testing.assert_array_equal(grown.class_map[:7, :7], 0)  # on top
     assert (grown.class_map[7:, :5] == -1).all()  # released by class 0
     assert (grown.class_map[:, 7:] == 1).all()
-    assert grown.class_pixel_counts.tolist() == [49, 36]
-    assert grown.one_hot_masks.sum() == 85
-    # Shrinking class 0 again hands the claimed pixels back to class 1.
+    # Class 1 keeps its whole region beneath the outline.
+    assert grown.class_pixel_counts.tolist() == [49, 50]
+    assert grown.one_hot_masks[1].sum() == 50 and grown.one_hot_masks[:, :7, 5:7].all()
     shrunk = apply_vector_masks(result, {0: VectorMask((_square(0, 0, 3),))})
     assert (shrunk.class_map[:, 5:] == 1).all()
     assert apply_vector_masks(result, {}) is result
+
+
+def test_overlapping_layers_paint_the_top_visible_one():
+    class_map = np.zeros((4, 4), dtype=np.int32)
+    class_map[:, 2:] = 1
+    result = apply_vector_masks(_result(class_map), {2: VectorMask((_square(1, 0, 2),))})
+    layers = ClassificationLayerModel(result)
+    colors = {0: (255, 0, 0), 1: (0, 255, 0), 2: (0, 0, 255)}
+    rgb = np.zeros((4, 4, 3), dtype=np.uint8)
+    composite = layers.compose_display(rgb, colors=colors, paint_order=(0, 1, 2))
+    assert tuple(composite.display_rgb[0, 1]) == (0, 0, 255)  # drawn class on top
+    assert tuple(composite.display_rgb[0, 0]) == (255, 0, 0)
+    layers.set_class_visible(2, False)
+    composite = layers.compose_display(rgb, colors=colors, paint_order=(0, 1, 2))
+    # Hiding the top layer reveals the classes beneath it.
+    assert tuple(composite.display_rgb[0, 1]) == (255, 0, 0)
+    assert tuple(composite.display_rgb[0, 2]) == (0, 255, 0)
 
 
 def test_layer_model_with_result_keeps_layer_state():
@@ -213,7 +230,7 @@ def test_apply_vector_masks_adds_drawn_classes():
     result = _result(class_map)
     # Class 3 is new; K-means IDs stay contiguous, so empty class 2 is added too.
     drawn = apply_vector_masks(result, {3: VectorMask((_square(0, 0, 4),))})
-    assert drawn.n_classes == 4 and drawn.class_pixel_counts.tolist() == [34, 50, 0, 16]
+    assert drawn.n_classes == 4 and drawn.class_pixel_counts.tolist() == [50, 50, 0, 16]
     assert (drawn.class_map[:4, :4] == 3).all()
     assert drawn.cluster_centers.shape == (4, 2) and np.isnan(drawn.cluster_centers[3]).all()
     assert ClassificationLayerModel(drawn).class_ids == (0, 1, 2, 3)

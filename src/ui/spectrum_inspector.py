@@ -106,7 +106,10 @@ class _Series:
     color: tuple[float, float, float]
     pin: Optional[PinnedSpectrum] = None
     region: Optional[RegionSpectrum] = None
+    # Plotted (the list's checkbox, or a layer's Spectra checkbox).
     visible: bool = True
+    # A pin's circle on the image (its layer's visibility toggle).
+    marker_visible: bool = True
 
     @property
     def label(self) -> str:
@@ -158,6 +161,8 @@ class SpectrumInspector(QtWidgets.QWidget):
     imageMeanRequested = pyqtSignal()
     # Visible pins, their numbers or the selection changed: redraw markers.
     pinsChanged = pyqtSignal()
+    # Series were added, removed, shown or hidden: layer lists follow.
+    seriesChanged = pyqtSignal()
 
     def __init__(
         self,
@@ -548,7 +553,7 @@ class SpectrumInspector(QtWidgets.QWidget):
         return {key: s.pin for key, s in self._series_by_key.items() if s.pin is not None}
 
     def pin_markers(self) -> tuple[PinMarker, ...]:
-        """Image markers for every *shown* pin, in list order."""
+        """Image markers for every pin shown on the image, in list order."""
 
         return tuple(
             PinMarker(
@@ -556,8 +561,31 @@ class SpectrumInspector(QtWidgets.QWidget):
                 s.key == self._selected_key, s.pin.source,
             )
             for s in self._series_by_key.values()
-            if s.pin is not None and s.visible
+            if s.pin is not None and s.marker_visible
         )
+
+    def pin_layers(self) -> tuple[tuple[str, PinnedSpectrum, bool, bool], ...]:
+        """``(key, pin, shown on the image, plotted)`` for every pin, in order."""
+
+        return tuple(
+            (s.key, s.pin, s.marker_visible, s.visible)
+            for s in self._series_by_key.values() if s.pin is not None
+        )
+
+    def plotted_keys(self) -> frozenset[str]:
+        """Keys of the listed series that are drawn on the plot."""
+
+        return frozenset(key for key, s in self._series_by_key.items() if s.visible)
+
+    def set_marker_visible(self, key: str, visible: bool) -> None:
+        """Show or hide pin ``key``'s circle on the image; the plot is untouched."""
+
+        series = self._series_by_key.get(key)
+        if series is None or series.pin is None or series.marker_visible == visible:
+            return
+        series.marker_visible = visible
+        self.pinsChanged.emit()
+        self.seriesChanged.emit()
 
     def set_region_spectra(
         self,
@@ -744,6 +772,7 @@ class SpectrumInspector(QtWidgets.QWidget):
         self._refresh_separability()
         self._redraw()
         self.pinsChanged.emit()
+        self.seriesChanged.emit()
 
     def _redraw(self) -> None:
         axes = self._axes
