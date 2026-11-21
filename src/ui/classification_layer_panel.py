@@ -415,7 +415,6 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
     setAllVisibleRequested = pyqtSignal(bool)
     globalOpacityChanged = pyqtSignal(float)
     outlineModeChanged = pyqtSignal(bool)
-    backgroundChanged = pyqtSignal(str)
     exportRequested = pyqtSignal()
     classSpectraRequested = pyqtSignal()
     # Convert class regions into editable vector masks.
@@ -564,28 +563,11 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             self._on_global_opacity_slider_changed
         )
 
-        background_label = QtWidgets.QLabel("Visualization", self)
-        background_label.setObjectName("layerBackgroundLabel")
-        self._background_combo = QtWidgets.QComboBox(self)
-        self._background_combo.setObjectName("layerBackgroundCombo")
-        self._background_combo.setToolTip(
-            "Choose the visualization shown beneath the class layers"
-        )
-        self._background_combo.setAccessibleName("Background visualization")
-        self._background_combo.activated.connect(self._on_background_activated)
-
-        background_row = QtWidgets.QHBoxLayout()
-        background_row.setContentsMargins(0, 0, 0, 0)
-        background_row.setSpacing(7)
-        background_row.addWidget(background_label)
-        background_row.addWidget(self._background_combo, 1)
-
         controls = QtWidgets.QFrame(self)
         controls.setObjectName("classificationLayerControls")
         controls_layout = QtWidgets.QVBoxLayout(controls)
         controls_layout.setContentsMargins(10, 10, 10, 10)
         controls_layout.setSpacing(9)
-        controls_layout.addLayout(background_row)
         controls_layout.addLayout(header_controls_row)
         controls_layout.addLayout(export_row)
         controls_layout.addWidget(self.separate_leaves_button)
@@ -826,26 +808,11 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
         self._update_empty_state()
 
-    def set_backgrounds(self, names: tuple[str, ...], selected: str) -> None:
-        """List the visualizations selectable beneath the class layers."""
-
-        self._background_combo.blockSignals(True)
-        self._background_combo.clear()
-        self._background_combo.addItems(names)
-        index = self._background_combo.findText(selected)
-        self._background_combo.setCurrentIndex(max(index, 0))
-        self._background_combo.blockSignals(False)
-        self._background_combo.setEnabled(len(names) > 1)
-
-    def _on_background_activated(self, index: int) -> None:
-        self.backgroundChanged.emit(self._background_combo.itemText(index))
-
     def clear(self) -> None:
         """Remove all rows, reset global controls, and show the empty state."""
 
         self._clear_rows()
         self._clear_region_rows()
-        self.set_backgrounds((), "")
         self._reset_global_controls()
         self._update_empty_state()
 

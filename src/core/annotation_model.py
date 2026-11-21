@@ -81,6 +81,30 @@ class AnnotationLayer:
     measure_index: bool = False
 
 
+def scaled_layer(layer: AnnotationLayer, factor: float) -> AnnotationLayer:
+    """Return ``layer`` drawn ``factor`` times larger, e.g. over a 2x image.
+
+    Geometry, stroke width and text size scale together so the annotation
+    covers the same part of the picture; rotation is unchanged.
+    """
+
+    if factor == 1:
+        return layer
+    style = replace(
+        layer.style,
+        stroke_width=layer.style.stroke_width * factor,
+        font_size=max(1, round(layer.style.font_size * factor)),
+    )
+    return replace(
+        layer,
+        x=layer.x * factor,
+        y=layer.y * factor,
+        width=layer.width * factor,
+        height=layer.height * factor,
+        style=style,
+    )
+
+
 class AnnotationLayerModel:
     """Ordered stack of :class:`AnnotationLayer` objects."""
 

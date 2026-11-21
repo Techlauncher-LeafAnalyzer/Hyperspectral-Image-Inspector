@@ -94,6 +94,10 @@ _CACHED_VISUALIZATION_MODES = (
 
 LOGGER = logging.getLogger(__name__)
 
+# Smallest the image area gets beside the toolbox, inspector and docks.
+_MIN_IMAGE_SIZE = 160
+
+
 @dataclass
 class _CropSnapshot:
     """A prior image state, kept around so a crop can be undone."""
@@ -137,8 +141,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._super_res_worker: SuperResolutionWorker | None = None
         self._super_res_result: SuperResolutionResult | None = None
         self._super_res_error: str | None = None
-        self._sr_view_scale = 1
-        self._viz_view_scale = 1
+        # Displayed pixels per original pixel when the canvas was last drawn.
+        self._view_scale = 1
         self._close_after_sr = False
         # Whether the user chose to view the Super-Resolution result (the left
         # stripe's toggle). Effective only once a result exists; see
@@ -180,7 +184,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._is_super_resolution_active,
             ClassificationService(),
             TrainingPairResolver(),
-            self.classificationViewer,
+            self.viewer,
             self.classificationLayerPanel,
             self.statusbar,
             self.unsupervisedClassifyButton,
@@ -197,12 +201,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self,
             is_calibrated=lambda: self._calibration_controller.display_result is not None,
             separate_leaves_button=self.classificationLayerPanel.separate_leaves_button,
+            background_rgb=self._canvas_background_rgb,
+            refresh_canvas=self._refresh_viewers_display,
+            display_scale=self._display_scale,
         )
         self._calibration_controller = CalibrationController(
             self._hsi_data,
             service=CalibrationService(),
             frame_resolver=CalibrationFrameResolver(),
-            viewer=self.calibrationViewer,
             statusbar=self.statusbar,
             dark_button=self.darkFileButton,
             dark_edit=self.darkFileEdit,
@@ -216,7 +222,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             ),
             refresh_source_views=self._push_image_to_viewers,
             refresh_current_views=self._refresh_viewers_display,
-            fallback_pixel_values=self._pixel_values_at,
             parent_widget=self,
             display_data=self._display_data,
             is_high_resolution=self._is_super_resolution_active,
@@ -281,12 +286,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 self._display_data()
             ),
             analysis_regions=self._classification_controller.analysis_regions,
-            viewer_names={
-                self.viewer: "Visualization",
-                self.superResViewer: "Super-Resolution",
-                self.calibrationViewer: "Calibration",
-                self.classificationViewer: "Classification",
-            },
+            viewer_names={self.viewer: ""},
             statusbar=self.statusbar,
             parent_widget=self,
         )
@@ -316,11 +316,10 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         )
         self._connect_signals()
         self._configure_workflow_panels()
-        self._active_viewer = self._viewer_for_tab(self.tabWidget.currentIndex())
-        self.tabWidget.installEventFilter(self)
+        self.canvas.installEventFilter(self)
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if watched in (self.tabWidget, self.classificationLayerPanel) and event.type() in (
+        if watched in (self.canvas, self.classificationLayerPanel) and event.type() in (
             QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Move,
             QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide,
             QtCore.QEvent.Type.LayoutRequest,
@@ -336,11 +335,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         and the inner gap is measured to the image area itself, so the page
         pane's border/padding count toward it rather than adding to it.
         """
-        page = self.tabWidget.currentWidget()
-        if page is None:
-            return
-        # Distance from each stripe's inner edge to where page content starts
-        # (just the pane border: pages have no side margins).
+        page = self.canvas
+        # Distance from each stripe's inner edge to where the canvas starts.
         # A docked panel sits flush against its stripe, so there the stripe
         # keeps its full inner gap.
         content_left = page.mapTo(self, QtCore.QPoint()).x()
@@ -449,48 +445,38 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _configure_workflow_panels(self) -> None:
         """Build the right stripe: one captioned pill per workflow panel.
 
-        These replace the old main tabs. Visualization, Super-Resolution and
+        There is one image canvas. Visualization, Super-Resolution and
         Calibration need little room, so each pill opens a compact flyout over
-        the image (shown on hover, pinned by a click) holding a panel from
-        ``WorkflowPanels.ui``. Segment is a plain toggle for the Segmentation
-        view's own inspector (see :meth:`_on_segmentation_pill_clicked`), and
-        Batch gets a full-height dock; dividers set those two apart. The
-        first four pills are bound to a view: turning to one shows that view
-        on the canvas, and its pill carries an accent marker. Batch has no
-        view of its own: it works on files, not the canvas.
-
-        ``tabWidget`` is the canvas's page stack, with its tab bar hidden, so
-        view switching keeps its pan/zoom hand-off and fade.
+        it (shown on hover, pinned by a click) holding a panel from
+        ``WorkflowPanels.ui``; their settings apply to the canvas in place.
+        Segment toggles the drawing toolbox and the layer inspector beside
+        the canvas (see :meth:`_on_segmentation_pill_clicked`), and Batch gets
+        a full-height dock; dividers set those two apart.
         """
         stripe = self.workflowStripe = ToolWindowStripe(
             self, edge=QtCore.Qt.Edge.RightEdge, title="Workflow panels",
             object_name="workflowStripe", show_logo=False,
         )
         self.addToolBar(stripe.toolbar_area, stripe)
-        self.tabWidget.tabBar().hide()
 
         self.workflowTools: dict[str, ToolWindow] = {}
-        # Stripe button → the canvas view it is bound to.
-        self._view_pills: dict[ToolStripeButton, QtWidgets.QWidget] = {}
         flyouts = (
-            # name, title, caption, icon, content, view page, tooltip
+            # name, title, caption, icon, content, tooltip
             ("visualization", "Visualization", "Visualize", paint_visualization_icon,
-             self.visualizationPanel, self.Visualization,
+             self.visualizationPanel,
              "Visualization: RGB, vegetation indices, HyperCube and spectral similarity"),
             ("superResolution", "Super-Resolution", "Super-Res", paint_super_resolution_icon,
-             self.superResolutionPanel, self.SuperResolution,
+             self.superResolutionPanel,
              "Super-Resolution: upscale the image 2× with MSDformer"),
             ("calibration", "Calibration", "Calibrate", paint_calibration_icon,
-             self.calibrationPanel, self.Calibration,
+             self.calibrationPanel,
              "Calibration: correct the image with dark and white references"),
         )
-        for name, title, caption, painter, content, page, tooltip in flyouts:
-            tool = self._add_workflow_tool(
+        for name, title, caption, painter, content, tooltip in flyouts:
+            self._add_workflow_tool(
                 name, title, caption, painter, content, tooltip, compact=True,
                 popped_size=QtCore.QSize(380, 560),
             )
-            self._view_pills[tool.button] = page
-            tool.activated.connect(lambda page=page: self.tabWidget.setCurrentWidget(page))
 
         stripe.add_divider()
         self.segmentationPill = ToolStripeButton(
@@ -501,14 +487,20 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             "Segmentation: classify pixels into classes and annotate regions"
         )
         stripe.add_button(self.segmentationPill)
-        self._view_pills[self.segmentationPill] = self.Classification
         self.segmentationPill.clicked.connect(self._on_segmentation_pill_clicked)
         # The classifier form joins the inspector beside the image.
         self.classificationLayerPanel.set_classifier_controls(self.segmentationPanel)
         # The drawing toolbox sits at the image's left edge, like Photoshop's.
-        palette = self.classificationLayerPanel.annotation_page.tool_palette
-        self.classificationLayout.insertWidget(0, palette, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        palette.show()
+        # Both are shown by the Segment pill.
+        self.toolPalette = self.classificationLayerPanel.annotation_page.tool_palette
+        self.canvasLayout.insertWidget(0, self.toolPalette, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        self.classificationLayerPanel.hide()
+        # The image takes whatever room is left; its size hint (the whole
+        # picture) must not squeeze the inspector below its own width.
+        self.visualizationStack.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Ignored
+        )
+        self.visualizationStack.setMinimumSize(_MIN_IMAGE_SIZE, _MIN_IMAGE_SIZE)
         self.classificationModeTabs.currentChanged.connect(self._fit_classification_mode_tabs)
         self._fit_classification_mode_tabs()
 
@@ -522,9 +514,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         stripe.flyout_obstacles = lambda: [self.classificationLayerPanel]
         # Re-place flyouts when the view (and so the inspector) changes.
         self.classificationLayerPanel.installEventFilter(self)
-        self.tabWidget.currentChanged.connect(lambda _index: self._stripe_geometry_timer.start(0))
-        self.tabWidget.currentChanged.connect(self._sync_view_pills)
-        self._sync_view_pills()
+        self._sync_segmentation_pill()
 
     def _add_workflow_tool(
         self, name: str, title: str, caption: str, painter, content: QtWidgets.QWidget,
@@ -542,23 +532,21 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         return tool
 
     def _segmentation_sidebar_shown(self) -> bool:
-        return (
-            self.tabWidget.currentWidget() is self.Classification
-            and not self.classificationLayerPanel.isHidden()
-        )
+        return not self.classificationLayerPanel.isHidden()
 
     def _on_segmentation_pill_clicked(self) -> None:
-        """Show the Segmentation view with its inspector, or hide the inspector.
+        """Show or hide the drawing toolbox and layer inspector.
 
-        Hiding keeps the view and its results on the canvas; showing again
+        Hiding keeps the classes and annotations on the canvas; showing again
         brings the inspector back exactly as it was (same mode, scroll, width).
         """
-        if self._segmentation_sidebar_shown():
-            self.classificationLayerPanel.hide()
-        else:
-            self.tabWidget.setCurrentWidget(self.Classification)
-            self.classificationLayerPanel.show()
-        self._sync_view_pills()
+        shown = not self._segmentation_sidebar_shown()
+        if not shown:
+            # A hidden toolbox must not leave a drawing tool armed.
+            self.classificationLayerPanel.annotation_page.clear_tool()
+        self.classificationLayerPanel.setVisible(shown)
+        self.toolPalette.setVisible(shown)
+        self._sync_segmentation_pill()
 
     def _fit_classification_mode_tabs(self, *_args) -> None:
         """Size the Segmentation method tabs to the shown page, not the tallest.
@@ -572,10 +560,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         tabs.setMaximumHeight(tabs.tabBar().sizeHint().height() + page.sizeHint().height())
 
-    def _sync_view_pills(self, *_args) -> None:
-        page = self.tabWidget.currentWidget()
-        for button, button_page in self._view_pills.items():
-            button.set_current(button_page is page)
+    def _sync_segmentation_pill(self) -> None:
         # The Segment pill is selected while its inspector is on screen.
         self.segmentationPill.setChecked(self._segmentation_sidebar_shown())
         self.segmentationPill.update()
@@ -590,7 +575,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _configure_tabs(self) -> None:
         tab_settings = (
-            (self.tabWidget, "mainTabBar", "Application sections"),
             (
                 self.classificationModeTabs,
                 "classificationTabBar",
@@ -612,9 +596,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             tab_bar.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
             tab_bar.setExpanding(False)
             tab_bar.setElideMode(QtCore.Qt.TextElideMode.ElideRight)
-            if object_name != "mainTabBar":
-                # Two-segment switches always fit; never show scroll arrows.
-                tab_bar.setUsesScrollButtons(False)
+            # Two-segment switches always fit; never show scroll arrows.
+            tab_bar.setUsesScrollButtons(False)
             self._tab_transitions.append(TabTransitionHandler(tab_widget))
 
     def _configure_file_menu(self) -> None:
@@ -652,29 +635,21 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.runSuperResButton.clicked.connect(self._run_super_resolution)
         self._set_super_resolution_ready()
         self._update_super_resolution_view_state(self._high_resolution_selected)
-        self.tabWidget.currentChanged.connect(self._on_tab_changed)
 
-        for viewer in self._all_viewers():
-            viewer.cropRequested.connect(self._on_crop_requested)
-            viewer.polygonCropRequested.connect(self._on_polygon_crop_requested)
-            viewer.spectrumPlotRequested.connect(self._on_spectrum_plot)
-            viewer.spectrumInspectorRequested.connect(self._spectrum_controller.show)
-            viewer.imageMeanSpectrumRequested.connect(
-                self._spectrum_controller.show_image_mean
-            )
-            viewer.classSpectraRequested.connect(
-                self._spectrum_controller.show_class_spectra
-            )
-            viewer.meanIndexRequested.connect(self._on_mean_index)
-            viewer.pixel_value_provider = self._pixel_values_at
-        self.superResViewer.pixel_value_provider = self._sr_pixel_values_at
-        self.calibrationViewer.pixel_value_provider = (
-            self._calibration_controller.pixel_values_at
+        viewer = self.viewer
+        viewer.cropRequested.connect(self._on_crop_requested)
+        viewer.polygonCropRequested.connect(self._on_polygon_crop_requested)
+        viewer.spectrumPlotRequested.connect(self._on_spectrum_plot)
+        viewer.spectrumInspectorRequested.connect(self._spectrum_controller.show)
+        viewer.imageMeanSpectrumRequested.connect(
+            self._spectrum_controller.show_image_mean
         )
-        self.classificationViewer.pixel_value_provider = (
-            self._classification_pixel_values_at
+        viewer.classSpectraRequested.connect(
+            self._spectrum_controller.show_class_spectra
         )
-        self.classificationViewer.class_spectra_available = True
+        viewer.meanIndexRequested.connect(self._on_mean_index)
+        viewer.pixel_value_provider = self._classification_pixel_values_at
+        viewer.class_spectra_available = True
 
         self.modeSimilarity.toggled.connect(self._on_similarity_mode_toggled)
         self.spectrumInspectorButton.clicked.connect(self._spectrum_controller.show)
@@ -731,19 +706,18 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         # Says which on-demand mode is shown and how it was computed, since
         # Brightness silently changes meaning after a supervised result.
-        self.visualizationModeCaption = QtWidgets.QLabel(self.Visualization)
+        self.visualizationModeCaption = QtWidgets.QLabel(self.canvas)
         self.visualizationModeCaption.setObjectName("visualizationModeCaption")
         self.visualizationModeCaption.setWordWrap(True)
         self.visualizationModeCaption.setTextFormat(QtCore.Qt.TextFormat.RichText)
         self.visualizationModeCaption.hide()
-        self.verticalLayout.addWidget(self.visualizationModeCaption)
+        self.imageLayout.addWidget(self.visualizationModeCaption)
 
     def _update_super_resolution_view_state(self, show_processed: bool) -> None:
         if self._super_res_worker is not None:
             return
         self._calibration_controller.resolution_changed()
         self._sync_image_switches()
-        self._refresh_super_resolution_display()
         self.superResStatusStack.setCurrentWidget(self.superResIdlePage)
         if not self._hsi_data.is_loaded():
             status = "Load an image to compare the original and processed result"
@@ -836,43 +810,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             calibrated=controller.display_result is not None, enabled=enabled,
             current_available=controller.result is not None,
         )
-
-    def _refresh_super_resolution_display(self) -> None:
-        previous_size = self.superResViewer.photo_size()
-        state = self.superResViewer.get_view_state()
-        if self._high_resolution_selected and self._super_res_result is None:
-            self.superResViewer.rgb = None
-            self.superResViewer.mask_array = None
-            self.superResViewer.set_photo()
-            return
-        data = self._display_data()
-        if data.rgb_array is None:
-            return
-        new_scale = 2 if self._is_super_resolution_active() else 1
-        self.superResViewer.rgb = data.rgb_array
-        self.superResViewer.mask_array = data.mask_array
-        pixmap = hsi_utils.numpy_to_qpixmap(data.rgb_array, data.roi_mask)
-        self.superResViewer.set_photo(pixmap)
-        factor = new_scale / self._sr_view_scale
-        # Preserve comparison framing for LR/HR toggles, but refit after a
-        # source crop/resize just like the other viewers (LEAF-153).
-        if (
-            state is not None
-            and previous_size is not None
-            and previous_size * factor == pixmap.size()
-        ):
-            self.superResViewer.queue_view_state((state[0] / factor, state[1] * factor))
-        self._sr_view_scale = new_scale
-
-    def _sr_pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
-        data = self._display_data()
-        if self._high_resolution_selected and self._super_res_result is None:
-            return {}
-        rgb = data.rgb_array
-        if rgb is None or not (0 <= row < rgb.shape[0] and 0 <= column < rgb.shape[1]):
-            return {}
-        color = tuple(int(value) for value in rgb[row, column])
-        return {"RGB": PixelValueEntry(value=color, color=color)}
 
     def _run_super_resolution(self) -> None:
         if self._calibration_controller.is_running():
@@ -982,11 +919,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._visualization_cache = {
             key: cached for key, cached in self._visualization_cache.items() if not key[0]
         }
-        # Either operation changes the cube used for classification.
-        self._classification_controller.clear_result()
+        # Classes and annotations carry over, scaled to the 2x image.
         self._calibration_controller.clear_super_resolution_result()
         self._set_high_resolution_selected(True)
-        self._refresh_super_resolution_display()
         self.superResProgressBar.setValue(100)
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
@@ -1064,15 +999,12 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _on_calibration_result_ready(self, high: bool) -> None:
         self._crop_undo_stack.clear()
         self._crop_redo_stack.clear()
-        # Work on the uncalibrated image stays under "Before Calibration".
-        self._classification_controller.clear_calibrated_result()
+        # Classes and annotations carry over to the calibrated image.
         self._clear_calibration_previews()
         self._update_super_resolution_view_state(self._high_resolution_selected)
 
     @QtCore.pyqtSlot(bool)
     def _on_calibration_references_changed(self, had_result: bool) -> None:
-        if had_result:
-            self._classification_controller.clear_calibrated_result()
         if self._hsi_data.is_loaded():
             self._clear_calibration_previews()
             self._update_super_resolution_view_state(self._high_resolution_selected)
@@ -1214,31 +1146,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             QMessageBox.information(self, "Nothing to save", "Load an image first.")
             return
 
-        display_rgb = self._display_data().rgb_array
-        if self.tabWidget.currentWidget() is self.Visualization:
-            visualization_rgb = self._visualization_display_rgb()
-            if visualization_rgb is not None:
-                display_rgb = visualization_rgb
-        classification_rgb = (
-            self._classification_controller.composited_rgb()
-            if self._active_viewer is self.classificationViewer
-            else None
-        )
-        if classification_rgb is not None:
-            display_rgb = classification_rgb
-        if self._active_viewer is self.classificationViewer:
-            # The viewer draws annotations as live items over this image, so
-            # they must be flattened into the saved pixels explicitly. This
-            # also covers annotating the plain image before any classification.
-            display_rgb = self._classification_controller.with_annotations(display_rgb)
-        calibration_result = self._calibration_controller.display_result
-        if self._active_viewer is self.calibrationViewer and calibration_result:
-            display_rgb = calibration_result.data.rgb_array
-        if self.tabWidget.currentWidget() is self.SuperResolution:
-            if self._high_resolution_selected and self._super_res_result is None:
-                QMessageBox.information(self, "Nothing to save", "Run Super-Resolution first.")
-                return
-            display_rgb = self._display_data().rgb_array
+        # The viewer draws annotations as live items over the canvas image,
+        # so they must be flattened into the saved pixels explicitly.
+        display_rgb = self._classification_controller.with_annotations(self._canvas_rgb())
 
         extensions = " ".join(
             f"*{ext}" for ext in self._visualization_export_service.supported_extensions
@@ -1380,8 +1290,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         names = {VisualizationMode.BRIGHTNESS.value} if self._hsi_data.is_loaded() else set()
         if VisualizationMode.CUSTOM in self._visualization_results:
             names.add(VisualizationMode.CUSTOM.value)
-        for viewer in self._all_viewers():
-            viewer.available_on_demand_indices = frozenset(names)
+        self.viewer.available_on_demand_indices = frozenset(names)
 
     def _discard_on_demand_results(self, mode: VisualizationMode) -> None:
         self._visualization_results.pop(mode, None)
@@ -1577,7 +1486,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._refresh_viewers_display()
         else:
             self.modeSimilarity.setChecked(True)
-        self.tabWidget.setCurrentWidget(self.Visualization)
 
     def _visualization_display_rgb(self) -> Optional[NDArray[np.uint8]]:
         """Return what the Visualization viewer shows, if not the plain RGB."""
@@ -1599,8 +1507,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         available = frozenset(
             mode.value for mode in OPTIONAL_VISUALIZATION_MODES if reasons[mode] is None
         )
-        for viewer in self._all_viewers():
-            viewer.available_optional_indices = available
+        self.viewer.available_optional_indices = available
         key = (self._is_super_resolution_active(), self._calibration_controller.display_result is not None)
         cached = self._visualization_cache.get(key)
         if cached is not None and cached[0] is data:
@@ -1638,67 +1545,54 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 self._visualization_results.get(self._active_visualization_mode)
             )
 
+    def _display_scale(self) -> int:
+        """Displayed pixels per original pixel: 2 while Super-Resolution is shown."""
+
+        return self._super_res_result.scale if self._is_super_resolution_active() else 1
+
+    def _canvas_background_rgb(self) -> Optional[NDArray[np.uint8]]:
+        """The shown visualization of the displayed image (classes go over it)."""
+
+        display_rgb = self._visualization_display_rgb()
+        return display_rgb if display_rgb is not None else self._display_data().rgb_array
+
+    def _canvas_rgb(self) -> Optional[NDArray[np.uint8]]:
+        """What the canvas shows: the visualization with any classes composited."""
+
+        data = self._display_data()
+        classification_rgb = self._classification_controller.composited_rgb()
+        if classification_rgb is not None and classification_rgb.shape[:2] == (
+            data.rows, data.columns
+        ):
+            return classification_rgb
+        return self._canvas_background_rgb()
+
     def _refresh_viewers_display(self) -> None:
+        """Redraw the canvas for the displayed image version and visualization."""
+
         data = self._display_data()
         self._sync_image_switches()
-        display_rgb = self._visualization_display_rgb()
-        if display_rgb is None:
-            display_rgb = data.rgb_array
-        rgb_display = data.rgb_array
-        new_scale = 2 if self._is_super_resolution_active() else 1
-        factor = new_scale / self._viz_view_scale
-        for viewer in self._all_viewers():
-            if viewer is self.superResViewer:
-                continue
-            previous_size = viewer.photo_size()
-            state = viewer.get_view_state()
-            classification_rgb = (
-                self._classification_controller.composited_rgb()
-                if viewer is self.classificationViewer
-                else None
-            )
-            calibration_result = self._calibration_controller.display_result
-            use_calibration = viewer is self.calibrationViewer and calibration_result
-            use_classification = classification_rgb is not None
-            if use_calibration:
-                viewer_display = calibration_result.data.rgb_array
-            elif use_classification:
-                viewer_display = classification_rgb
-            elif viewer is self.viewer:
-                viewer_display = display_rgb
-            else:
-                viewer_display = rgb_display
-            viewer_data = (
-                calibration_result.data
-                if use_calibration
-                else self._classification_controller.display_data
-                if use_classification
-                else data
-            )
-            viewer.rgb        = viewer_data.rgb_array
-            viewer.mask_array = viewer_data.mask_array
-            pixmap = hsi_utils.numpy_to_qpixmap(
-                viewer_display, viewer_data.roi_mask
-            )
-            viewer.set_photo(pixmap)
-            # Restore the previous pan/zoom, rescaled by `factor`, when the
-            # image dimensions changed only because of a low/high-res swap
-            # (factor==1 covers the unchanged-size case, e.g. switching
-            # visualization mode). Otherwise (e.g. after a crop) let
-            # set_photo's fresh fit_in_view() stand, so the view actually
-            # rescales to the new image size.
-            viewer_factor = factor
-            if (
-                state is not None
-                and previous_size is not None
-                and previous_size * viewer_factor == pixmap.size()
-            ):
-                viewer.queue_view_state(
-                    (state[0] / viewer_factor, state[1] * viewer_factor)
-                )
-        self._viz_view_scale = new_scale
+        viewer = self.viewer
+        previous_size = viewer.photo_size()
+        state = viewer.get_view_state()
+        viewer.rgb = data.rgb_array
+        viewer.mask_array = data.mask_array
+        pixmap = hsi_utils.numpy_to_qpixmap(self._canvas_rgb(), data.roi_mask)
+        viewer.set_photo(pixmap)
+        # Keep the pan/zoom, rescaled by `factor`, when the image size changed
+        # only because of a low/high-res swap (factor==1 covers an unchanged
+        # size, e.g. switching visualization mode). Otherwise (e.g. after a
+        # crop) let set_photo's fresh fit_in_view() stand.
+        new_scale = self._display_scale()
+        factor = new_scale / self._view_scale
+        if (
+            state is not None
+            and previous_size is not None
+            and previous_size * factor == pixmap.size()
+        ):
+            viewer.queue_view_state((state[0] / factor, state[1] * factor))
+        self._view_scale = new_scale
         self._classification_controller.sync_annotations()
-        self._refresh_super_resolution_display()
         self._spectrum_controller.refresh_markers()
 
     def _pixel_values_at(self, row: int, column: int) -> Mapping[str, PixelValueEntry]:
@@ -1747,11 +1641,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         if not self._hsi_data.is_loaded():
             return None
-        if viewer is self.superResViewer and not viewer.has_photo():
-            return None
-        calibration_result = self._calibration_controller.display_result
-        if viewer is self.calibrationViewer and calibration_result:
-            return calibration_result.data
         return self._display_data()
 
     def _on_spectrum_plot(self, pos: QPointF) -> None:
@@ -1761,9 +1650,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._spectrum_controller.pin(viewer, int(pos.y()), int(pos.x()))
 
     def _on_mean_index(self, index_name: str) -> None:
-        if self.sender() is self.superResViewer and self._high_resolution_selected:
-            self.statusbar.showMessage("Index means are available for the original image in Visualization", 5000)
-            return
         if not self._hsi_data.is_loaded():
             return
 
@@ -1891,47 +1777,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     # Private: crop undo/redo                                             #
     # ------------------------------------------------------------------ #
 
-    def _all_viewers(self) -> tuple:
-        return (
-            self.viewer,
-            self.calibrationViewer,
-            self.superResViewer,
-            self.classificationViewer,
-        )
-
-    def _viewer_for_tab(self, index: int) -> Optional[HSIViewer]:
-        page = self.tabWidget.widget(index)
-        return page.findChild(HSIViewer) if page is not None else None
-
-    def _resolution_scale_for(self, viewer: HSIViewer) -> int:
-        """Return 2 if `viewer` is currently showing the SR result, else 1.
-
-        Visualization/Calibration/Classification track the same toggle as
-        the Super-Resolution tab, so a tab switch can land on either side
-        of a low/high-res swap independently of the Super-Resolution tab's
-        own comparison view.
-        """
-        if viewer is self.superResViewer:
-            return self._sr_view_scale
-        if viewer is self.calibrationViewer and self._calibration_controller.display_result:
-            return 2 if self._is_super_resolution_active() else 1
-        return self._viz_view_scale
-
-    def _on_tab_changed(self, index: int) -> None:
-        new_viewer = self._viewer_for_tab(index)
-        if new_viewer is None:
-            return
-
-        if self._active_viewer is not None and self._active_viewer is not new_viewer:
-            state = self._active_viewer.get_view_state()
-            if state is not None:
-                source_scale = self._resolution_scale_for(self._active_viewer)
-                target_scale = self._resolution_scale_for(new_viewer)
-                factor = target_scale / source_scale
-                new_viewer.queue_view_state((state[0] / factor, state[1] * factor))
-
-        self._active_viewer = new_viewer
-
     def _snapshot_current_state(self) -> _CropSnapshot:
         return _CropSnapshot(
             rgb_array=self._hsi_data.rgb_array,
@@ -1950,7 +1795,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
     def _annotation_history_active(self) -> bool:
         """Whether Ctrl+Z should target annotations rather than the crop."""
 
-        return self._active_viewer is self.classificationViewer
+        return self._segmentation_sidebar_shown()
 
     def _undo_crop(self) -> None:
         if self._annotation_history_active() and (

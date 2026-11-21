@@ -153,9 +153,8 @@ def test_monitor_stays_in_status_bar_across_views_and_stops_on_close(window, qtb
     window.show()
     qtbot.waitExposed(window)
     position = widget.mapTo(window, QtCore.QPoint())
-    for page in (window.Calibration, window.Classification, window.SuperResolution,
-                 window.Visualization):
-        window.tabWidget.setCurrentWidget(page)
+    for _ in range(2):  # with the segmentation inspector shown, then hidden
+        window.segmentationPill.click()
         assert widget.isVisible()
         assert widget.mapTo(window, QtCore.QPoint()) == position
         assert widget._timer.isActive()

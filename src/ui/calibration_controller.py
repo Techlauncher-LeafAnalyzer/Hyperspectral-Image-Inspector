@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable
 
 import numpy as np
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-import core.hsi_utils as hsi_utils
 from core import (
     CalibrationFrameResolver,
     CalibrationResult,
@@ -22,7 +21,6 @@ from core import (
     order_calibration_frame_paths,
 )
 from ui.calibration_worker import CalibrationWorker
-from ui.viewer import HSIViewer, PixelValueEntry
 
 
 LOGGER = logging.getLogger(__name__)
@@ -41,7 +39,6 @@ class CalibrationController(QtCore.QObject):
         source_data: HSIData,
         service: CalibrationService,
         frame_resolver: CalibrationFrameResolver,
-        viewer: HSIViewer,
         statusbar: QtWidgets.QStatusBar,
         dark_button: QtWidgets.QPushButton,
         dark_edit: QtWidgets.QLineEdit,
@@ -53,9 +50,6 @@ class CalibrationController(QtCore.QObject):
         resume_hypercube: Callable[[], None],
         refresh_source_views: Callable[[], None],
         refresh_current_views: Callable[[], None],
-        fallback_pixel_values: Callable[
-            [int, int], Mapping[str, PixelValueEntry]
-        ],
         parent_widget: QtWidgets.QWidget,
         display_data: Callable[[], HSIData] | None = None,
         is_high_resolution: Callable[[], bool] | None = None,
@@ -65,7 +59,6 @@ class CalibrationController(QtCore.QObject):
         self._source_data = source_data
         self._service = service
         self._frame_resolver = frame_resolver
-        self._viewer = viewer
         self._statusbar = statusbar
         self._dark_button = dark_button
         self._dark_edit = dark_edit
@@ -77,7 +70,6 @@ class CalibrationController(QtCore.QObject):
         self._resume_hypercube = resume_hypercube
         self._refresh_source_views = refresh_source_views
         self._refresh_current_views = refresh_current_views
-        self._fallback_pixel_values = fallback_pixel_values
         self._parent = parent_widget
         self._display_data = display_data or (lambda: self._source_data)
         self._is_high_resolution = is_high_resolution or (lambda: False)
@@ -102,7 +94,6 @@ class CalibrationController(QtCore.QObject):
         self._calibrate_button.clicked.connect(self._run_or_cancel)
         self._dark_button.setToolTip("Select an ENVI/PSI dark-reference cube")
         self._bright_button.setToolTip("Select an ENVI/PSI bright-reference cube")
-        self._viewer.pixel_value_provider = self.pixel_values_at
         self._update_ready()
 
     @property
@@ -210,18 +201,6 @@ class CalibrationController(QtCore.QObject):
         self._close_after_calibration = True
         self._cancel()
         return True
-
-    def pixel_values_at(
-        self, row: int, column: int
-    ) -> Mapping[str, PixelValueEntry]:
-        result = self.display_result
-        if result is None or result.data.rgb_array is None:
-            return self._fallback_pixel_values(row, column)
-        rgb = result.data.rgb_array
-        if not (0 <= row < rgb.shape[0] and 0 <= column < rgb.shape[1]):
-            return {}
-        color = tuple(int(value) for value in rgb[row, column])
-        return {"Calibrated RGB": PixelValueEntry(value=color, color=color)}
 
     def _select_dark_file(self) -> None:
         selected = self._select_file("Open Dark Calibration File")
@@ -389,8 +368,6 @@ class CalibrationController(QtCore.QObject):
         self._show_calibrated = True
         self._tracks_source[self._working_resolution] = True
         self._completed_resolution = self._working_resolution
-        if self._is_high_resolution() == self._working_resolution:
-            self._show_result()
         minimum, maximum = result.reflectance_range
         resolution_note = (
             " (2× interpolated references)" if self._working_resolution else ""
@@ -458,16 +435,3 @@ class CalibrationController(QtCore.QObject):
         else:
             tooltip = "Select both dark and bright reference cubes"
         self._calibrate_button.setToolTip(tooltip)
-
-    def _show_result(self) -> None:
-        result = self.display_result
-        if result is None or result.data.rgb_array is None:
-            return
-        state = self._viewer.get_view_state()
-        self._viewer.rgb = result.data.rgb_array
-        self._viewer.mask_array = result.data.mask_array
-        self._viewer.set_photo(
-            hsi_utils.numpy_to_qpixmap(result.data.rgb_array, result.data.roi_mask)
-        )
-        if state is not None:
-            self._viewer.queue_view_state(state)

@@ -396,7 +396,9 @@ class HSIViewer(QtWidgets.QGraphicsView):
         rect = QtCore.QRectF(self._photo.pixmap().rect())
         if not rect.isNull():
             self.setSceneRect(rect)
-            if self.has_photo():
+            # A view squeezed to nothing would scale to zero, which can never
+            # be undone; refit when it has room again.
+            if self.has_photo() and not self.viewport().rect().isEmpty():
                 unity = self.transform().mapRect(QtCore.QRectF(0, 0, 1, 1))
                 self.scale(1 / unity.width(), 1 / unity.height())
                 viewrect = self.viewport().rect()

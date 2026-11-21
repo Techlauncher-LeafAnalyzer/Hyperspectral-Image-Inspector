@@ -251,13 +251,6 @@ QRadioButton:pressed {
     background: #d5ebe6;
 }
 
-QTabWidget#tabWidget::pane {
-    border: 1px solid #d8e2df;
-    border-radius: 8px;
-    top: -1px;
-    background: #f9fbfa;
-}
-
 QFrame#tabIndicator {
     background: #168b7b;
     border: 0;
@@ -345,10 +338,7 @@ QProgressBar::chunk {
     border-radius: 5px;
 }
 
-QGraphicsView#viewer,
-QGraphicsView#superResViewer,
-QGraphicsView#calibrationViewer,
-QGraphicsView#classificationViewer {
+QGraphicsView#viewer {
     background: #e8eeee;
     border: 1px solid #d1dcda;
     border-radius: 8px;

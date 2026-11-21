@@ -27,6 +27,7 @@ from .annotation_model import (
     AnnotationLayer,
     AnnotationLayerModel,
     AnnotationStyle,
+    scaled_layer,
 )
 from .classification_model import (
     ClassificationService,
@@ -79,6 +80,7 @@ from .vector_mask import (
     VectorPath,
     VectorTraceOptions,
     apply_vector_masks,
+    resample_classification,
     trace_mask,
 )
 from .hsi_data import Functionality, HSIData, ImageFormat
@@ -205,6 +207,8 @@ __all__ = [
     "UnsupervisedClassificationResult",
     "WavelengthError",
     "apply_vector_masks",
+    "resample_classification",
+    "scaled_layer",
     "export_class_summary_csv",
     "load_binary_training_mask",
     "measure_region",

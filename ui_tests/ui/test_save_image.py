@@ -38,20 +38,19 @@ def test_save_after_switching_mode_saves_active_mode_pixels(loaded_window, tmp_p
     assert np.array_equal(saved, expected)
 
 
-@pytest.mark.parametrize("page_name", ["Calibration", "Classification"])
-def test_save_from_other_tabs_uses_rgb_even_when_visualization_is_ndvi(
-    loaded_window, tmp_path, file_dialog, page_name
+def test_save_while_segmenting_keeps_the_chosen_visualization(
+    loaded_window, tmp_path, file_dialog
 ):
     window = loaded_window
     window.modeNDVI.click()
-    window.tabWidget.setCurrentWidget(getattr(window, page_name))
-    target = tmp_path / f"{page_name.lower()}.png"
+    window.segmentationPill.click()
+    target = tmp_path / "segmenting.png"
     file_dialog.save_return = (str(target), "")
 
     window.actionSaveImage.trigger()
 
     saved = np.array(Image.open(target).convert("RGB"))
-    expected = window._visualization_results[VisualizationMode.RGB].display_rgb
+    expected = window._visualization_results[VisualizationMode.NDVI].display_rgb
     np.testing.assert_array_equal(saved, expected)
 
 

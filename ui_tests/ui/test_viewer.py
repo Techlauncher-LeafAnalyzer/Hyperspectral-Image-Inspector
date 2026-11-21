@@ -113,16 +113,7 @@ def test_viewer_context_menu_keeps_actions_and_polished_identity(
     assert all(not action.icon().isNull() for action in actions.values())
 
 
-@pytest.mark.parametrize(
-    "object_name",
-    ("viewer", "superResViewer", "calibrationViewer", "classificationViewer"),
-)
-def test_context_menu_polish_is_shared_by_every_tab(
-    viewer_with_photo,
-    object_name,
-):
-    viewer_with_photo.setObjectName(object_name)
-
+def test_context_menu_is_polished(viewer_with_photo):
     menu = viewer_with_photo._build_context_menu(QPointF())
 
     assert menu.objectName() == "viewerContextMenu"

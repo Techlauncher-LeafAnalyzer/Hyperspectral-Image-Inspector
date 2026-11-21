@@ -33,26 +33,18 @@ def test_selecting_mode_updates_viewer_pixmap(loaded_window, button_name, mode):
     getattr(loaded_window, button_name).click()
 
     assert loaded_window.viewer.has_photo()
-    # Every viewer still has a valid photo; non-Visualization tabs use RGB.
-    for viewer in loaded_window._all_viewers():
-        assert viewer.has_photo()
 
 
-def test_other_tabs_show_rgb_while_visualization_keeps_its_index(loaded_window):
+def test_segmentation_works_over_the_chosen_visualization(loaded_window):
     window = loaded_window
+    window.modeRGB.click()
+    rgb_image = window.viewer._photo.pixmap().toImage()
     window.modeNDVI.click()
     ndvi_image = window.viewer._photo.pixmap().toImage()
-    rgb_image = window.superResViewer._photo.pixmap().toImage()
     assert ndvi_image != rgb_image
 
-    for page, viewer in (
-        (window.Calibration, window.calibrationViewer),
-        (window.Classification, window.classificationViewer),
-    ):
-        window.tabWidget.setCurrentWidget(page)
-        assert viewer._photo.pixmap().toImage() == rgb_image
-
-    window.tabWidget.setCurrentWidget(window.Visualization)
+    # There is one canvas: opening Segmentation keeps the chosen index.
+    window.segmentationPill.click()
     assert window.modeNDVI.isChecked()
     assert window.viewer._photo.pixmap().toImage() == ndvi_image
 

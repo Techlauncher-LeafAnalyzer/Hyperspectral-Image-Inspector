@@ -164,7 +164,7 @@ def test_classification_view_hides_excluded_polygon_pixels(loaded_window, qtbot)
     assert result is not None
     assert np.all(result.class_map[~roi] == -1)
     assert loaded_window._classification_controller.class_id_at(7, 0) is None
-    image = loaded_window.classificationViewer._photo.pixmap().toImage()
+    image = loaded_window.viewer._photo.pixmap().toImage()
     assert image.pixelColor(0, 7).alpha() == 0
     assert image.pixelColor(0, 0).alpha() == 255
 

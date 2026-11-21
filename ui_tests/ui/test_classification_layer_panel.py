@@ -540,153 +540,131 @@ def test_repeated_super_resolution_classification_shows_no_notice(
 
 
 # ---------------------------------------------------------------------- #
-# Per-resolution classification storage and low/high-res swapping          #
+# One classification shared by the original and Super-Resolution images    #
 # ---------------------------------------------------------------------- #
 
 
-def _classify_into_slot(controller, source, slot_key: bool, class_map: np.ndarray) -> None:
-    """Simulate a completed classification job launched at ``slot_key``.
+class _ShownImage:
+    """A loaded-looking image of a given size, as the display source."""
 
-    Mirrors what the real click handler records (``_pending_slot_key`` and
-    the slot's ``active_data``) before a worker's ``resultReady`` signal
-    reaches ``_on_result``, without spinning up an actual QThread.
-    """
+    def __init__(self, rows: int, columns: int) -> None:
+        self.rows, self.columns = rows, columns
+        self.rgb_array = np.zeros((rows, columns, 3), dtype=np.uint8)
+        self.mask_array = None
+        self.roi_mask = None
 
-    source.is_super_resolution_active = slot_key
-    controller._pending_slot_key = slot_key
-    controller._slots[slot_key].active_data = source.data
+    def is_loaded(self) -> bool:
+        return True
+
+
+_LOW = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
+
+
+def _classify(controller, source, high: bool, class_map: np.ndarray) -> None:
+    """Simulate a completed classification job while ``high`` is shown."""
+
+    source.is_super_resolution_active = high
     controller._on_result(_make_unsupervised_result(class_map))
 
 
-def test_low_and_high_res_results_are_stored_in_separate_slots(qtbot):
-    controller, viewer, layer_panel, source = _make_controller(qtbot)
-    low_res_data = HSIData()
-    low_res_data.rgb_array = np.zeros((2, 3, 3), dtype=np.uint8)
-    high_res_data = HSIData()
-    high_res_data.rgb_array = np.zeros((4, 6, 3), dtype=np.uint8)
+def _show(controller, source, high: bool) -> None:
+    """Switch the displayed image between the 2x3 original and its 2x version."""
 
-    source.data = low_res_data
-    _classify_into_slot(
-        controller, source, False, np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
-    )
-    low_slot_layers = controller._slots[False].layers
-
-    source.data = high_res_data
-    _classify_into_slot(
-        controller,
-        source,
-        True,
-        np.array([[0, 0, 1, 1], [1, 2, 2, 0], [0, 1, 1, 2], [2, 2, 0, 0]], dtype=np.int32),
-    )
-    high_slot_layers = controller._slots[True].layers
-
-    assert low_slot_layers is not None and high_slot_layers is not None
-    assert low_slot_layers is not high_slot_layers
-    assert controller._slots[False].active_data is low_res_data
-    assert controller._slots[True].active_data is high_res_data
-    assert controller._slots[False].result.class_map.shape == (2, 3)
-    assert controller._slots[True].result.class_map.shape == (4, 4)
-
-
-def test_editing_one_resolutions_layers_does_not_affect_the_other(qtbot):
-    controller, viewer, layer_panel, source = _make_controller(qtbot)
-    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
-    _classify_into_slot(controller, source, False, class_map)
-    _classify_into_slot(controller, source, True, class_map)
-
-    # Editing while viewing high-res must not touch the low-res slot.
-    source.is_super_resolution_active = True
-    controller._on_layer_visibility_changed(1, False)
-    controller._on_global_opacity_changed(0.4)
-
-    assert controller._slots[True].layers.visible_class_ids == (0, 2)
-    assert controller._slots[True].layers.global_opacity == 0.4
-    assert controller._slots[False].layers.visible_class_ids == (0, 1, 2)
-    assert controller._slots[False].layers.global_opacity == 1.0
-
-
-def test_refresh_display_swaps_the_layer_panel_to_the_active_resolution(qtbot):
-    controller, viewer, layer_panel, source = _make_controller(qtbot)
-    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
-    _classify_into_slot(controller, source, False, class_map)
-    controller._on_layer_visibility_changed(1, False)  # fade a class in low-res only
-
-    # Switch to high-res, which has never been classified.
-    source.is_super_resolution_active = True
+    source.is_super_resolution_active = high
+    source.data = _ShownImage(4, 6) if high else _ShownImage(2, 3)
     controller.refresh_display()
-    assert len(layer_panel._rows) == 0
 
-    # Switch back to low-res: its rows and visibility choice must be intact.
-    source.is_super_resolution_active = False
-    controller.refresh_display()
+
+def test_one_classification_follows_the_displayed_resolution(qtbot):
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    source.data = _ShownImage(2, 3)
+    _classify(controller, source, False, _LOW)
+    base = controller._current_slot.base_result
+
+    _show(controller, source, True)
+    slot = controller._current_slot
+    assert slot.base_result is base  # stored once, never copied per version
+    np.testing.assert_array_equal(slot.result.class_map, _LOW.repeat(2, 0).repeat(2, 1))
+    assert slot.active_data is source.data
     assert len(layer_panel._rows) == 3
-    assert not layer_panel._rows[1]._toggle.isChecked()
+
+    _show(controller, source, False)
+    np.testing.assert_array_equal(controller._current_slot.result.class_map, _LOW)
 
 
-def test_refresh_display_restores_global_opacity_and_outline_mode(qtbot):
+def test_layer_settings_are_shared_between_resolutions(qtbot):
     controller, viewer, layer_panel, source = _make_controller(qtbot)
-    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
-    _classify_into_slot(controller, source, False, class_map)
+    source.data = _ShownImage(2, 3)
+    _classify(controller, source, False, _LOW)
+    _show(controller, source, True)
+    controller._on_layer_visibility_changed(1, False)
     controller._on_global_opacity_changed(0.6)
     controller._on_outline_mode_changed(True)
 
-    source.is_super_resolution_active = True
-    controller.refresh_display()
-    assert layer_panel._global_opacity_slider.value() == 100
-    assert not layer_panel._outline_toggle_button.isChecked()
-
-    source.is_super_resolution_active = False
-    controller.refresh_display()
+    _show(controller, source, False)
+    assert controller._current_slot.layers.visible_class_ids == (0, 2)
+    assert not layer_panel._rows[1]._toggle.isChecked()
     assert layer_panel._global_opacity_slider.value() == 60
     assert layer_panel._outline_toggle_button.isChecked()
 
 
-def test_clear_super_resolution_result_only_discards_the_high_res_slot(qtbot):
+def test_a_high_res_classification_is_shown_on_the_original_too(qtbot):
     controller, viewer, layer_panel, source = _make_controller(qtbot)
-    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
-    _classify_into_slot(controller, source, False, class_map)
-    _classify_into_slot(controller, source, True, class_map)
+    source.data = _ShownImage(4, 6)
+    _classify(controller, source, True, _LOW.repeat(2, 0).repeat(2, 1))
 
-    controller.clear_super_resolution_result()
-
-    assert controller._slots[True].result is None
-    assert controller._slots[True].layers is None
-    assert controller._slots[False].result is not None
-    assert controller._slots[False].layers is not None
+    _show(controller, source, False)
+    np.testing.assert_array_equal(controller._current_slot.result.class_map, _LOW)
 
 
-def test_clear_result_discards_both_resolution_slots(qtbot):
+def test_a_result_arriving_after_a_toggle_fits_the_shown_image(qtbot):
     controller, viewer, layer_panel, source = _make_controller(qtbot)
-    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
-    _classify_into_slot(controller, source, False, class_map)
-    _classify_into_slot(controller, source, True, class_map)
+    # Launched on the original, but the 2x image is shown when it lands.
+    source.data = _ShownImage(4, 6)
+    _classify(controller, source, True, _LOW)
+    assert controller._current_slot.result.class_map.shape == (4, 6)
+    assert len(layer_panel._rows) == 3
+
+
+def test_annotations_and_outlines_are_stored_in_original_pixels(qtbot):
+    from PyQt6.QtCore import QRectF
+    from core import Anchor, AnnotationKind, VectorMask, VectorPath
+
+    def square(x, y, size):
+        return VectorPath((
+            Anchor(x, y), Anchor(x + size, y), Anchor(x + size, y + size), Anchor(x, y + size)
+        ))
+
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    source.data = _ShownImage(2, 3)
+    _classify(controller, source, False, _LOW)
+    _show(controller, source, True)
+
+    viewer.annotationShapeDrawn.emit(AnnotationKind.RECTANGLE, QRectF(2, 2, 4, 2))
+    (layer,) = controller._annotation_slot.layers.layers
+    assert (layer.x, layer.y, layer.width, layer.height) == (1, 1, 2, 1)
+    (shown,) = viewer._annotation_layers
+    assert (shown.x, shown.y, shown.width, shown.height) == (2, 2, 4, 2)
+
+    viewer.vectorMaskEdited.emit(0, VectorMask((square(0, 0, 4),)), True)
+    stored = controller._current_slot.vectors.get(0).paths[0].anchors
+    assert max(anchor.x for anchor in stored) == 2
+    _show(controller, source, False)
+    assert (controller._current_slot.result.class_map == 0).sum() == 4
+
+
+def test_clear_result_discards_classes_and_annotations(qtbot):
+    from PyQt6.QtCore import QRectF
+    from core import AnnotationKind
+
+    controller, viewer, layer_panel, source = _make_controller(qtbot)
+    _classify(controller, source, False, _LOW)
+    viewer.annotationShapeDrawn.emit(AnnotationKind.RECTANGLE, QRectF(0, 0, 1, 1))
 
     controller.clear_result()
 
-    assert controller._slots[False].result is None
-    assert controller._slots[True].result is None
-    assert len(layer_panel._rows) == 0
-
-
-def test_a_completed_worker_does_not_overwrite_the_slot_toggled_away_from(qtbot):
-    """A result must land in the slot active at launch, not at completion."""
-
-    controller, viewer, layer_panel, source = _make_controller(qtbot)
-    class_map = np.array([[0, 0, 1], [1, 2, 2]], dtype=np.int32)
-
-    # Launch while low-res is active...
-    source.is_super_resolution_active = False
-    controller._pending_slot_key = False
-    controller._slots[False].active_data = source.data
-    # ...but the user flips to high-res before the worker's result arrives.
-    source.is_super_resolution_active = True
-
-    controller._on_result(_make_unsupervised_result(class_map))
-
-    assert controller._slots[False].result is not None
-    assert controller._slots[True].result is None
-    # The currently-active (high-res) panel/viewer must not have been
-    # disturbed by a result that belongs to the other resolution.
+    assert controller._current_slot.result is None
+    assert not controller._annotation_slot.layers.layers
     assert len(layer_panel._rows) == 0
 
 
@@ -753,7 +731,7 @@ def test_controller_populates_panel_with_class_means(qtbot):
     controller, viewer, layer_panel, source = _make_controller(qtbot)
     controller.set_visualization_results(results)
 
-    _classify_into_slot(controller, source, False, class_map)
+    _classify(controller, source, False, class_map)
 
     html = layer_panel._rows[2]._means_label.text()
     assert "NDVI: 0.900" in html
@@ -770,7 +748,7 @@ def test_new_visualization_results_rebuild_cached_means(qtbot):
             VisualizationMode.NDVI, display, np.full((2, 3), 0.25, dtype=np.float32)
         )}
     )
-    _classify_into_slot(controller, source, False, class_map)
+    _classify(controller, source, False, class_map)
 
     controller.set_visualization_results(
         {VisualizationMode.NDVI: _make_visualization(

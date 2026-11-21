@@ -346,6 +346,24 @@ class VectorMask:
     def added(self, path: VectorPath) -> "VectorMask":
         return VectorMask((*self.paths, path))
 
+    def scaled(self, factor: float) -> "VectorMask":
+        """Return this mask ``factor`` times larger, about the image origin."""
+
+        if factor == 1:
+            return self
+        return VectorMask(tuple(
+            VectorPath(tuple(
+                replace(
+                    anchor,
+                    x=anchor.x * factor, y=anchor.y * factor,
+                    in_dx=anchor.in_dx * factor, in_dy=anchor.in_dy * factor,
+                    out_dx=anchor.out_dx * factor, out_dy=anchor.out_dy * factor,
+                )
+                for anchor in path.anchors
+            ))
+            for path in self.paths
+        ))
+
     def rasterize(self, shape: tuple[int, int]) -> np.ndarray:
         """Return an HxW boolean mask of the pixels whose centres are inside."""
 
@@ -456,6 +474,37 @@ def rasterize_polygons(
         np.add.at(toggles, (row, column), 1)
     inside = np.cumsum(toggles[:, :columns], axis=1, dtype=np.int64) % 2
     return inside.astype(bool)
+
+
+def resample_classification(
+    result: ClassificationResult, shape: tuple[int, int]
+) -> ClassificationResult:
+    """Return ``result`` resampled (nearest pixel) to an image of ``shape``.
+
+    Lets one stored classification follow the displayed image between its
+    original and Super-Resolution sizes; class IDs and metadata are kept.
+    """
+
+    class_map = np.asarray(result.class_map)
+    if class_map.shape == tuple(shape):
+        return result
+    rows, columns = (int(value) for value in shape)
+    if rows <= 0 or columns <= 0:
+        raise ClassificationError("Cannot resample a classification to an empty image.")
+    row_index = np.arange(rows) * class_map.shape[0] // rows
+    column_index = np.arange(columns) * class_map.shape[1] // columns
+    resampled = np.ascontiguousarray(class_map[np.ix_(row_index, column_index)])
+    id_array = np.asarray(_result_class_ids(result), dtype=resampled.dtype)[:, None, None]
+    one_hot_masks = (resampled[None, :, :] == id_array).astype(np.uint8)
+    counts = one_hot_masks.reshape(len(id_array), -1).sum(axis=1, dtype=np.int64)
+    for array in (resampled, one_hot_masks, counts):
+        array.setflags(write=False)
+    return replace(
+        result,
+        class_map=resampled,
+        one_hot_masks=one_hot_masks,
+        class_pixel_counts=counts,
+    )
 
 
 def apply_vector_masks(

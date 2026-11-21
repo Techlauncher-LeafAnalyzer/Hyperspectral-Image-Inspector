@@ -86,8 +86,7 @@ def test_selection_outline_and_handles_are_never_exported(qtbot):
 
 
 def _annotate_and_save(window, tmp_path, file_dialog, style):
-    window.tabWidget.setCurrentWidget(window.Classification)
-    window.classificationViewer.annotationShapeDrawn.emit(
+    window.viewer.annotationShapeDrawn.emit(
         AnnotationKind.RECTANGLE, QRectF(1, 1, 4, 4)
     )
     layer = window._classification_controller._annotation_slot.layers.layers[-1]
@@ -98,7 +97,7 @@ def _annotate_and_save(window, tmp_path, file_dialog, style):
     return np.array(Image.open(target).convert("RGB"))
 
 
-def test_save_image_includes_annotations_on_the_classification_tab(
+def test_save_image_includes_annotations(
     loaded_window, tmp_path, file_dialog
 ):
     saved = _annotate_and_save(loaded_window, tmp_path, file_dialog, _solid(RED))
@@ -108,34 +107,19 @@ def test_save_image_includes_annotations_on_the_classification_tab(
     assert not np.array_equal(saved, plain)
 
 
-def test_save_image_respects_hidden_annotations_and_other_tabs(
-    loaded_window, tmp_path, file_dialog
-):
+def test_save_image_respects_hidden_annotations(loaded_window, tmp_path, file_dialog):
     window = loaded_window
-    window.tabWidget.setCurrentWidget(window.Classification)
-    window.classificationViewer.annotationShapeDrawn.emit(
-        AnnotationKind.RECTANGLE, QRectF(1, 1, 4, 4)
-    )
+    window.viewer.annotationShapeDrawn.emit(AnnotationKind.RECTANGLE, QRectF(1, 1, 4, 4))
     controller = window._classification_controller
     layers = controller._annotation_slot.layers
     layers.set_style(layers.layers[-1].layer_id, _solid(RED))
 
-    # Only the Classification tab's save carries its annotations.
-    window.tabWidget.setCurrentWidget(window.tabWidget.widget(0))
-    other = tmp_path / "other.png"
-    file_dialog.save_return = (str(other), "")
-    window.actionSaveImage.trigger()
-    expected = window._visualization_results[window._active_visualization_mode].display_rgb
-    assert np.array_equal(np.array(Image.open(other).convert("RGB")), expected)
-
-    window.tabWidget.setCurrentWidget(window.Classification)
     layers.set_visible(layers.layers[-1].layer_id, False)
     hidden = tmp_path / "hidden.png"
     file_dialog.save_return = (str(hidden), "")
     window.actionSaveImage.trigger()
-    assert np.array_equal(
-        np.array(Image.open(hidden).convert("RGB")), window._display_data().rgb_array
-    )
+    expected = window._visualization_results[window._active_visualization_mode].display_rgb
+    assert np.array_equal(np.array(Image.open(hidden).convert("RGB")), expected)
 
 
 def test_save_image_after_classification_draws_annotations_over_the_class_colours(
@@ -146,7 +130,6 @@ def test_save_image_after_classification_draws_annotations_over_the_class_colour
     window.maxIterationsEdit.setText("3")
     window.unsupervisedClassifyButton.click()
     qtbot.waitUntil(lambda: not window._classification_controller.is_running(), timeout=5000)
-    window.tabWidget.setCurrentWidget(window.Classification)
     classified = window._classification_controller.composited_rgb()
     assert classified is not None
 

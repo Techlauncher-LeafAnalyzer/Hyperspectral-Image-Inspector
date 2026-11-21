@@ -203,7 +203,7 @@ def test_stripe_fills_space_left_of_the_image(shown_window, qtbot):
     assert not logo.pixmap().isNull()
     logo_top = logo.mapTo(window, QtCore.QPoint()).y()
     assert logo_top == STRIPE_GAP
-    assert window.tabWidget.mapTo(window, QtCore.QPoint()).y() == STRIPE_GAP
+    assert window.canvas.mapTo(window, QtCore.QPoint()).y() == STRIPE_GAP
 
     # Buttons: an even gap to the window edge and to the image area.
     button = window.superResolutionSwitch

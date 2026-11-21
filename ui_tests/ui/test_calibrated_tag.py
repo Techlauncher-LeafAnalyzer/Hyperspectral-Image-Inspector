@@ -23,12 +23,9 @@ def test_calibration_switch_shows_on_all_pages_and_clears_with_reference_or_sour
     window.calibrateButton.click()
     qtbot.waitUntil(lambda: not window._calibration_controller.is_running())
     (badge,) = badges
-    for page in (window.Visualization, window.Calibration, window.Classification,
-                 window.SuperResolution):
-        window.tabWidget.setCurrentWidget(page)
-        qtbot.waitUntil(lambda: badge.isVisible())
-        assert window.toolWindowStripe.isAncestorOf(badge)
-        assert badge.isEnabled() and badge.isChecked()
+    qtbot.waitUntil(lambda: badge.isVisible())
+    assert window.toolWindowStripe.isAncestorOf(badge)
+    assert badge.isEnabled() and badge.isChecked()
     window.referenceFileButton.click()
     assert all(not badge.isEnabled() for badge in badges)
     window.calibrateButton.click()

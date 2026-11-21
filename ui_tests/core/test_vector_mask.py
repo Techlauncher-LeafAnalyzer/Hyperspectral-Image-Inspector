@@ -15,6 +15,7 @@ from core import (
     VectorPath,
     VectorTraceOptions,
     apply_vector_masks,
+    resample_classification,
     trace_mask,
 )
 from core.classification_model import UnsupervisedClassificationResult
@@ -218,3 +219,27 @@ def test_apply_vector_masks_adds_drawn_classes():
     assert ClassificationLayerModel(drawn).class_ids == (0, 1, 2, 3)
     with pytest.raises(ClassificationError):
         apply_vector_masks(result, {-1: VectorMask()})
+
+
+def test_scaled_mask_rasterizes_to_the_scaled_region():
+    mask = VectorMask((VectorPath((Anchor(1, 1, out_dx=1), Anchor(3, 1), Anchor(3, 3), Anchor(1, 3))),))
+    doubled = mask.scaled(2)
+    assert doubled.paths[0].anchors[0] == Anchor(2, 2, out_dx=2)
+    np.testing.assert_array_equal(
+        doubled.rasterize((8, 8)), mask.rasterize((4, 4)).repeat(2, 0).repeat(2, 1)
+    )
+    assert doubled.scaled(0.5) == mask
+    assert mask.scaled(1) is mask
+
+
+def test_resample_classification_round_trips_between_sizes():
+    result = _result(np.array([[0, 1, 1], [0, 0, 1]], dtype=np.int32))
+    up = resample_classification(result, (4, 6))
+    np.testing.assert_array_equal(up.class_map, result.class_map.repeat(2, 0).repeat(2, 1))
+    assert up.class_pixel_counts.tolist() == [12, 12]
+    assert up.one_hot_masks.shape == (2, 4, 6)
+    down = resample_classification(up, (2, 3))
+    np.testing.assert_array_equal(down.class_map, result.class_map)
+    assert resample_classification(result, (2, 3)) is result
+    with pytest.raises(ClassificationError):
+        resample_classification(result, (0, 3))

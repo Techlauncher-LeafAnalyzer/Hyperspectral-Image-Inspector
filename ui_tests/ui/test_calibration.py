@@ -156,10 +156,8 @@ def test_reference_selection_enables_background_calibration_and_renders_result(
     np.testing.assert_array_equal(
         window._hsi_data.read_bands(range(window._hsi_data.bands)), raw
     )
-    assert window.calibrationViewer.has_photo()
-    np.testing.assert_array_equal(
-        window.calibrationViewer.rgb, result.data.rgb_array
-    )
+    assert window.viewer.has_photo()
+    np.testing.assert_array_equal(window.viewer.rgb, result.data.rgb_array)
     assert window.calibrateButton.isEnabled()
     assert window.calibrateButton.text() == "Calibrate"
     assert window.actionLoadImage.isEnabled()
@@ -252,7 +250,7 @@ def test_calibration_can_be_cancelled_without_replacing_the_view(
     monkeypatch.setattr(
         window._calibration_controller.service, "calibrate", wait_for_cancel
     )
-    original_rgb = window.calibrationViewer.rgb.copy()
+    original_rgb = window.viewer.rgb.copy()
     window.calibrateButton.click()
     qtbot.waitUntil(started.is_set)
 
@@ -260,7 +258,7 @@ def test_calibration_can_be_cancelled_without_replacing_the_view(
     _wait_for_calibration(qtbot, window)
 
     assert window._calibration_controller.result is None
-    np.testing.assert_array_equal(window.calibrationViewer.rgb, original_rgb)
+    np.testing.assert_array_equal(window.viewer.rgb, original_rgb)
     assert "cancelled" in window._calibration_controller.last_error.lower()
 
 
@@ -286,12 +284,12 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
     assert result is not None
 
     rgb = tuple(int(value) for value in result.data.rgb_array[1, 2])
-    assert window.calibrationViewer.pixel_value_provider(1, 2) == {
-        "Calibrated RGB": PixelValueEntry(value=rgb, color=rgb)
-    }
+    assert window.viewer.pixel_value_provider(1, 2)["RGB"] == PixelValueEntry(
+        value=rgb, color=rgb
+    )
 
     inspector = window._spectrum_controller.inspector
-    window.calibrationViewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
     assert len(inspector.pinned_spectra()) == 1
     np.testing.assert_allclose(
         inspector.pinned_spectra()[0].values, result.data.read_pixel(1, 2), atol=1e-6
@@ -299,12 +297,10 @@ def test_calibrated_spectrum_hover_and_export_use_calibrated_data(
 
     output = tmp_path / "calibrated.png"
     file_dialog.save_return = (str(output), "")
-    window.tabWidget.setCurrentWidget(window.Calibration)
     window.actionSaveImage.trigger()
     with Image.open(output) as image:
         np.testing.assert_array_equal(np.asarray(image), result.data.rgb_array)
 
-    window.tabWidget.setCurrentWidget(window.Visualization)
     assert window._display_data() is result.data
     assert window.findChild(QtCore.QObject, "calibrationSwitch") is window.calibrationSwitch
     window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
@@ -339,8 +335,7 @@ def test_calibration_tracks_crop_from_any_tab_and_clears_history(
     initial_result = window._calibration_controller.result
     assert initial_result is not None
 
-    # Crop from the Calibration tab itself.
-    window.calibrationViewer.cropRequested.emit(QtCore.QRectF(0, 0, 6, 6))
+    window.viewer.cropRequested.emit(QtCore.QRectF(0, 0, 6, 6))
     _wait_for_calibration(qtbot, window)
     calibrated = window._calibration_controller.result
     assert calibrated is not None and calibrated is not initial_result
@@ -356,7 +351,7 @@ def test_calibration_tracks_crop_from_any_tab_and_clears_history(
     assert window._calibration_controller.result is calibrated
     assert calibrated.data.shape == (6, 6, bands)
 
-    # Cropping from another page also rebuilds the reference geometry.
+    # Cropping again rebuilds the reference geometry again.
     window.viewer.cropRequested.emit(QtCore.QRectF(1, 1, 4, 4))
     _wait_for_calibration(qtbot, window)
     calibrated = window._calibration_controller.result
@@ -372,12 +367,10 @@ def test_calibration_tracks_crop_from_any_tab_and_clears_history(
     window._redo_crop()
     assert window._calibration_controller.result is calibrated
     assert window._hsi_data.shape == (4, 4, bands)
-    assert window.calibrationViewer.rgb.shape == (4, 4, 3)
+    assert window.viewer.rgb.shape == (4, 4, 3)
 
 
-def test_calibration_keeps_uncalibrated_work_under_before(
-    loaded_window, file_dialog, tmp_path, qtbot
-):
+def test_calibration_keeps_classes_and_annotations(loaded_window, file_dialog, tmp_path, qtbot):
     from core import AnnotationKind
 
     window = loaded_window
@@ -386,11 +379,9 @@ def test_calibration_keeps_uncalibrated_work_under_before(
     window.maxIterationsEdit.setText("3")
     window.unsupervisedClassifyButton.click()
     qtbot.waitUntil(lambda: controller._thread is None)
-    before_result = controller._slots[False].result
-    assert before_result is not None
-    window.classificationViewer.annotationShapeDrawn.emit(
-        AnnotationKind.RECTANGLE, QtCore.QRectF(1, 1, 3, 3)
-    )
+    base = controller._current_slot.base_result
+    assert base is not None
+    window.viewer.annotationShapeDrawn.emit(AnnotationKind.RECTANGLE, QtCore.QRectF(1, 1, 3, 3))
     before_annotations = controller._annotation_slot.layers.layers
     assert before_annotations
 
@@ -401,26 +392,30 @@ def test_calibration_keeps_uncalibrated_work_under_before(
     qtbot.waitUntil(lambda: window.calibrateButton.isEnabled())
     window.calibrateButton.click()
     _wait_for_calibration(qtbot, window)
-    assert window._calibration_controller.result is not None
-    # "After Calibration" starts empty...
-    assert controller._current_slot.result is None
-    assert not controller._annotation_slot.layers.layers
-    window.classificationViewer.annotationShapeDrawn.emit(
-        AnnotationKind.ELLIPSE, QtCore.QRectF(0, 0, 2, 2)
-    )
-    # ...while "Before Calibration" keeps the earlier classification and shapes.
-    switch = window._resolution_switches.calibration_switches[0]
-    switch.click()
-    assert controller._current_slot.result is before_result
+    calibrated = window._calibration_controller.result
+    assert calibrated is not None
+    # Calibrating carries the classes and shapes over to the calibrated image.
+    slot = controller._current_slot
+    assert slot.base_result is base and slot.active_data is calibrated.data
+    np.testing.assert_array_equal(slot.result.class_map, base.class_map)
     assert controller._annotation_slot.layers.layers == before_annotations
     assert window.classificationLayerPanel._rows
+    window.viewer.annotationShapeDrawn.emit(AnnotationKind.ELLIPSE, QtCore.QRectF(0, 0, 2, 2))
+    both = controller._annotation_slot.layers.layers
+    assert len(both) == 2
 
-    # Replacing the references drops only the calibrated work.
+    # Comparing Before/After shows the same work on either image.
+    switch = window._resolution_switches.calibration_switches[0]
+    switch.click()
+    assert controller._current_slot.base_result is base
+    assert controller._current_slot.active_data is window._hsi_data
+    assert controller._annotation_slot.layers.layers == both
+
+    # Replacing the references keeps it too.
     switch.click()
     window.referenceFileButton.click()
-    assert controller._slots[False].result is before_result
-    assert all(slot.result is None for slot in controller._calibrated_slots.values())
-    assert controller._annotation_slot.layers.layers == before_annotations
+    assert controller._current_slot.base_result is base
+    assert controller._annotation_slot.layers.layers == both
 
 
 def test_calibration_comparison_reuses_results_and_keeps_view_state(
@@ -454,9 +449,7 @@ def test_calibration_comparison_reuses_results_and_keeps_view_state(
     assert window._calibration_controller.result is calibrated
     assert all(not switch.isChecked() for switch in switches)
     assert "Original:" in window.superResStatusText.text()
-    for viewer in window._all_viewers():
-        np.testing.assert_array_equal(viewer.rgb, raw.rgb_array)
-    assert "Calibrated RGB" not in window.calibrationViewer.pixel_value_provider(1, 2)
+    np.testing.assert_array_equal(window.viewer.rgb, raw.rgb_array)
     before_previews = window._visualization_results
 
     # Once both previews exist, comparisons must neither read/render the cube
@@ -494,12 +487,10 @@ def test_before_calibration_spectrum_export_and_reset_follow_selection(
     switch = window._resolution_switches.calibration_switches[0]
     switch.click()
     inspector = window._spectrum_controller.inspector
-    for viewer in (window.viewer, window.calibrationViewer, window.superResViewer):
-        viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
-        np.testing.assert_allclose(inspector.pinned_spectra()[-1].values, raw.read_pixel(1, 2))
+    window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(2, 1))
+    np.testing.assert_allclose(inspector.pinned_spectra()[-1].values, raw.read_pixel(1, 2))
     output = tmp_path / "before.png"
     file_dialog.save_return = (str(output), "")
-    window.tabWidget.setCurrentWidget(window.Calibration)
     window.actionSaveImage.trigger()
     with Image.open(output) as image:
         np.testing.assert_array_equal(np.asarray(image), raw.rgb_array)
@@ -517,7 +508,7 @@ def test_before_calibration_spectrum_export_and_reset_follow_selection(
     assert all(not switch.isEnabled() for switch in window._resolution_switches.calibration_switches)
 
 
-def test_classification_layers_are_independent_before_and_after_calibration(
+def test_class_layers_carry_across_calibration_states(
     loaded_window, file_dialog, tmp_path, qtbot
 ):
     window = loaded_window
@@ -532,23 +523,13 @@ def test_classification_layers_are_independent_before_and_after_calibration(
     window.unsupervisedClassifyButton.click()
     qtbot.waitUntil(lambda: not window._classification_controller.is_running())
     controller = window._classification_controller
-    after_slot = controller._current_slot
+    base = controller._current_slot.base_result
     window.classificationLayerPanel._rows[1]._toggle.setChecked(False)
     switch = window._resolution_switches.calibration_switches[0]
-    switch.click()
-    assert controller._current_slot.result is None
-    assert not window.classificationLayerPanel._rows
-    np.testing.assert_array_equal(window.classificationViewer.rgb, window._hsi_data.rgb_array)
-    window.unsupervisedClassifyButton.click()
-    assert not switch.isEnabled()
-    qtbot.waitUntil(lambda: not controller.is_running())
-    before_slot = controller._current_slot
-    assert before_slot is not after_slot
-    assert before_slot.active_data is window._hsi_data
-    assert before_slot.result is not None
-    switch.click()
-    assert controller._current_slot is after_slot
-    assert not window.classificationLayerPanel._rows[1]._toggle.isChecked()
-    switch.click()
-    assert controller._current_slot is before_slot
-    assert window.classificationLayerPanel._rows[1]._toggle.isChecked()
+    for _ in range(2):
+        switch.click()
+        # One set of layers: the same classes, with the same visibility.
+        assert controller._current_slot.base_result is base
+        assert controller._current_slot.active_data is window._display_data()
+        assert not window.classificationLayerPanel._rows[1]._toggle.isChecked()
+        assert window.classificationLayerPanel._rows[0]._toggle.isChecked()

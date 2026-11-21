@@ -1,4 +1,4 @@
-"""Right workflow stripe: pill tool windows that replace the main tabs."""
+"""Right workflow stripe: pill tool windows over the one image canvas."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import pytest
 from PyQt6 import QtCore, QtWidgets
 
 from ui.tool_windows import ToolStripeButton
+from ui.viewer import HSIViewer
 
 
 @pytest.fixture
@@ -27,12 +28,9 @@ def test_tabs_are_replaced_by_pills_on_the_right_edge(shown_window, qtbot):
     assert window.toolBarArea(stripe) == QtCore.Qt.ToolBarArea.RightToolBarArea
     assert stripe.mapTo(window, QtCore.QPoint(stripe.width(), 0)).x() == window.width()
     assert not stripe.logo.isVisible()
-    # The main tab row is gone; the page stack stays for the canvas views.
-    assert window.tabWidget.tabBar().isHidden()
-    assert [window.tabWidget.widget(i) for i in range(window.tabWidget.count())] == [
-        window.Visualization, window.SuperResolution, window.Calibration,
-        window.Classification,
-    ]
+    # No tabs or per-workflow pages: one viewer shows the image.
+    assert not hasattr(window, "tabWidget")
+    assert window.findChildren(HSIViewer) == [window.viewer]
     def top(widget):
         return widget.mapTo(window, QtCore.QPoint()).y()
 
@@ -74,30 +72,26 @@ def test_dividers_set_apart_segment_and_batch(shown_window):
     assert top(window.segmentationPill) < top(second) < top(tools["batch"].button)
 
 
-def test_nothing_open_at_start_and_visualization_is_current(shown_window):
-    tools = _tools(shown_window)
-    assert not any(tool.is_open() or tool.is_peeking() for tool in tools.values())
-    assert [name for name, tool in tools.items() if tool.button.is_current()] == ["visualization"]
-    assert shown_window.tabWidget.currentWidget() is shown_window.Visualization
-
-
-@pytest.mark.parametrize(
-    "name, page_name",
-    [
-        ("visualization", "Visualization"),
-        ("superResolution", "SuperResolution"),
-        ("calibration", "Calibration"),
-    ],
-)
-def test_opening_a_pill_shows_its_view_and_moves_the_marker(shown_window, name, page_name):
+def test_nothing_open_at_start(shown_window):
     window = shown_window
     tools = _tools(window)
-    window.tabWidget.setCurrentWidget(window.Calibration if name != "calibration" else window.Visualization)
+    assert not any(tool.is_open() or tool.is_peeking() for tool in tools.values())
+    # No pill is bound to a view, so none carries the current-view marker.
+    assert not any(tool.button.is_current() for tool in tools.values())
+    assert window.classificationLayerPanel.isHidden() and window.toolPalette.isHidden()
+
+
+@pytest.mark.parametrize("name", ["visualization", "superResolution", "calibration"])
+def test_opening_a_pill_overlays_its_panel_on_the_canvas(shown_window, name):
+    window = shown_window
+    tools = _tools(window)
+    window.segmentationPill.click()
     tools[name].button.click()
     assert tools[name].is_open() and tools[name].host.isVisible()
-    assert window.tabWidget.currentWidget() is getattr(window, page_name)
-    assert [n for n, tool in tools.items() if tool.button.is_current()] == [name]
     assert [n for n, tool in tools.items() if tool.is_open()] == [name]
+    # The panel floats over the canvas; the inspector beside it stays.
+    assert tools[name].host.parentWidget() is window
+    assert window.classificationLayerPanel.isVisible() and window.viewer.isVisible()
     # The left stripe's tools are independent of the right side.
     window.spectrumTool.show()
     assert tools[name].is_open() and window.spectrumTool.is_open()
@@ -110,9 +104,7 @@ def test_batch_panel_keeps_the_current_view(shown_window):
     tools["batch"].button.click()
     # The Batch dock and the Segmentation inspector coexist.
     assert tools["batch"].is_open() and window.classificationLayerPanel.isVisible()
-    assert window.tabWidget.currentWidget() is window.Classification
-    assert window.segmentationPill.is_current() and window.segmentationPill.isChecked()
-    assert not tools["batch"].button.is_current()
+    assert window.segmentationPill.isChecked()
     assert tools["batch"].panel.isAncestorOf(window.batchRunButton)
 
 
@@ -126,30 +118,24 @@ def test_bottom_bars_moved_into_their_panels(shown_window):
         "calibration": (window.darkFileButton, window.referenceFileEdit, window.calibrateButton),
         "batch": (window.batchFileList, window.batchRunButton),
     }
-    pages = (window.Visualization, window.SuperResolution, window.Calibration,
-             window.Classification)
     for name, widgets in moved.items():
         for widget in widgets:
             assert tools[name].panel.isAncestorOf(widget), (name, widget.objectName())
-            assert not any(page.isAncestorOf(widget) for page in pages)
+            assert not window.canvas.isAncestorOf(widget)
     # The classifier form joined the Segmentation inspector.
     for widget in (window.classificationModeTabs, window.comboBox,
                    window.unsupervisedClassifyButton, window.pushButton_2):
         assert window.classificationLayerPanel.isAncestorOf(widget)
-    # Each view page now holds just its canvas (plus Segmentation's toolbox
-    # and inspector, and Visualization's mode caption).
-    def page_items(page):
-        layout = page.layout()
-        return [layout.itemAt(i).widget() for i in range(layout.count())]
-
-    assert page_items(window.Visualization) == [
-        window.visualizationStack, window.visualizationModeCaption,
+    # The canvas holds the toolbox, the image (and its mode caption) and the
+    # inspector.
+    layout = window.canvas.layout()
+    items = [layout.itemAt(i) for i in range(layout.count())]
+    assert [item.widget() for item in items] == [
+        window.toolPalette, None, window.classificationLayerPanel,
     ]
-    assert page_items(window.SuperResolution) == [window.superResViewer]
-    assert page_items(window.Calibration) == [window.calibrationViewer]
-    assert page_items(window.Classification) == [
-        window.classificationLayerPanel.annotation_page.tool_palette,
-        window.classificationViewer, window.classificationLayerPanel,
+    image = items[1].layout()
+    assert [image.itemAt(i).widget() for i in range(image.count())] == [
+        window.visualizationStack, window.visualizationModeCaption,
     ]
 
 
@@ -164,33 +150,14 @@ def test_panel_content_is_never_clipped(shown_window):
         assert panel.body.window() is tool.panel.window()
 
 
-def test_popped_out_panel_drives_the_view_when_activated(shown_window):
-    window = shown_window
-    tools = _tools(window)
+def test_popped_out_panel_stays_open_beside_another(shown_window):
+    tools = _tools(shown_window)
     calibration = tools["calibration"]
     calibration.set_floating(True)
-    assert calibration.window.isVisible() and window.tabWidget.currentWidget() is window.Calibration
+    assert calibration.window.isVisible()
     # Opening another panel leaves the popped-out one open.
     tools["visualization"].show()
-    assert calibration.is_open()
-    assert window.tabWidget.currentWidget() is window.Visualization
-    calibration.window.activated.emit()
-    assert window.tabWidget.currentWidget() is window.Calibration
-    assert calibration.button.is_current() and not tools["visualization"].button.is_current()
-
-
-def test_focus_into_a_panel_switches_the_view(shown_window):
-    window = shown_window
-    tools = _tools(window)
-    tools["visualization"].set_floating(True)
-    window.segmentationPill.click()
-    assert window.tabWidget.currentWidget() is window.Classification
-    tools["visualization"]._on_focus_changed(None, window.modeNDVI)
-    assert window.tabWidget.currentWidget() is window.Visualization
-    assert not window.segmentationPill.isChecked()
-    # Focus elsewhere (the canvas) changes nothing.
-    tools["calibration"]._on_focus_changed(None, window.viewer)
-    assert window.tabWidget.currentWidget() is window.Visualization
+    assert calibration.is_open() and tools["visualization"].is_open()
 
 
 def test_right_stripe_gap_matches_the_left(shown_window, qtbot):
@@ -246,14 +213,12 @@ from ui.tool_windows import FLYOUT_HIDE_DELAY_MS  # noqa: E402
 def test_hover_peeks_a_compact_panel_until_the_pointer_leaves(shown_window, qtbot, name):
     window = shown_window
     tool = _tools(window)[name]
-    window.tabWidget.setCurrentWidget(window.Classification)
     tool.button.hoverChanged.emit(True)
     assert tool.is_peeking() and tool.host.isVisible()
-    # A peek is not "open": no highlight, and the canvas view stays put.
+    # A peek is not "open": no highlight.
     assert not tool.is_open() and not tool.button.isChecked()
-    assert window.tabWidget.currentWidget() is window.Classification
     # Small: sized to its content, not the full column.
-    assert tool.host.height() < window.tabWidget.height() * 0.6
+    assert tool.host.height() < window.canvas.height() * 0.6
     # Moving onto the flyout keeps it.
     tool.button.hoverChanged.emit(False)
     tool.host.hoverChanged.emit(True)
@@ -269,7 +234,6 @@ def test_clicking_the_pill_pins_the_flyout(shown_window, qtbot):
     tool.button.hoverChanged.emit(True)
     tool.button.click()
     assert tool.is_open() and not tool.is_peeking() and tool.button.isChecked()
-    assert window.tabWidget.currentWidget() is window.Calibration
     _leave(tool, qtbot)
     assert tool.host.isVisible()
     # Clicking again unpins and closes it.
@@ -286,7 +250,6 @@ def test_clicking_inside_a_peeking_flyout_pins_it(shown_window, qtbot):
     tools["superResolution"].button.hoverChanged.emit(True)
     tools["superResolution"]._on_focus_changed(None, window.runSuperResButton)
     assert tools["superResolution"].is_open()
-    assert window.tabWidget.currentWidget() is window.SuperResolution
     _leave(tools["superResolution"], qtbot)
     assert tools["superResolution"].host.isVisible()
     # One pinned flyout at a time.
@@ -359,29 +322,43 @@ def test_flyouts_clear_the_class_layer_inspector(shown_window):
 def test_segment_pill_toggles_the_inspector_and_keeps_results(shown_window):
     window = shown_window
     pill, inspector = window.segmentationPill, window.classificationLayerPanel
-    assert not pill.isChecked() and window.tabWidget.currentWidget() is window.Visualization
+    palette = window.toolPalette
+    assert not pill.isChecked() and inspector.isHidden() and palette.isHidden()
     # Not a hover pill: hovering shows nothing.
     assert not pill.receivers(pill.hoverChanged)
     pill.click()
-    assert window.tabWidget.currentWidget() is window.Classification
-    assert inspector.isVisible() and pill.isChecked() and pill.is_current()
+    assert inspector.isVisible() and palette.isVisible() and pill.isChecked()
+    # The toolbox sits at the image's left edge, the inspector at its right.
+    left = window.viewer.mapTo(window, QtCore.QPoint()).x()
+    assert palette.mapTo(window, QtCore.QPoint(palette.width(), 0)).x() <= left
+    assert inspector.mapTo(window, QtCore.QPoint()).x() >= left + window.viewer.width()
     inspector.set_mode("annotations")
     inspector.set_panel_width(360)
     window.classificationModeTabs.setCurrentWidget(window.unsupervisedClassificationTab)
-    # Second click: inspector gone, the Segmentation view (and results) stay.
+    # Second click: toolbox and inspector gone, the results stay on the canvas.
     pill.click()
-    assert inspector.isHidden() and not pill.isChecked()
-    assert window.tabWidget.currentWidget() is window.Classification and pill.is_current()
+    assert inspector.isHidden() and palette.isHidden() and not pill.isChecked()
     # Third click: back exactly as it was.
     pill.click()
     assert inspector.isVisible() and pill.isChecked()
     assert inspector.mode == "annotations" and inspector.panel_width == 360
     assert window.classificationModeTabs.currentWidget() is window.unsupervisedClassificationTab
-    # Switching to another view unselects the pill; clicking it returns.
+    # Other panels open over the canvas without hiding the inspector.
     _tools(window)["calibration"].show()
-    assert not pill.isChecked() and not pill.is_current()
-    pill.click()
-    assert window.tabWidget.currentWidget() is window.Classification and inspector.isVisible()
+    assert pill.isChecked() and inspector.isVisible()
+
+
+def test_hiding_the_toolbox_turns_off_the_drawing_tool(shown_window):
+    from core import AnnotationKind
+
+    window = shown_window
+    window.segmentationPill.click()
+    page = window.classificationLayerPanel.annotation_page
+    page._tool_buttons[AnnotationKind.RECTANGLE].click()
+    assert window.viewer._annotation_tool is AnnotationKind.RECTANGLE
+    window.segmentationPill.click()
+    assert window.viewer._annotation_tool is None
+    assert not any(button.isChecked() for button in page._tool_buttons.values())
 
 
 def test_inspector_fits_the_shown_classifier_method(shown_window, qtbot):

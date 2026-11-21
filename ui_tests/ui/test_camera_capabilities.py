@@ -82,9 +82,8 @@ def test_false_colour_preview_is_used_on_all_pages_and_can_be_saved(
     window.load_image_from_path(data.source_path)
     result = window._visualization_results[VisualizationMode.RGB]
     assert dict(result.band_indices) == {"red": 115, "green": 30, "blue": 223}
-    for viewer in window._all_viewers():
-        assert viewer.has_photo()
-        np.testing.assert_array_equal(viewer.rgb, result.display_rgb)
+    assert window.viewer.has_photo()
+    np.testing.assert_array_equal(window.viewer.rgb, result.display_rgb)
     path = tmp_path / "false-colour.png"
     file_dialog.save_return = (str(path), "")
     window.actionSaveImage.trigger()
@@ -203,7 +202,6 @@ def test_camera_capabilities_refresh_when_calibration_previews_are_cached(
         switch.click()
         assert refreshes and all(source is expected_source for source in refreshes)
         assert window._visualization_results is expected_previews
-        assert all(viewer.available_optional_indices == optional_indices
-                   for viewer in window._all_viewers())
+        assert window.viewer.available_optional_indices == optional_indices
         assert window.modeNDWI.isEnabled() == bool(optional_indices)
         assert window.modeNDVI.isEnabled() == (not optional_indices)

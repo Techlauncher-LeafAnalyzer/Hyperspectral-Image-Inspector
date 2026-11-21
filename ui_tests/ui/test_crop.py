@@ -106,16 +106,11 @@ def _wait_for_settled_viewport(qtbot, viewer) -> None:
             return
 
 
-@pytest.mark.parametrize("viewer_name", ["viewer", "superResViewer"])
-def test_crop_rescales_view_to_fit_the_cropped_image(loaded_window, qtbot, viewer_name):
+def test_crop_rescales_view_to_fit_the_cropped_image(loaded_window, qtbot):
     """Regression for LEAF-153: after a crop, the viewport must recompute
     fit-to-viewport for the new (smaller) image, not keep the pre-crop
     pan/zoom."""
-    viewer = getattr(loaded_window, viewer_name)
-    for index in range(loaded_window.tabWidget.count()):
-        if loaded_window._viewer_for_tab(index) is viewer:
-            loaded_window.tabWidget.setCurrentIndex(index)
-            break
+    viewer = loaded_window.viewer
     loaded_window.show()
     qtbot.waitExposed(loaded_window)
     _wait_for_settled_viewport(qtbot, viewer)

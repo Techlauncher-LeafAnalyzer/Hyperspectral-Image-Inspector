@@ -23,13 +23,13 @@ def _classify(window, qtbot):
     qtbot.waitUntil(lambda: not window._classification_controller.is_running(), timeout=10000)
 
 
-def test_hover_updates_live_trace_from_any_viewer(loaded_window, inspector):
+def test_hover_updates_live_trace(loaded_window, inspector):
     data = loaded_window._display_data()
-    for viewer in (loaded_window.viewer, loaded_window.classificationViewer):
-        viewer.pixelHovered.emit(3, 5)
-        np.testing.assert_array_equal(inspector._live.values, data.read_pixel(3, 5))
-        viewer.pixelHovered.emit(1, 2)
-        np.testing.assert_array_equal(inspector._live.values, data.read_pixel(1, 2))
+    viewer = loaded_window.viewer
+    viewer.pixelHovered.emit(3, 5)
+    np.testing.assert_array_equal(inspector._live.values, data.read_pixel(3, 5))
+    viewer.pixelHovered.emit(1, 2)
+    np.testing.assert_array_equal(inspector._live.values, data.read_pixel(1, 2))
 
 
 def test_follow_cursor_starts_off(loaded_window):
@@ -179,7 +179,6 @@ def test_similarity_mode_shows_angle_map_and_saves_it(
 
     output = tmp_path / "similarity.png"
     file_dialog.save_return = (str(output), "")
-    loaded_window.tabWidget.setCurrentWidget(loaded_window.Visualization)
     loaded_window.actionSaveImage.trigger()
     with Image.open(output) as image:
         np.testing.assert_array_equal(np.asarray(image)[..., :3], similarity.display_rgb)
@@ -209,7 +208,7 @@ def test_transform_and_export(loaded_window, inspector, tmp_path, monkeypatch):
     )
     inspector._export_button.click()
     lines = (tmp_path / "spectra.csv").read_text().splitlines()
-    assert lines[0] == 'wavelength_nm,"#1 · Pixel (3, 5) Visualization",Cursor'
+    assert lines[0] == 'wavelength_nm,"#1 · Pixel (3, 5)",Cursor'
     assert len(lines) == loaded_window._display_data().bands + 1
 
 
@@ -243,7 +242,7 @@ def test_series_can_be_hidden_selected_and_removed(loaded_window, inspector):
 
     # Untick hides from the plot and export, but keeps the list entry.
     items.item(0).setCheckState(Qt.CheckState.Unchecked)
-    assert "#1 · Pixel (0, 1) Visualization" not in inspector._series()
+    assert "#1 · Pixel (0, 1)" not in inspector._series()
     assert items.count() == 3
 
     # Selecting highlights; Remove deletes only the selection.
@@ -253,7 +252,7 @@ def test_series_can_be_hidden_selected_and_removed(loaded_window, inspector):
     assert inspector._remove_button.isEnabled()
     inspector._remove_button.click()
     labels = [pin.label for pin in inspector.pinned_spectra()]
-    assert labels == ["#1 · Pixel (0, 1) Visualization", "#3 · Pixel (0, 3) Visualization"]
+    assert labels == ["#1 · Pixel (0, 1)", "#3 · Pixel (0, 3)"]
     assert inspector.selected_series() is None
 
     # Clicking a plotted line selects it.
@@ -298,8 +297,7 @@ def test_classification_context_menu_offers_class_spectra(loaded_window):
         submenu = next(a.menu() for a in menu.actions() if a.text() == "Spectrum Analyzer")
         return {a.text().split("\t")[0] for a in submenu.actions() if a.text()}
 
-    assert "Add Class Spectra" in spectrum_actions(loaded_window.classificationViewer)
-    assert "Add Class Spectra" not in spectrum_actions(loaded_window.viewer)
+    assert "Add Class Spectra" in spectrum_actions(loaded_window.viewer)
 
 
 def _marker_numbers(viewer):
@@ -316,9 +314,8 @@ def test_pins_draw_numbered_markers_matching_their_spectra(loaded_window, inspec
 
     loaded_window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(5, 3))
     loaded_window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(1, 6))
-    # Every viewer showing the same cube marks both pins, numbered as listed.
-    for viewer in (loaded_window.viewer, loaded_window.classificationViewer):
-        assert _marker_numbers(viewer) == ["1", "2"]
+    # The canvas marks both pins, numbered as listed.
+    assert _marker_numbers(loaded_window.viewer) == ["1", "2"]
     first, second = loaded_window.viewer._pin_marker_items
     assert first.pos() == QtCore.QPointF(5.5, 3.5)  # centre of pixel (3, 5)
     pins = inspector.pinned_spectra()
@@ -336,18 +333,16 @@ def test_pins_draw_numbered_markers_matching_their_spectra(loaded_window, inspec
     assert loaded_window.viewer._pin_marker_items == []
 
 
-def test_markers_only_on_viewers_showing_the_pinned_cube(loaded_window, inspector, monkeypatch):
+def test_markers_only_while_the_canvas_shows_the_pinned_cube(
+    loaded_window, inspector, monkeypatch
+):
     loaded_window.viewer.spectrumPlotRequested.emit(QtCore.QPointF(5, 3))
-    other = object()
     controller = loaded_window._spectrum_controller
-    original = controller._data_for_viewer
-    monkeypatch.setattr(
-        controller, "_data_for_viewer",
-        lambda viewer: other if viewer is loaded_window.calibrationViewer else original(viewer),
-    )
     controller.refresh_markers()
     assert _marker_numbers(loaded_window.viewer) == ["1"]
-    assert loaded_window.calibrationViewer._pin_marker_items == []
+    monkeypatch.setattr(controller, "_data_for_viewer", lambda viewer: object())
+    controller.refresh_markers()
+    assert loaded_window.viewer._pin_marker_items == []
 
 
 def test_markers_survive_mode_switch_and_clear_on_crop(loaded_window, inspector):
@@ -402,7 +397,7 @@ def test_tiny_or_hidden_canvas_never_warns_about_layout(loaded_window, qtbot):
 def _draw_rectangle(window, x, y, width, height):
     from core import AnnotationKind
 
-    window.classificationViewer.annotationShapeDrawn.emit(
+    window.viewer.annotationShapeDrawn.emit(
         AnnotationKind.RECTANGLE, QtCore.QRectF(x, y, width, height)
     )
     layers = window._classification_controller._annotation_slot.layers.layers
@@ -441,7 +436,7 @@ def test_region_selection_survives_moving_the_shape(loaded_window, qtbot):
     rect = _draw_rectangle(window, 1, 1, 3, 3)
     panel = window.classificationLayerPanel
     panel._region_rows[rect.layer_id]._toggle.setChecked(False)
-    window.classificationViewer.annotationGeometryChanged.emit(rect.layer_id, 2, 2, 3, 3)
+    window.viewer.annotationGeometryChanged.emit(rect.layer_id, 2, 2, 3, 3)
     window._classification_controller._refresh_regions()
     assert not panel._region_rows[rect.layer_id].is_selected()
     assert "0 of 1 classes selected" in panel._summary_label.text()
@@ -528,10 +523,9 @@ def test_dragging_a_pin_moves_it_and_updates_its_spectrum(pinned_viewer, qtbot):
     assert (pin.row, pin.column, pin.number, pin.color) == (5, 6, 1, color)
     assert pin.label.startswith("#1 · Pixel (5, 6)")
     assert window.statusbar.currentMessage() == "Moved pin to pixel (5, 6)"
-    # The marker is redrawn at the new pixel on every viewer of this cube.
-    for v in (viewer, window.classificationViewer):
-        (item,) = v._pin_marker_items
-        assert item.pos() == QtCore.QPointF(6.5, 5.5)
+    # The marker is redrawn at the new pixel.
+    (item,) = viewer._pin_marker_items
+    assert item.pos() == QtCore.QPointF(6.5, 5.5)
     # The drag did not pan the view or add a second pin.
     assert len(inspector.pinned_spectra()) == 1
 
@@ -587,7 +581,7 @@ def test_plotted_spectra_follow_region_edits(loaded_window, qtbot, inspector):
     key = f"annotation:{rect.layer_id}"
     assert inspector._series_by_key[key].region.pixel_count == 4
 
-    viewer = window.classificationViewer
+    viewer = window.viewer
     viewer.annotationGeometryChanged.emit(rect.layer_id, 0, 0, 3, 2)
     viewer.annotationInteractionFinished.emit()
     qtbot.waitUntil(lambda: inspector._series_by_key[key].region.pixel_count == 6)
@@ -609,7 +603,7 @@ def test_plotted_class_spectrum_follows_vector_edits(loaded_window, qtbot, inspe
     row._inspect_button.click()
     key = f"class:{row.class_id}"
     square = VectorPath((Anchor(0, 0), Anchor(3, 0), Anchor(3, 3), Anchor(0, 3)))
-    window.classificationViewer.vectorMaskEdited.emit(row.class_id, VectorMask((square,)), True)
+    window.viewer.vectorMaskEdited.emit(row.class_id, VectorMask((square,)), True)
     qtbot.waitUntil(lambda: inspector._series_by_key[key].region.pixel_count == 9)
     data = window._display_data()
     cube = data.read_bands(range(data.bands))

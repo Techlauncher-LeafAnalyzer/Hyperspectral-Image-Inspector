@@ -554,6 +554,13 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             button.setChecked(tool == kind)
         self._pen_hint.setVisible(kind == PEN_TOOL)
 
+    def clear_tool(self) -> None:
+        """Turn off the active tool, if any, as if its button were clicked."""
+
+        if any(button.isChecked() for button in self._tool_buttons.values()):
+            self.set_tool(None)
+            self.toolChanged.emit(None)
+
     def _on_tool_clicked(self, kind: AnnotationKind | str, checked: bool) -> None:
         self.set_tool(kind if checked else None)
         self.toolChanged.emit(kind if checked else None)

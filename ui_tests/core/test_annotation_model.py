@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from core import AnnotationError, AnnotationKind, AnnotationLayerModel, AnnotationStyle
+from core import (
+    AnnotationError,
+    AnnotationKind,
+    AnnotationLayerModel,
+    AnnotationStyle,
+    scaled_layer,
+)
 
 STYLE = AnnotationStyle()
 
@@ -180,3 +186,15 @@ def test_rotation_drag_is_one_undo_step_and_geometry_is_independent():
     model.set_geometry(rect, 1, 1, 5, 5)  # different field: its own step
     assert model.undo() and model.get(rect).rotation == 30 and model.get(rect).x == 0
     assert model.undo() and model.get(rect).rotation == 0
+
+
+def test_scaled_layer_covers_the_same_part_of_a_larger_image():
+    model = AnnotationLayerModel()
+    style = AnnotationStyle(stroke_width=1.5, font_size=9)
+    layer = model.add_shape(AnnotationKind.RECTANGLE, 1, 2, 3, 4, style)
+    layer = model.get(layer.layer_id)
+    doubled = scaled_layer(layer, 2)
+    assert (doubled.x, doubled.y, doubled.width, doubled.height) == (2, 4, 6, 8)
+    assert doubled.style.stroke_width == 3.0 and doubled.style.font_size == 18
+    assert doubled.rotation == layer.rotation and doubled.layer_id == layer.layer_id
+    assert scaled_layer(layer, 1) is layer
