@@ -7,6 +7,7 @@ the rest of the inspector remains usable without the optional SR dependencies.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
@@ -54,6 +55,13 @@ class SuperResolutionResult:
     tiled: bool
     scale: int = 2
     _storage: tempfile.TemporaryDirectory = field(repr=False, default=None)
+
+    def cleanup(self) -> None:
+        """Release the result reader before unlinking its temporary cube."""
+        if self._storage is not None:
+            self.data.close()
+            self._storage.cleanup()
+            self._storage = None
 
 
 class SuperResolutionService:
@@ -175,7 +183,7 @@ class SuperResolutionService:
                 f"Insufficient temporary disk space: SR output needs {required / 2**30:.2f} GiB."
             )
         storage = tempfile.TemporaryDirectory(prefix="hsi-sr-")
-        output = None
+        result_data = None
         try:
             metadata = {
                 "lines": shape[0], "samples": shape[1], "bands": bands,
@@ -189,60 +197,64 @@ class SuperResolutionService:
                 if name in data.metadata:
                     metadata[name] = data.metadata[name]
             header = Path(storage.name) / "super_resolution.hdr"
-            image = envi.create_image(str(header), metadata=metadata, ext=".bip")
-            output = image.open_memmap(writable=True, interleave="bip")
-            size, context = request.tile_size, request.context
-            count = ((rows + size - 1) // size) * ((columns + size - 1) // size)
-            completed = 0
-            self._emit(progress, 5, f"Running on {device}: {count} tile(s)")
-            with torch.inference_mode():
-                for top in range(0, rows, size):
-                    for left in range(0, columns, size):
-                        self._check_cancelled(is_cancelled)
-                        bottom, right = min(rows, top + size), min(columns, left + size)
-                        y0, x0 = max(0, top - context), max(0, left - context)
-                        y1, x1 = min(rows, bottom + context), min(columns, right + context)
-                        cube = np.asarray(
-                            data.image.read_subregion((y0, y1), (x0, x1)), dtype=np.float32
-                        )
-                        if cube.shape != (y1 - y0, x1 - x0, bands) or not np.isfinite(cube).all():
-                            raise SuperResolutionError(
-                                f"Invalid input tile at row {top}, column {left}: "
-                                "unexpected shape or NaN/infinite pixels."
-                            )
-                        h, w, _ = cube.shape
-                        cubic = np.empty((bands, 2 * h, 2 * w), dtype=np.float32)
-                        for band in range(bands):
+            # SPy owns a file and mapping in addition to the writable mapping.
+            with ExitStack() as writers:
+                image = envi.create_image(str(header), metadata=metadata, ext=".bip")
+                writers.callback(HSIData(spectral_obj=image).close)
+                output = image.open_memmap(writable=True, interleave="bip")
+                writers.callback(output._mmap.close)
+                size, context = request.tile_size, request.context
+                count = ((rows + size - 1) // size) * ((columns + size - 1) // size)
+                completed = 0
+                self._emit(progress, 5, f"Running on {device}: {count} tile(s)")
+                with torch.inference_mode():
+                    for top in range(0, rows, size):
+                        for left in range(0, columns, size):
                             self._check_cancelled(is_cancelled)
-                            cubic[band] = zoom(cube[:, :, band], self.SCALE, order=3)
-                        low = torch.from_numpy(np.ascontiguousarray(cube.transpose(2, 0, 1)))[None].to(device)
-                        baseline = torch.from_numpy(cubic)[None].to(device)
-                        prediction = model(low, baseline)
-                        expected = (1, bands, 2 * h, 2 * w)
-                        if tuple(prediction.shape) != expected or not torch.isfinite(prediction).all():
-                            raise SuperResolutionError(
-                                f"Invalid model output: expected finite tensor {expected}, "
-                                f"received {tuple(prediction.shape)}."
+                            bottom, right = min(rows, top + size), min(columns, left + size)
+                            y0, x0 = max(0, top - context), max(0, left - context)
+                            y1, x1 = min(rows, bottom + context), min(columns, right + context)
+                            cube = np.asarray(
+                                data.image.read_subregion((y0, y1), (x0, x1)), dtype=np.float32
                             )
-                        self._check_cancelled(is_cancelled)
-                        values = prediction[0].cpu().numpy().transpose(1, 2, 0)
-                        dy, dx = 2 * (top - y0), 2 * (left - x0)
-                        output[2 * top:2 * bottom, 2 * left:2 * right] = values[
-                            dy:dy + 2 * (bottom - top), dx:dx + 2 * (right - left)
-                        ]
-                        del low, baseline, prediction, values, cubic, cube
-                        completed += 1
-                        self._emit(progress, 5 + int(90 * completed / count),
-                                   f"{device}: tile {completed}/{count}")
-            output.flush()
-            output = None
+                            if cube.shape != (y1 - y0, x1 - x0, bands) or not np.isfinite(cube).all():
+                                raise SuperResolutionError(
+                                    f"Invalid input tile at row {top}, column {left}: "
+                                    "unexpected shape or NaN/infinite pixels."
+                                )
+                            h, w, _ = cube.shape
+                            cubic = np.empty((bands, 2 * h, 2 * w), dtype=np.float32)
+                            for band in range(bands):
+                                self._check_cancelled(is_cancelled)
+                                cubic[band] = zoom(cube[:, :, band], self.SCALE, order=3)
+                            low = torch.from_numpy(np.ascontiguousarray(cube.transpose(2, 0, 1)))[None].to(device)
+                            baseline = torch.from_numpy(cubic)[None].to(device)
+                            prediction = model(low, baseline)
+                            expected = (1, bands, 2 * h, 2 * w)
+                            if tuple(prediction.shape) != expected or not torch.isfinite(prediction).all():
+                                raise SuperResolutionError(
+                                    f"Invalid model output: expected finite tensor {expected}, "
+                                    f"received {tuple(prediction.shape)}."
+                                )
+                            self._check_cancelled(is_cancelled)
+                            values = prediction[0].cpu().numpy().transpose(1, 2, 0)
+                            dy, dx = 2 * (top - y0), 2 * (left - x0)
+                            output[2 * top:2 * bottom, 2 * left:2 * right] = values[
+                                dy:dy + 2 * (bottom - top), dx:dx + 2 * (right - left)
+                            ]
+                            del low, baseline, prediction, values, cubic, cube
+                            completed += 1
+                            self._emit(progress, 5 + int(90 * completed / count),
+                                       f"{device}: tile {completed}/{count}")
+                output.flush()
             result_data = HSIReader().open(header)
             self._check_cancelled(is_cancelled)
             self._emit(progress, 100, f"SR ready: {shape[1]} × {shape[0]}, {bands} bands")
             return SuperResolutionResult(result_data, data.shape, path, device,
                                          count > 1, _storage=storage)
         except Exception as exc:
-            output = None
+            if result_data is not None:
+                result_data.close()
             storage.cleanup()
             if isinstance(exc, (CancelledError, SuperResolutionError)):
                 raise

@@ -534,7 +534,7 @@ class BatchService:
             )
         finally:
             if sr_result is not None:
-                sr_result.data.close()
+                sr_result.cleanup()
             if calibration_result is not None:
                 calibration_result.cleanup()
             data.close()

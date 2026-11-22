@@ -963,6 +963,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _on_super_resolution_result(self, result, display) -> None:
         if self._super_res_worker.isInterruptionRequested():
+            result.cleanup()
             self._on_super_resolution_cancelled()
             return
         result.data.rgb_array = display.display_rgb
@@ -974,6 +975,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         result.data.roi_mask = self._scaled_roi_mask(
             self._hsi_data.roi_mask, display.display_rgb.shape[:2]
         )
+        self._release_super_resolution_result()
         self._super_res_result = result
         self._visualization_cache = {
             key: cached for key, cached in self._visualization_cache.items() if not key[0]
@@ -1017,8 +1019,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.actionLoadImage.setEnabled(True)
         self._image_capabilities.refresh_super_resolution(self._hsi_data)
 
+    def _release_super_resolution_result(self) -> None:
+        if self._super_res_result is not None:
+            self._hypercube_controller.stop_and_wait()
+            self._super_res_result.cleanup()
+            self._super_res_result = None
+
     def _reset_super_resolution(self) -> None:
-        self._super_res_result = None
+        self._release_super_resolution_result()
         self._super_res_error = None
         self._set_high_resolution_selected(False)
         self.superResProgressBar.setValue(0)
@@ -1098,7 +1106,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._visualization_cache.clear()
         self._band_sums.clear()
         self._custom_index_store.save(self._custom_formula, self._custom_formula_name)
-        self._super_res_result = None
+        self._release_super_resolution_result()
         self._spectrum_controller.shutdown()
         for transition in self._tab_transitions:
             transition.stop()

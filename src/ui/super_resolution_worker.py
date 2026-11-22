@@ -26,6 +26,7 @@ class SuperResolutionWorker(QtCore.QThread):
         self._request = request
 
     def run(self):
+        result = None
         try:
             result = self._service.run(
                 self._data, self._request,
@@ -38,6 +39,7 @@ class SuperResolutionWorker(QtCore.QThread):
                 is_cancelled=self.isInterruptionRequested,
             )
             self.result_ready.emit(result, display)
+            result = None  # The receiving controller now owns the output.
         except CancelledError:
             self.cancelled.emit()
         except HSIError as exc:
@@ -45,3 +47,6 @@ class SuperResolutionWorker(QtCore.QThread):
         except Exception as exc:
             LOGGER.exception("Unexpected SR worker failure")
             self.failed.emit(f"Unexpected Super-Resolution failure: {exc}")
+        finally:
+            if result is not None:
+                result.cleanup()

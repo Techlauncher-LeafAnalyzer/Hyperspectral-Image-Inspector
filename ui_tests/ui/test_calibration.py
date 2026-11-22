@@ -3,13 +3,14 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 from PIL import Image
 from PyQt6 import QtCore
 from spectral.io import envi
 
-from core import CancelledError
+from core import CancelledError, SuperResolutionResult
 from ui.viewer import PixelValueEntry
 
 from conftest import SYNTHETIC_COLUMNS, SYNTHETIC_WAVELENGTHS_NM
@@ -106,7 +107,7 @@ def test_manual_calibration_selection_preserves_existing_sr_result(
     loaded_window, file_dialog, tmp_path
 ):
     window = loaded_window
-    previous_sr_result = object()
+    previous_sr_result = Mock(spec_set=SuperResolutionResult)
     window._super_res_result = previous_sr_result
     bands = len(SYNTHETIC_WAVELENGTHS_NM)
     dark = _write_reference(
@@ -120,6 +121,7 @@ def test_manual_calibration_selection_preserves_existing_sr_result(
 
     assert window._calibration_controller.dark_path == dark.resolve()
     assert window._super_res_result is previous_sr_result
+    previous_sr_result.cleanup.assert_not_called()
 
 
 def test_reference_selection_enables_background_calibration_and_renders_result(

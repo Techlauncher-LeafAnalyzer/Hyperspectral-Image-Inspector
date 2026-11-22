@@ -58,6 +58,11 @@ def test_reconstruction_preserves_all_bands_and_values(sr_source, identity_servi
     assert result.tiled == (size < 9)
     assert VisualizationService().render(result.data, VisualizationRequest("RGB")).display_rgb.shape == (14, 18, 3)
 
+    directory = result.data.source_path.parent
+    result.cleanup()
+    result.cleanup()
+    assert not directory.exists()
+
 
 def test_cropped_input_uses_current_cube_not_original_file(sr_source, identity_service):
     data, cube = sr_source
@@ -80,6 +85,20 @@ def test_cancellation_cleans_partial_output(sr_source, identity_service, monkeyp
     with pytest.raises(CancelledError):
         identity_service.run(sr_source[0], SuperResolutionRequest(tile_size=4),
                              progress=progress, is_cancelled=lambda: cancelled)
+    assert not list(tmp_path.glob("hsi-sr-*"))
+
+
+def test_callback_failure_after_result_open_releases_output(sr_source, identity_service, monkeypatch, tmp_path):
+    import core.super_resolution_model as sr
+
+    monkeypatch.setattr(sr.tempfile, "tempdir", str(tmp_path))
+
+    def progress(value, message):
+        if value == 100:
+            raise RuntimeError("result delivery failed")
+
+    with pytest.raises(SuperResolutionError, match="result delivery failed"):
+        identity_service.run(sr_source[0], progress=progress)
     assert not list(tmp_path.glob("hsi-sr-*"))
 
 
