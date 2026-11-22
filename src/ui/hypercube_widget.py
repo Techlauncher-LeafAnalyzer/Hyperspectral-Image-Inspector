@@ -7,13 +7,12 @@ from typing import Optional
 
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
-from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import (
     QColor,
     QFont,
     QMouseEvent,
     QPainter,
-    QPen,
     QResizeEvent,
     QSurfaceFormat,
     QWheelEvent,
@@ -222,23 +221,6 @@ class HypercubeWidget(QOpenGLWidget):
         gl.glClearColor(*self.BACKGROUND_COLOR)
         gl.glShadeModel(gl.GL_FLAT)
 
-    def resizeGL(self, width: int, height: int) -> None:
-        if not self.gl_available:
-            return
-        try:
-            self._resize_gl(width, height)
-        except Exception as exc:  # noqa: BLE001 - see _disable_gl
-            self._disable_gl("resize", exc)
-
-    def _resize_gl(self, width: int, height: int) -> None:
-        import OpenGL.GL as gl
-
-        gl.glViewport(0, 0, max(width, 1), max(height, 1))
-        gl.glMatrixMode(gl.GL_PROJECTION)
-        gl.glLoadIdentity()
-        self._apply_perspective(45.0, width / max(height, 1), 0.1, 100.0)
-        gl.glMatrixMode(gl.GL_MODELVIEW)
-
     def paintGL(self) -> None:
         if not self.gl_available:
             return
@@ -276,8 +258,7 @@ class HypercubeWidget(QOpenGLWidget):
             # above) reprograms the fixed-function projection matrix for its
             # own 2D drawing; beginNativePainting() makes raw GL calls safe
             # to issue but does not restore this widget's 3D projection, so
-            # it must be reapplied every paintGL call rather than relying on
-            # the matrix resizeGL last configured.
+            # reapply it every frame. Qt sets the physical framebuffer viewport.
             gl.glMatrixMode(gl.GL_PROJECTION)
             gl.glLoadIdentity()
             self._apply_perspective(
@@ -546,16 +527,7 @@ class HypercubeWidget(QOpenGLWidget):
                 gl.glVertex3f(vx, vy, vz)
             gl.glEnd()
 
-    def _draw_axes(
-        self,
-    ) -> tuple[
-        tuple[float, float, float],
-        dict[str, tuple[float, float, float]],
-        np.ndarray,
-        np.ndarray,
-        np.ndarray,
-        set[str],
-    ]:
+    def _draw_axes(self) -> tuple[dict[str, tuple[float, float]], tuple[float, float]]:
         """Draw the model's row, column, and wavelength axes over the cube."""
         import OpenGL.GL as gl
 
@@ -581,7 +553,7 @@ class HypercubeWidget(QOpenGLWidget):
         model = np.asarray(gl.glGetDoublev(gl.GL_MODELVIEW_MATRIX), dtype=float)
         projection = np.asarray(gl.glGetDoublev(gl.GL_PROJECTION_MATRIX), dtype=float)
         viewport = np.asarray(gl.glGetIntegerv(gl.GL_VIEWPORT), dtype=float)
-        visible_labels: set[str] = set()
+        visible_tips: dict[str, tuple[float, float]] = {}
         for label, endpoint in endpoints.items():
             projected = self._project_point_with_depth(
                 endpoint, model, projection, viewport
@@ -607,11 +579,14 @@ class HypercubeWidget(QOpenGLWidget):
                 ).reshape(-1)[0]
             )
             if self._is_depth_visible(depth, buffer_depth):
-                visible_labels.add(label)
+                visible_tips[label] = (x, y)
         gl.glDepthFunc(gl.GL_LEQUAL)
         gl.glEnable(gl.GL_TEXTURE_2D)
         gl.glColor4f(1.0, 1.0, 1.0, 1.0)
-        return origin, endpoints, model, projection, viewport, visible_labels
+        center = self._project_point((0.0, 0.0, 0.0), model, projection, viewport)
+        if center is None:
+            center = (viewport[0] + viewport[2] / 2, viewport[1] + viewport[3] / 2)
+        return visible_tips, center
 
     @staticmethod
     def _cube_half_extents(view_data: HypercubeViewData) -> tuple[float, float, float]:
@@ -686,23 +661,6 @@ class HypercubeWidget(QOpenGLWidget):
         return projected_depth <= buffer_depth + 0.002
 
     @staticmethod
-    def screen_arrowhead_points(
-        tip: tuple[float, float], anchor: tuple[float, float]
-    ) -> tuple[tuple[float, float], tuple[float, float]]:
-        """Return camera-facing arrowhead wings for a projected axis line."""
-        dx = tip[0] - anchor[0]
-        dy = tip[1] - anchor[1]
-        magnitude = max(math.hypot(dx, dy), 1e-6)
-        unit_x, unit_y = dx / magnitude, dy / magnitude
-        perpendicular_x, perpendicular_y = -unit_y, unit_x
-        base_x = tip[0] - unit_x * 14.0
-        base_y = tip[1] - unit_y * 14.0
-        return (
-            (base_x + perpendicular_x * 6.5, base_y + perpendicular_y * 6.5),
-            (base_x - perpendicular_x * 6.5, base_y - perpendicular_y * 6.5),
-        )
-
-    @staticmethod
     def axis_arrowhead_vertices(
         label: str, endpoint: tuple[float, float, float]
     ) -> tuple[
@@ -724,48 +682,27 @@ class HypercubeWidget(QOpenGLWidget):
         return ((endpoint, wings[0]), (endpoint, wings[1]))
 
     def _draw_axis_labels(
-        self,
-        painter: QPainter,
-        origin: tuple[float, float, float],
-        endpoints: dict[str, tuple[float, float, float]],
-        model: np.ndarray,
-        projection: np.ndarray,
-        viewport: np.ndarray,
-        visible_labels: set[str],
+        self, painter: QPainter, tips: dict[str, tuple[float, float]], center: tuple[float, float]
     ) -> None:
-        projected_origin = self._project_point(origin, model, projection, viewport)
-        projected = {
-            label: self._project_point(endpoint, model, projection, viewport)
-            for label, endpoint in endpoints.items()
-        }
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         font = QFont(painter.font())
         font.setBold(True)
         font.setPointSize(10)
         painter.setFont(font)
-        for label, position in projected.items():
-            if label not in visible_labels or position is None:
-                continue
-            x, y = position
-            color = QColor.fromRgbF(*self.AXIS_COLORS[label])
-            pen = QPen(color)
-            pen.setWidthF(3.0)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen)
-            tip = QPointF(x, self.height() - y)
-            origin_tip = (
-                (projected_origin[0], self.height() - projected_origin[1])
-                if projected_origin is not None
-                else (tip.x() - 24.0, tip.y())
-            )
-            left, right = self.screen_arrowhead_points((tip.x(), tip.y()), origin_tip)
-            painter.drawLine(tip, QPointF(*left))
-            painter.drawLine(tip, QPointF(*right))
-            label_text = f"{label}{' (nm)' if label == 'Wavelength' else ''}"
-            text_width = painter.fontMetrics().horizontalAdvance(label_text)
-            text_x = x - text_width - 26.0 if label == "Rows" else x + 7.0
-            painter.drawText(round(text_x), self.height() - round(y) - 5, label_text)
-            painter.drawEllipse(tip, 2.5, 2.5)
+        # Depth sampling uses physical pixels from the bottom left. QPainter
+        # draws on the widget in logical pixels from the top left.
+        ratio = painter.device().devicePixelRatioF()
+        metrics = painter.fontMetrics()
+        for label, (pixel_x, pixel_y) in tips.items():
+            text = "Wavelength (nm)" if label == "Wavelength" else label
+            x = pixel_x / ratio
+            y = self.height() - pixel_y / ratio
+            width = metrics.horizontalAdvance(text)
+            left = x - width - 6 if pixel_x < center[0] - ratio else x + 6
+            left = max(0, min(left, self.width() - width))
+            baseline = y - 5 if pixel_y >= center[1] else y + metrics.ascent() + 3
+            baseline = max(metrics.ascent(), min(baseline, self.height() - metrics.descent()))
+            painter.setPen(QColor.fromRgbF(*self.AXIS_COLORS[label]))
+            painter.drawText(round(left), round(baseline), text)
 
     @staticmethod
     def _cube_faces(

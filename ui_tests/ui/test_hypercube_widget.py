@@ -168,11 +168,42 @@ def test_axis_label_occlusion_matches_reference_depth_tolerance():
     assert not HypercubeWidget._is_depth_visible(0.5, 0.497)
 
 
-def test_reference_view_projects_arrowheads_in_the_axis_direction():
-    left, right = HypercubeWidget.screen_arrowhead_points((20.0, 10.0), (0.0, 10.0))
+@pytest.mark.parametrize("ratio", [1, 1.25, 1.5, 2])
+@pytest.mark.parametrize("width,height,angle", [(400, 300, 0), (640, 480, 45), (560, 350, 135)])
+def test_axis_text_tracks_rotated_tips_in_logical_pixels(qtbot, ratio, width, height, angle):
+    from PyQt6.QtGui import QImage, QPainter
 
-    assert left[0] < 20.0
-    assert right[0] < 20.0
+    class RecordingPainter(QPainter):
+        def drawText(self, x, y, text):
+            positions[text] = x, y
+
+    widget = HypercubeWidget()
+    qtbot.addWidget(widget)
+    widget.resize(width, height)
+    image = QImage(round(width * ratio), round(height * ratio), QImage.Format.Format_ARGB32)
+    image.setDevicePixelRatio(ratio)
+    positions = {}
+    painter = RecordingPainter(image)
+    try:
+        theta = np.radians(angle)
+        c, s = np.cos(theta), np.sin(theta)
+        rotation = np.array([[c, -s, 0, 0], [s, c, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        viewport = np.array([0, 0, image.width(), image.height()])
+        endpoints = {"Rows": (0, 0.3, 0), "Columns": (0.3, 0, 0), "Wavelength": (-0.2, 0, 0.3)}
+        tips = {name: widget._project_point(point, rotation.T, np.eye(4), viewport)
+                for name, point in endpoints.items()}
+        widget._draw_axis_labels(painter, tips, (image.width() / 2, image.height() / 2))
+        for label, (x, y, _) in endpoints.items():
+            text = "Wavelength (nm)" if label == "Wavelength" else label
+            left, baseline = positions[text]
+            offset = -(painter.fontMetrics().horizontalAdvance(text) + 6) if (c*x - s*y) * width/2 < -1 else 6
+            expected_left = (1 + c*x - s*y) * width/2 + offset
+            expected_left = np.clip(expected_left, 0, width - painter.fontMetrics().horizontalAdvance(text))
+            assert left == pytest.approx(expected_left, abs=1)
+            dy = -5 if s*x + c*y >= 0 else painter.fontMetrics().ascent() + 3
+            assert baseline == pytest.approx((1 - s*x - c*y) * height/2 + dy, abs=1)
+    finally:
+        painter.end()
 
 
 def test_reference_view_has_a_3d_arrowhead_for_each_axis():
