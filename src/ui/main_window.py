@@ -71,7 +71,7 @@ from ui.tool_windows import (
     paint_super_resolution_icon,
     paint_visualization_icon,
 )
-from ui.theme import CLASSIFIER_BORDER_QSS, CLASSIFIER_POPUP_QSS
+from ui.theme import style_combo_popup
 from ui.viewer import VISUALIZATION_LABELS, HSIViewer, PixelValueEntry
 
 
@@ -121,10 +121,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.separateLeavesButton = self.classificationLayerPanel.separate_leaves_button
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QtGui.QIcon(str(ICON_PATH)))
-        # Qt's app stylesheet misses the combo's left edge when its border changes.
-        self.comboBox.setStyleSheet(CLASSIFIER_BORDER_QSS)
-        # Qt renders the combo popup in a separate window, so style its view directly.
-        self.comboBox.view().setStyleSheet(CLASSIFIER_POPUP_QSS)
+        for combo in (self.comboBox, self.batchClassifierCombo, self.batchFormatCombo):
+            style_combo_popup(combo)
 
         self._hsi_data = HSIData()
         self._hsi_reader = HSIReader()
@@ -158,6 +156,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._custom_index_store = CustomIndexStore()
         self._custom_formula: str | None = self._custom_index_store.load()
         self._custom_formula_name = self._saved_formula_name()
+        self._explicit_custom_selection = False
         self._custom_index_dialog_factory = CustomIndexDialog
         self._on_demand_errors: dict[VisualizationMode, str] = {}
         # Full-cube band sums keyed by id(data), validated against the
@@ -456,16 +455,16 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
         These replace the old main tabs. Visualization, Super-Resolution and
         Calibration need little room, so each pill opens a compact flyout over
-        the image (shown on hover, pinned by a click) holding a panel from
+        the image (toggled by clicking its pill) holding a panel from
         ``WorkflowPanels.ui``. Segment is a plain toggle for the Segmentation
         view's own inspector (see :meth:`_on_segmentation_pill_clicked`), and
         Batch gets a full-height dock; dividers set those two apart. The
         first four pills are bound to a view: turning to one shows that view
-        on the canvas, and its pill carries an accent marker. Batch has no
+        on the canvas, and its pill uses bold teal text. Batch has no
         view of its own: it works on files, not the canvas.
 
         ``tabWidget`` is the canvas's page stack, with its tab bar hidden, so
-        view switching keeps its pan/zoom hand-off and fade.
+        view switching preserves pan and zoom.
         """
         stripe = self.workflowStripe = ToolWindowStripe(
             self, edge=QtCore.Qt.Edge.RightEdge, title="Workflow panels",
@@ -608,7 +607,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             tab_bar.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
             tab_bar.setExpanding(False)
             tab_bar.setElideMode(QtCore.Qt.TextElideMode.ElideRight)
-            self._tab_transitions.append(TabTransitionHandler(tab_widget))
+        # The workflow stripe switches image canvases at full opacity.
+        self._tab_transitions.append(TabTransitionHandler(self.classificationModeTabs))
 
     def _configure_file_menu(self) -> None:
         """Build the File menu opened from the left stripe's File button."""
@@ -720,6 +720,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         """
 
         self.savedIndexCombo = QtWidgets.QComboBox(self.modeSelect)
+        self.savedIndexCombo.setObjectName("savedIndexCombo")
+        style_combo_popup(self.savedIndexCombo)
         self.savedIndexCombo.setAccessibleName("Saved indices")
         self.savedIndexCombo.setPlaceholderText("Choose a saved index")
         self.modeSelectGrid.addWidget(self.savedIndexCombo, 4, 0, 1, 3)
@@ -1264,11 +1266,18 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         previous_button = self._checked_mode_button
         self._checked_mode_button = self.sender()
-        if mode is VisualizationMode.CUSTOM and self._custom_formula is None:
-            target = self._edit_custom_index()
-            if target is not self.modeCustom:
-                (target or previous_button or self.modeRGB).setChecked(True)
-                return
+        if mode is VisualizationMode.CUSTOM and not self._explicit_custom_selection:
+            saved = self._custom_index_store.library()
+            if saved:
+                latest = saved[-1]
+                if (latest.name, latest.formula) != (self._custom_formula_name, self._custom_formula):
+                    self._apply_custom_formula(latest.formula, latest.name)
+                self._refresh_index_choices()
+            elif self._custom_formula is None:
+                target = self._edit_custom_index()
+                if target is not self.modeCustom:
+                    (target or previous_button or self.modeRGB).setChecked(True)
+                    return
         self.visualizationStack.setCurrentWidget(self.viewer)
         self._active_visualization_mode = mode
         self._similarity_view = False
@@ -1375,32 +1384,31 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self._on_demand_errors.pop(mode, None)
 
     def _refresh_index_choices(self) -> None:
-        entries = self._custom_index_store.indices()
-        self._visualization_service.index_formulas = {
-            VisualizationMode(entry.name.upper()): entry.formula for entry in entries
-            if entry.name.upper() in BUILTIN_INDEX_FORMULAS
-        }
         combo = self.savedIndexCombo
         combo.clear()
-        for entry in entries:
-            if entry.name.upper() not in BUILTIN_INDEX_FORMULAS:
-                combo.addItem(entry.name, entry.formula)
+        for entry in self._custom_index_store.library():
+            combo.addItem(entry.name, entry.formula)
         combo.setCurrentIndex(combo.findText(self._custom_formula_name or ""))
         combo.setVisible(combo.count() > 0)
-        for button, mode in self._visualization_mode_buttons:
-            if mode in BUILTIN_INDEX_FORMULAS:
-                button.setVisible(mode in self._visualization_service.index_formulas)
 
     def _select_saved_index(self, index: int) -> None:
         self._apply_custom_formula(
             self.savedIndexCombo.itemData(index), self.savedIndexCombo.itemText(index)
         )
-        self.modeCustom.setChecked(True)
+        self._activate_selected_custom()
         if self._hsi_data.is_loaded():
             self._show_active_mode()
         self._spectrum_controller.set_visualization(
             self._visualization_results.get(VisualizationMode.CUSTOM)
         )
+
+    def _activate_selected_custom(self) -> None:
+        """An explicit dropdown or editor choice takes precedence over the default."""
+        self._explicit_custom_selection = True
+        try:
+            self.modeCustom.setChecked(True)
+        finally:
+            self._explicit_custom_selection = False
 
     def _apply_custom_formula(self, formula: str | None, name: str | None) -> None:
         self._custom_formula = formula
@@ -1473,7 +1481,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def _on_edit_custom_index_clicked(self) -> None:
         target = self._edit_custom_index()
-        if target is not None and target.isEnabled():
+        if target is self.modeCustom and target.isEnabled():
+            self._activate_selected_custom()
+        elif target is not None and target.isEnabled():
             target.setChecked(True)
 
     def _on_segmentation_changed(self) -> None:

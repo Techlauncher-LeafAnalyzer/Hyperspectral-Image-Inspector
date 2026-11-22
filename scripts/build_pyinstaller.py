@@ -188,7 +188,15 @@ def main() -> None:
     py = prepare_venv(reuse="--reuse-venv" in sys.argv[1:])
 
     stage("Running PyInstaller")
-    subprocess.check_call([str(py), "-m", "PyInstaller", *pyinstaller_args()])
+    build_env = os.environ.copy()
+    if IS_WINDOWS:
+        # External tool directories may contain incompatible DLLs such as ICU.
+        system_root = Path(os.environ["SystemRoot"])
+        build_env["PATH"] = os.pathsep.join(map(str, (
+            Path(sys.base_prefix), system_root / "System32", system_root,
+            system_root / "System32" / "Wbem",
+        )))
+    subprocess.check_call([str(py), "-m", "PyInstaller", *pyinstaller_args()], env=build_env)
 
     executable = (
         Path("dist", f"{APP_NAME}.app") if IS_MACOS

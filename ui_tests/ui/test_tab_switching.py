@@ -29,7 +29,6 @@ def test_cropped_original_keeps_identical_pixels_across_tabs(loaded_window, qtbo
     monkeypatch.setattr(window._super_resolution_service, "run", unexpected_processing)
     for index in (1, 2, 1, 3, 1, 0, 1, 0):
         window.tabWidget.setCurrentIndex(index)
-        qtbot.wait(200)  # Allow the existing tab fade to finish.
         assert window._viewer_for_tab(index)._photo.pixmap().toImage() == expected
         assert window._hsi_data.rgb_array is rgb
     np.testing.assert_array_equal(
@@ -123,7 +122,8 @@ def test_close_stops_active_transitions_and_resolution_animations(window):
         available=True, high_resolution=True, enabled=True
     )
     window.tabWidget.setCurrentIndex(1)
-    window.classificationModeTabs.setCurrentIndex(1)
+    modes = window.classificationModeTabs
+    modes.setCurrentIndex(1 - modes.currentIndex())
     animations = window.findChildren(QtCore.QAbstractAnimation)
     assert any(a.state() == a.State.Running for a in animations)
 

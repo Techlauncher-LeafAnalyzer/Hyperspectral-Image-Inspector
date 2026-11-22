@@ -146,8 +146,8 @@ def test_vectorize_and_edit_updates_the_class_region(qtbot, monkeypatch):
         def exec(self):
             return QtWidgets.QDialog.DialogCode.Accepted
 
-        def selected_class_ids(self):
-            return (1,)
+        def selected_class_id(self):
+            return 1
 
         def options(self):
             return VectorTraceOptions()
@@ -173,6 +173,11 @@ def test_vectorize_and_edit_updates_the_class_region(qtbot, monkeypatch):
     assert page._anchor_mode_buttons[AnchorMode.CORNER].isChecked()
     page._anchor_mode_buttons[AnchorMode.SMOOTH].click()
     assert slot.vectors.get(1).paths[0].anchors[0].mode is AnchorMode.SMOOTH
+
+    # Opening the same boundary again must retain the hand-edited curve and undo history.
+    edited = slot.vectors.get(1)
+    panel.vectorizeRequested.emit()
+    assert slot.vectors.get(1) is edited
 
     # With the pen armed, undo steps the vector history.
     assert controller.undo_annotation()

@@ -1681,43 +1681,36 @@ class ClassificationController(QObject):
         dialog = VectorMaskDialog(classes, self._parent)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
-        options = dialog.options()
-        masks: dict[int, VectorMask] = {}
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
-        try:
-            for class_id in dialog.selected_class_ids():
+        class_id = dialog.selected_class_id()
+        mask = slot.vectors.get(class_id)
+        new_boundary = mask is None
+        if new_boundary:
+            options = dialog.options()
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+            try:
                 mask = trace_mask(slot.result.class_map == class_id, options)
-                if mask.paths:
-                    masks[class_id] = mask
-        except ClassificationError as exc:
-            QMessageBox.critical(self._parent, "Vector mask failed", str(exc))
-            return
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
-        if not masks:
-            QMessageBox.information(
-                self._parent,
-                "Nothing to trace",
-                "The selected classes have no regions larger than "
-                f"{options.min_area:g} pixels.",
-            )
-            return
-        slot.vectors.set_masks(masks)
-        first = next(iter(masks))
-        slot.vector_class = first
-        slot.vector_selection = (first, self._largest_path(masks[first]), -1)
-        self._apply_vectors(slot)
-        # Converting is the first step of editing, so go straight to the pen.
+            except ClassificationError as exc:
+                QMessageBox.critical(self._parent, "Cannot edit class boundary", str(exc))
+                return
+            finally:
+                QtWidgets.QApplication.restoreOverrideCursor()
+            if not mask.paths:
+                QMessageBox.information(
+                    self._parent, "No boundary found",
+                    f"This class has no regions larger than {options.min_area:g} pixels.",
+                )
+                return
+            slot.vectors.set_mask(class_id, mask)
+        slot.vector_class = class_id
+        slot.vector_selection = (class_id, self._largest_path(mask), -1)
+        if new_boundary:
+            self._apply_vectors(slot)
+        else:
+            self._sync_vectors()
         self._layer_panel.set_mode("annotations")
         self._layer_panel.annotation_page.set_tool(PEN_TOOL)
         self._on_annotation_tool_changed(PEN_TOOL)
-        paths = sum(len(mask.paths) for mask in masks.values())
-        points = sum(mask.anchor_count for mask in masks.values())
-        self._statusbar.showMessage(
-            f"Converted {len(masks)} class{'es' if len(masks) != 1 else ''} into vector "
-            f"masks ({paths} paths, {points} points); edit them with the Pen",
-            8000,
-        )
+        self._statusbar.showMessage("Drag boundary points or handles to reshape the selected class.", 8000)
 
     @QtCore.pyqtSlot(int, object, bool)
     def _on_vector_mask_edited(self, class_id: int, mask: object, final: bool) -> None:

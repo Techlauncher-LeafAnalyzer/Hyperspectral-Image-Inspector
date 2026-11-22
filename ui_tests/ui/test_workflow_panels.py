@@ -76,7 +76,7 @@ def test_dividers_set_apart_segment_and_batch(shown_window):
 
 def test_nothing_open_at_start_and_visualization_is_current(shown_window):
     tools = _tools(shown_window)
-    assert not any(tool.is_open() or tool.is_peeking() for tool in tools.values())
+    assert not any(tool.is_open() for tool in tools.values())
     assert [name for name, tool in tools.items() if tool.button.is_current()] == ["visualization"]
     assert shown_window.tabWidget.currentWidget() is shown_window.Visualization
 
@@ -89,7 +89,7 @@ def test_nothing_open_at_start_and_visualization_is_current(shown_window):
         ("calibration", "Calibration"),
     ],
 )
-def test_opening_a_pill_shows_its_view_and_moves_the_marker(shown_window, name, page_name):
+def test_opening_a_pill_shows_its_view_and_updates_the_current_button(shown_window, name, page_name):
     window = shown_window
     tools = _tools(window)
     window.tabWidget.setCurrentWidget(window.Calibration if name != "calibration" else window.Visualization)
@@ -101,6 +101,14 @@ def test_opening_a_pill_shows_its_view_and_moves_the_marker(shown_window, name, 
     # The left stripe's tools are independent of the right side.
     window.spectrumTool.show()
     assert tools[name].is_open() and window.spectrumTool.is_open()
+
+
+def test_switching_workflow_buttons_keeps_the_canvas_opaque(shown_window):
+    for name in ("superResolution", "calibration", "visualization") * 2:
+        shown_window.workflowTools[name].button.click()
+        effect = shown_window.tabWidget.currentWidget().graphicsEffect()
+        if isinstance(effect, QtWidgets.QGraphicsOpacityEffect) and effect.isEnabled():
+            assert effect.opacity() == 1.0
 
 
 def test_batch_panel_keeps_the_current_view(shown_window):
@@ -231,104 +239,32 @@ def test_loaded_file_shows_in_status_bar_and_title(shown_window, synthetic_cube_
     assert window.windowTitle().startswith(window._hsi_data.data_path.name)
 
 
-def _leave(tool, qtbot):
-    """Pointer leaves the button and flyout (the test cursor is elsewhere)."""
-    tool.button.hoverChanged.emit(False)
-    tool.host.hoverChanged.emit(False)
-    qtbot.wait(FLYOUT_HIDE_DELAY_MS + 100)
-
-
-from ui.tool_windows import FLYOUT_HIDE_DELAY_MS  # noqa: E402
-
-
-@pytest.mark.parametrize("name", ["visualization", "superResolution", "calibration"])
-def test_hover_peeks_a_compact_panel_until_the_pointer_leaves(shown_window, qtbot, name):
+@pytest.mark.parametrize("name,page", [
+    ("visualization", "Visualization"),
+    ("superResolution", "SuperResolution"),
+    ("calibration", "Calibration"),
+])
+def test_compact_panels_open_only_on_activation(shown_window, qtbot, name, page):
     window = shown_window
     tool = _tools(window)[name]
     window.tabWidget.setCurrentWidget(window.Classification)
-    tool.button.hoverChanged.emit(True)
-    assert tool.is_peeking() and tool.host.isVisible()
-    # A peek is not "open": no highlight, and the canvas view stays put.
-    assert not tool.is_open() and not tool.button.isChecked()
+    pos = QtCore.QPointF(tool.button.rect().center())
+    event = QtGui.QEnterEvent(pos, pos, pos)
+    QtWidgets.QApplication.sendEvent(tool.button, event)
+    assert tool.host.isHidden()
     assert window.tabWidget.currentWidget() is window.Classification
-    # Small: sized to its content, not the full column.
-    assert tool.host.height() < window.tabWidget.height() * 0.6
-    # Moving onto the flyout keeps it.
-    tool.button.hoverChanged.emit(False)
-    tool.host.hoverChanged.emit(True)
-    qtbot.wait(FLYOUT_HIDE_DELAY_MS + 100)
-    assert tool.is_peeking()
-    _leave(tool, qtbot)
-    assert not tool.is_peeking() and tool.host.isHidden()
 
-
-def test_pointer_in_gap_does_not_keep_unpinned_menu_open(shown_window, qtbot, monkeypatch):
-    tool = _tools(shown_window)["visualization"]
-    tool.peek()
-    button_left = tool.button.mapTo(shown_window, QtCore.QPoint()).x()
-    gap = QtCore.QPoint(button_left - 1, tool.host.geometry().center().y())
-    assert not tool.host.geometry().contains(gap)
-    monkeypatch.setattr(QtGui.QCursor, "pos", lambda: shown_window.mapToGlobal(gap))
-    tool.host.hoverChanged.emit(False)
-    qtbot.waitUntil(tool.host.isHidden, timeout=250)
-
-
-def test_clicking_the_pill_pins_the_flyout(shown_window, qtbot):
-    window = shown_window
-    tool = _tools(window)["calibration"]
-    tool.button.hoverChanged.emit(True)
-    tool.button.click()
-    assert tool.is_open() and not tool.is_peeking() and tool.button.isChecked()
-    assert window.tabWidget.currentWidget() is window.Calibration
-    _leave(tool, qtbot)
+    qtbot.mouseClick(tool.button, QtCore.Qt.MouseButton.LeftButton)
+    assert tool.host.isVisible() and tool.button.isChecked()
+    for sibling in _tools(window).values():
+        if sibling.compact and sibling is not tool:
+            QtWidgets.QApplication.sendEvent(sibling.button, QtGui.QEnterEvent(pos, pos, pos))
+            assert sibling.host.isHidden()
     assert tool.host.isVisible()
-    # Clicking again unpins and closes it.
-    tool.button.click()
+    assert window.tabWidget.currentWidget() is getattr(window, page)
+    qtbot.keyClick(tool.button, QtCore.Qt.Key.Key_Space)
     assert tool.host.isHidden() and not tool.button.isChecked()
-
-
-def test_clicking_inside_a_peeking_flyout_pins_it(shown_window, qtbot):
-    window = shown_window
-    tools = _tools(window)
-    tools["visualization"].button.hoverChanged.emit(True)
-    tools["visualization"].host.pressed.emit()
-    assert tools["visualization"].is_open()
-    tools["superResolution"].button.hoverChanged.emit(True)
-    tools["superResolution"]._on_focus_changed(None, window.runSuperResButton)
-    assert tools["superResolution"].is_peeking()
-    qtbot.mouseClick(tools["superResolution"].title_bar, QtCore.Qt.MouseButton.LeftButton)
-    assert tools["superResolution"].is_open()
-    assert window.tabWidget.currentWidget() is window.SuperResolution
-    _leave(tools["superResolution"], qtbot)
-    assert tools["superResolution"].host.isVisible()
-    # One pinned flyout at a time.
-    assert not tools["visualization"].is_open()
-
-
-def test_one_peek_at_a_time(shown_window):
-    tools = _tools(shown_window)
-    tools["visualization"].button.hoverChanged.emit(True)
-    tools["calibration"].button.hoverChanged.emit(True)
-    assert tools["calibration"].is_peeking()
-    assert not tools["visualization"].is_peeking() and tools["visualization"].host.isHidden()
-
-
-def test_fast_menu_switch_cancels_old_leave_and_positions_before_show(shown_window, qtbot):
-    tools = _tools(shown_window)
-    pinned, first, last = (tools[name] for name in ("visualization", "superResolution", "calibration"))
-    pinned.show()
-    first.peek()
-    first.host.hoverChanged.emit(False)
-    positions = []
-    last.host.visibilityChanged.connect(
-        lambda visible: positions.append(last.host.geometry()) if visible else None
-    )
-    last.peek()
-    assert positions == [last.host.geometry()]
-    qtbot.wait(FLYOUT_HIDE_DELAY_MS + 50)
-    assert last.is_peeking() and first.host.isHidden() and pinned.host.isHidden()
-    last.hide()
-    assert pinned.host.isVisible() and pinned.is_open()
+    assert window.tabWidget.currentWidget() is getattr(window, page)
 
 
 def test_flyouts_clear_the_batch_dock(shown_window, qtbot):
@@ -337,12 +273,6 @@ def test_flyouts_clear_the_batch_dock(shown_window, qtbot):
     tools["batch"].show()
     qtbot.wait(50)
     dock_left = tools["batch"].dock.mapTo(window, QtCore.QPoint()).x()
-    # Peeking or pinned, a flyout sits left of the dock, level with its pill.
-    peek = tools["superResolution"]
-    peek.button.hoverChanged.emit(True)
-    assert peek.host.geometry().right() < dock_left
-    assert peek.host.y() == peek.button.mapTo(window, QtCore.QPoint()).y()
-    peek.hide()
     pinned = tools["visualization"]
     pinned.show()
     window._sync_stripe_geometry()
@@ -354,44 +284,10 @@ def test_flyouts_clear_the_batch_dock(shown_window, qtbot):
     assert pinned.host.geometry().right() > dock_left
 
 
-def test_hovering_another_pill_never_overlaps_a_pinned_flyout(shown_window, qtbot):
-    tools = _tools(shown_window)
-    pinned, other = tools["visualization"], tools["calibration"]
-    pinned.show()
-    other.button.hoverChanged.emit(True)
-    # The pinned flyout steps aside for the peek but stays pinned.
-    assert other.is_peeking() and pinned.host.isHidden()
-    assert pinned.is_open() and pinned.button.isChecked()
-    # Peek to peek: the pinned one stays out of the way.
-    tools["superResolution"].button.hoverChanged.emit(True)
-    assert tools["superResolution"].is_peeking() and not other.is_peeking()
-    assert pinned.host.isHidden()
-    _leave(tools["superResolution"], qtbot)
-    assert pinned.host.isVisible() and pinned.is_open()
-    # Back on the pinned tool's own pill: it simply reappears.
-    other.button.hoverChanged.emit(True)
-    pinned.button.hoverChanged.emit(True)
-    assert not other.is_peeking() and pinned.host.isVisible()
-    visible = [t.host.geometry() for t in tools.values() if t.compact and t.host.isVisible()]
-    assert len(visible) == 1
-
-
-def test_flyouts_clear_the_class_layer_inspector(shown_window):
-    window = shown_window
-    window.segmentationPill.click()
-    tool = _tools(window)["superResolution"]
-    tool.button.hoverChanged.emit(True)
-    window._sync_stripe_geometry()
-    inspector_left = window.classificationLayerPanel.mapTo(window, QtCore.QPoint()).x()
-    assert tool.host.geometry().right() < inspector_left
-
-
 def test_segment_pill_toggles_the_inspector_and_keeps_results(shown_window):
     window = shown_window
     pill, inspector = window.segmentationPill, window.classificationLayerPanel
     assert not pill.isChecked() and window.tabWidget.currentWidget() is window.Visualization
-    # Not a hover pill: hovering shows nothing.
-    assert not pill.receivers(pill.hoverChanged)
     pill.click()
     assert window.tabWidget.currentWidget() is window.Classification
     assert inspector.isVisible() and pill.isChecked() and pill.is_current()

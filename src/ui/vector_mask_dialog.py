@@ -24,31 +24,32 @@ class VectorMaskDialog(QtWidgets.QDialog):
         classes: tuple[tuple[int, str, RGB, bool], ...],
         parent: Optional[QtWidgets.QWidget] = None,
     ) -> None:
-        """``classes`` holds ``(class_id, name, colour, checked)`` per class."""
+        """``classes`` holds ``(class_id, name, colour, preferred)`` per class."""
 
         super().__init__(parent)
-        self.setWindowTitle("Convert to Vector Mask")
+        self.setWindowTitle("Edit class boundary")
         defaults = VectorTraceOptions()
 
         intro = QtWidgets.QLabel(
-            "Trace each selected class into editable Bézier outlines. The "
-            "outline then defines the class region used for index means, "
-            "spectra and export. Edit it with the Pen on the Annotations tab.",
+            "Choose a class, then drag points on its boundary with the Pen. "
+            "The edited region is used for index means, spectra and export.",
             self,
         )
         intro.setWordWrap(True)
 
         self._class_list = QtWidgets.QListWidget(self)
-        self._class_list.setAccessibleName("Classes to convert")
-        for class_id, name, color, checked in classes:
+        self._class_list.setAccessibleName("Class to edit")
+        for class_id, name, color, preferred in classes:
             item = QtWidgets.QListWidgetItem(name)
             swatch = QtGui.QPixmap(14, 14)
             swatch.fill(QtGui.QColor(*color))
             item.setIcon(QtGui.QIcon(swatch))
             item.setData(Qt.ItemDataRole.UserRole, class_id)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
             self._class_list.addItem(item)
+            if preferred and self._class_list.currentRow() < 0:
+                self._class_list.setCurrentItem(item)
+        if self._class_list.currentRow() < 0 and classes:
+            self._class_list.setCurrentRow(0)
         self._class_list.setMaximumHeight(160)
 
         self._tolerance = QtWidgets.QDoubleSpinBox(self)
@@ -80,7 +81,12 @@ class VectorMaskDialog(QtWidgets.QDialog):
             "from noisy classifications."
         )
 
-        form = QtWidgets.QFormLayout()
+        options = QtWidgets.QWidget(self)
+        form = QtWidgets.QFormLayout(options)
+        form.setContentsMargins(0, 0, 0, 0)
+        options.hide()
+        disclosure = QtWidgets.QCheckBox("Adjust tracing for new boundaries", self)
+        disclosure.toggled.connect(options.setVisible)
         form.addRow("Path tolerance", self._tolerance)
         form.addRow("Corners sharper than", self._corner_angle)
         form.addRow("Ignore specks under", self._min_area)
@@ -90,25 +96,23 @@ class VectorMaskDialog(QtWidgets.QDialog):
             | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
             self,
         )
-        self._buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setText("Convert")
+        self._buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setText("Edit boundary")
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
-        self._class_list.itemChanged.connect(self._update_ok)
+        self._class_list.currentRowChanged.connect(self._update_ok)
+        self._class_list.itemDoubleClicked.connect(self.accept)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(intro)
-        layout.addWidget(QtWidgets.QLabel("Classes", self))
+        layout.addWidget(QtWidgets.QLabel("Class", self))
         layout.addWidget(self._class_list)
-        layout.addLayout(form)
+        layout.addWidget(disclosure)
+        layout.addWidget(options)
         layout.addWidget(self._buttons)
         self._update_ok()
 
-    def selected_class_ids(self) -> tuple[int, ...]:
-        return tuple(
-            int(item.data(Qt.ItemDataRole.UserRole))
-            for item in (self._class_list.item(row) for row in range(self._class_list.count()))
-            if item.checkState() == Qt.CheckState.Checked
-        )
+    def selected_class_id(self) -> int:
+        return int(self._class_list.currentItem().data(Qt.ItemDataRole.UserRole))
 
     def options(self) -> VectorTraceOptions:
         return VectorTraceOptions(
@@ -119,5 +123,5 @@ class VectorMaskDialog(QtWidgets.QDialog):
 
     def _update_ok(self, *_args: object) -> None:
         self._buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setEnabled(
-            bool(self.selected_class_ids())
+            self._class_list.currentRow() >= 0
         )

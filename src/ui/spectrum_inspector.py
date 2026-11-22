@@ -29,6 +29,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from ui.theme import (
+    style_combo_popup,
     SPECTRUM_PLOT_AXIS_COLOR,
     SPECTRUM_PLOT_BACKGROUND,
     SPECTRUM_PLOT_GRID_COLOR,
@@ -281,6 +282,7 @@ class SpectrumInspector(QtWidgets.QWidget):
         self._follow_check.toggled.connect(self._on_follow_toggled)
 
         self._transform_combo = QtWidgets.QComboBox(self)
+        style_combo_popup(self._transform_combo)
         self._transform_combo.setObjectName("spectrumTransformCombo")
         self._transform_combo.setAccessibleName("Display")
         self._transform_combo.setToolTip(
@@ -322,6 +324,7 @@ class SpectrumInspector(QtWidgets.QWidget):
         self._export_button.clicked.connect(self._on_export_clicked)
 
         self._reference_combo = QtWidgets.QComboBox(self)
+        style_combo_popup(self._reference_combo)
         self._reference_combo.setObjectName("spectrumReferenceCombo")
         self._reference_combo.setAccessibleName("Reference spectrum")
         self._reference_combo.setToolTip("Spectrum to compare every pixel against")

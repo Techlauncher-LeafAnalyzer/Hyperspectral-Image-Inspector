@@ -244,8 +244,8 @@ def __init__(self, *args, **kwargs) -> None:
 ```python
 def _configure_tabs(self) -> None:
     """Name/style the two QTabWidgets (tabWidget = top-level sections,
-    classificationModeTabs = Unsupervised/Supervised) and attach a
-    _TabTransitionController to each for the slide/fade animation."""
+    classificationModeTabs = Unsupervised/Supervised) and attach the
+    slide/fade animation to the classification mode tabs."""
 
 def _configure_file_menu(self) -> None:
     """Build the File menu (Load Image / Save Image), opened from the left
@@ -297,7 +297,7 @@ def _on_mean_index(self, index_name: str) -> None:
 
 #### `_TabTransitionController(QtCore.QObject)`
 
-New private helper class (not present in the previous design). Gives a `QTabWidget` a sliding underline indicator plus a cross-fade on the incoming page (180ms, `OutCubic` easing). One instance is created per tab widget in `_configure_tabs`; purely cosmetic, holds no application state.
+New private helper class (not present in the previous design). Gives a `QTabWidget` a sliding underline indicator plus a cross-fade on the incoming page (180ms, `OutCubic` easing). The classification mode tabs receive this handler in `_configure_tabs`; purely cosmetic, holds no application state.
 
 ---
 
@@ -352,26 +352,17 @@ The **left stripe** has, top to bottom: the logo, the **File** menu button
 The **right stripe** (`workflowStripe`) replaced the main tab row. Its buttons
 are captioned "pills" (`ToolStripeButton(caption=...)`): **Visualize**,
 **Super-Res**, **Calibrate** | **Segment** | **Batch** (dividers between the
-groups). Visualize, Super-Res, Calibrate and Segment are `compact` tool windows: their
-in-window host is a `_FlyoutHost` floating over the image beside the pill,
-sized to its content, instead of a full-height dock. Hovering the pill
-*peeks* it (not counted as open; no view switch) and it disappears
-`FLYOUT_HIDE_DELAY_MS` after the pointer leaves both pill and flyout;
-clicking the pill, or clicking/focusing inside the flyout, *pins* it. One
-peek and one pinned flyout at a time, and they never overlap: a peek
-*suspends* (hides) the pinned flyout, which returns when the peek ends.
-Flyouts sit left of an open dock and of `ToolWindowStripe.flyout_obstacles`
-(the class-layer inspector on the Segmentation view); a pointer crossing
-between pill and flyout keeps the peek alive. Batch keeps a full-height
-dock. Each opens a
-`ToolSettingsPanel` (a scroll area) around a panel from `WorkflowPanels.ui`
-(index radios, Run Super-Resolution, dark/white references, classifier
-settings, the whole batch form). `tabWidget` remains as the canvas's page
-stack with its tab bar hidden, so the pan/zoom hand-off and fade on view
-change are unchanged. The first four panels are bound to a view: when one is
+groups). Visualize, Super-Res and Calibrate open compact flyouts beside their
+buttons. Clicking selects the corresponding canvas view and opens its settings.
+Clicking again closes the flyout while keeping the canvas view. Only one
+docked flyout is open at a time. Flyouts sit left of any open dock or visible
+inspector. Segment toggles its own inspector, and Batch opens a full-height dock.
+`tabWidget` remains as the canvas's page
+stack with its tab bar hidden. Switching views preserves pan and zoom and
+shows the incoming canvas at full opacity. The first four panels are bound to a view: when one is
 *activated* (`ToolWindow.activated` — opened, its popped-out window
 activated, or focus moved into it) the canvas switches to that page, and that
-pill gets an accent bar (`set_current`) even while its panel is closed. Batch
+pill uses a teal icon and bold teal text (`set_current`) even while its panel is closed. Batch
 has no view and leaves the canvas alone. Nothing is open at startup. The Segmentation class-layer inspector stays beside its canvas and now also holds **Separate leaves** (`ClassificationLayerPanel.separate_leaves_button`).
 
 ---

@@ -2,7 +2,7 @@
 
 1. On Windows, run `python scripts/build_pyinstaller.py` from the repository to create `dist\HyperView` (containing `HyperView.exe` and `_internal`).
 2. Open `inno.iss` in Inno Setup 7.
-3. Set `MyAppVersion` near the top to your release version (currently a placeholder: `1.0.0`).
+3. Set `MyAppVersion` near the top to your release version (currently `1.2.2`).
 4. Choose **Build > Compile** (Ctrl+F9).
 5. Share the installer created in `dist\installer`.
 

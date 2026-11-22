@@ -17,6 +17,8 @@ from matplotlib.mathtext import math_to_image
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
+from ui.theme import style_combo_popup
+
 from core import CUSTOM_INDEX_FUNCTIONS, CustomIndexError, parse_custom_index
 
 from core.visualization_model import BUILTIN_INDEX_FORMULAS
@@ -65,7 +67,7 @@ class SavedFormula:
 class CustomIndexStore:
     """Persist the user's named formulas and the applied one between sessions.
 
-    The library is kept in insertion order. Names are matched ignoring case,
+    The library is kept in save order. Names are matched ignoring case,
     so "my ndre" overwrites "My NDRE" rather than adding a near-duplicate.
     """
 
@@ -82,6 +84,31 @@ class CustomIndexStore:
             "HyperView",
             "HyperView",
         )
+
+        self._restore_default_indices()
+
+    def _restore_default_indices(self) -> None:
+        """Keep older edits as custom copies while restoring the shipped presets."""
+        entries = list(self.library())
+        used = {entry.name.casefold() for entry in entries}
+        changed = False
+        for i, entry in enumerate(entries):
+            if entry.name.upper() not in BUILTIN_INDEX_FORMULAS:
+                continue
+            base = f"{entry.name} (custom)"
+            name = base
+            suffix = 2
+            while name.casefold() in used:
+                name = f"{base} {suffix}"
+                suffix += 1
+            used.add(name.casefold())
+            entries[i] = SavedFormula(name, entry.formula)
+            if (self.active_name() or "").casefold() == entry.name.casefold():
+                self._settings.setValue(self.NAME_KEY, name)
+            changed = True
+        if changed:
+            self._write_library(entries)
+        self._settings.remove("visualization/deletedIndices")
 
     def load(self) -> str | None:
         """The applied formula, if any."""
@@ -122,13 +149,8 @@ class CustomIndexStore:
             return ()
 
     def indices(self) -> tuple[SavedFormula, ...]:
-        saved = self.library()
-        names = {entry.name.upper() for entry in saved}
-        deleted = self._settings.value("visualization/deletedIndices", [], type=list)
-        return saved + tuple(
-            SavedFormula(mode.value, formula)
-            for mode, formula in BUILTIN_INDEX_FORMULAS.items()
-            if mode not in names and mode not in deleted
+        return self.library() + tuple(
+            SavedFormula(mode.value, formula) for mode, formula in BUILTIN_INDEX_FORMULAS.items()
         )
 
     def find(self, name: str) -> SavedFormula | None:
@@ -141,26 +163,22 @@ class CustomIndexStore:
         return next((entry.name for entry in self.library() if entry.formula == text), None)
 
     def save_entry(self, name: str, formula: str) -> SavedFormula:
-        """Add a formula, or replace the one with the same name in place."""
+        """Add a formula, or replace the one with the same name and mark it as the newest."""
         entry = SavedFormula(name.strip(), formula.strip())
         if not entry.name or not entry.formula:
             raise ValueError("A saved formula needs a name and a formula.")
+        if entry.name.upper() in BUILTIN_INDEX_FORMULAS:
+            raise ValueError("Default index names are reserved. Choose a custom name.")
         key = entry.name.casefold()
-        entries = list(self.library())
-        for position, existing in enumerate(entries):
-            if existing.name.casefold() == key:
-                entries[position] = entry
-                break
-        else:
-            entries.append(entry)
+        entries = [existing for existing in self.library() if existing.name.casefold() != key]
+        entries.append(entry)
         self._write_library(entries)
         return entry
 
     def delete_entry(self, name: str) -> None:
         key = name.strip().casefold()
-        if name.upper() in BUILTIN_INDEX_FORMULAS:
-            deleted = self._settings.value("visualization/deletedIndices", [], type=list)
-            self._settings.setValue("visualization/deletedIndices", sorted(set(deleted) | {name.upper()}))
+        if name.strip().upper() in BUILTIN_INDEX_FORMULAS:
+            return
         self._write_library([e for e in self.library() if e.name.casefold() != key])
         if (self.active_name() or "").casefold() == key:
             self.save(None)
@@ -181,6 +199,17 @@ def render_formula_pixmap(latex: str, color: str = "#123e37") -> QtGui.QPixmap:
     pixmap = QtGui.QPixmap()
     pixmap.loadFromData(buffer.getvalue(), "PNG")
     return pixmap
+
+
+class _FormulaListDelegate(QtWidgets.QStyledItemDelegate):
+    """Tint idle rows while leaving the shared hover and selection styling visible."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        tint = index.data(Qt.ItemDataRole.UserRole + 1)
+        active = QtWidgets.QStyle.StateFlag.State_Selected | QtWidgets.QStyle.StateFlag.State_MouseOver
+        if tint is not None and not (option.state & active):
+            painter.fillRect(option.rect, tint)
 
 
 class CustomIndexDialog(QtWidgets.QDialog):
@@ -260,15 +289,15 @@ class CustomIndexDialog(QtWidgets.QDialog):
         self.previewLabel = QtWidgets.QLabel(self)
         self.previewLabel.setObjectName("customIndexPreview")
         self.previewLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.previewLabel.setMinimumHeight(84)
         self.previewLabel.setAccessibleName("Formula preview")
-        layout.addWidget(self.previewLabel)
+        layout.addWidget(self._output_area(self.previewLabel, 84))
 
         self.statusLabel = QtWidgets.QLabel(self)
         self.statusLabel.setObjectName("customIndexStatus")
         self.statusLabel.setWordWrap(True)
         self.statusLabel.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self.statusLabel)
+        self.statusLabel.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self._output_area(self.statusLabel, 3 * self.statusLabel.fontMetrics().lineSpacing() + 6))
 
         hint = QtWidgets.QLabel(
             "Operators + − × ÷ ^ and ( ); functions "
@@ -324,6 +353,18 @@ class CustomIndexDialog(QtWidgets.QDialog):
     # Construction helpers                                               #
     # ------------------------------------------------------------------ #
 
+    def _output_area(self, label: QtWidgets.QLabel, height: int) -> QtWidgets.QScrollArea:
+        """Keep generated content scrollable without changing the dialog's size hint."""
+        area = QtWidgets.QScrollArea(self)
+        area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        area.setWidgetResizable(True)
+        area.setWidget(label)
+        area.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
+        area.setFixedHeight(height)
+        area.viewport().setAutoFillBackground(False)
+        label.setAutoFillBackground(False)
+        return area
+
     def _range_text(self) -> str:
         if self._wavelengths is None:
             return "Load an image to see its available bands."
@@ -345,6 +386,8 @@ class CustomIndexDialog(QtWidgets.QDialog):
         layout.setSpacing(8)
         label = QtWidgets.QLabel("Saved formulas", row)
         self.savedCombo = QtWidgets.QComboBox(row)
+        style_combo_popup(self.savedCombo)
+        self.savedCombo.view().setItemDelegate(_FormulaListDelegate(self.savedCombo.view()))
         self.savedCombo.setObjectName("customIndexSavedCombo")
         self.savedCombo.setAccessibleName("Built-in and saved index formulas")
         self.savedCombo.setPlaceholderText("Unsaved formula")
@@ -451,12 +494,28 @@ class CustomIndexDialog(QtWidgets.QDialog):
         combo = self.savedCombo
         combo.blockSignals(True)
         combo.clear()
-        for entry in self._store.indices():
-            combo.addItem(entry.name, entry.formula)
-            combo.setItemData(combo.count() - 1, entry.formula, Qt.ItemDataRole.ToolTipRole)
+        custom = self._store.library()
+        defaults = [SavedFormula(mode.value, formula) for mode, formula in BUILTIN_INDEX_FORMULAS.items()]
+        for title, entries, tint in (("Custom formulas", custom, "#10168b7b"),
+                                     ("Default formulas", defaults, "#09556677")):
+            if not entries:
+                continue
+            combo.addItem(title)
+            header = combo.model().item(combo.count() - 1)
+            header.setFlags(Qt.ItemFlag.NoItemFlags)
+            font = combo.font()
+            font.setBold(True)
+            header.setFont(font)
+            for entry in entries:
+                combo.addItem(entry.name, entry.formula)
+                item = combo.model().item(combo.count() - 1)
+                item.setToolTip(entry.formula)
+                item.setData(QtGui.QColor(tint), Qt.ItemDataRole.UserRole + 1)
         combo.blockSignals(False)
-        if select is not None:
-            combo.setCurrentIndex(combo.findText(select, Qt.MatchFlag.MatchFixedString))
+        if select:
+            self.select_index(select)
+        elif select == "":
+            combo.setCurrentIndex(-1)
         else:
             self._sync_library_selection()
 
@@ -470,19 +529,20 @@ class CustomIndexDialog(QtWidgets.QDialog):
         )
         with QtCore.QSignalBlocker(self.savedCombo):
             self.savedCombo.setCurrentIndex(index)
-        self.deleteSavedButton.setEnabled(index >= 0)
+        self.deleteSavedButton.setEnabled(index >= 0 and self.savedCombo.currentText().upper() not in BUILTIN_INDEX_FORMULAS)
 
     def select_index(self, name: str) -> None:
-        index = self.savedCombo.findText(name, Qt.MatchFlag.MatchFixedString)
-        if index >= 0:
-            self.savedCombo.setCurrentIndex(index)
+        for index in range(self.savedCombo.count()):
+            if self.savedCombo.itemData(index) and self.savedCombo.itemText(index).casefold() == name.casefold():
+                self.savedCombo.setCurrentIndex(index)
+                return
 
     def _on_saved_formula_chosen(self, index: int) -> None:
-        if index >= 0:
-            self.deleteSavedButton.setEnabled(True)
+        if self.savedCombo.itemData(index):
+            self.deleteSavedButton.setEnabled(self.savedCombo.itemText(index).upper() not in BUILTIN_INDEX_FORMULAS)
             self._set_formula_text(self.savedCombo.itemData(index))
 
-    def _on_save_as_clicked(self) -> None:
+    def _on_save_as_clicked(self) -> SavedFormula | None:
         text = self.formulaEdit.text().strip()
         try:
             parse_custom_index(text)
@@ -492,8 +552,13 @@ class CustomIndexDialog(QtWidgets.QDialog):
             )
             return
         current = self.savedCombo.currentText() if self.savedCombo.currentIndex() >= 0 else ""
+        if current.upper() in BUILTIN_INDEX_FORMULAS:
+            current = f"{current} (custom)"
         name = self._ask_name(current or f"Custom index {len(self._store.library()) + 1}")
         if not name:
+            return
+        if name.strip().upper() in BUILTIN_INDEX_FORMULAS:
+            QtWidgets.QMessageBox.information(self, "Choose a custom name", "This name belongs to a default formula. Choose another name.")
             return
         existing = self._store.find(name)
         if existing is not None and existing.formula != text and not self._confirm(
@@ -504,12 +569,15 @@ class CustomIndexDialog(QtWidgets.QDialog):
         saved = self._store.save_entry(name, text)
         self._reload_library(select=saved.name)
         self.deleteSavedButton.setEnabled(True)
+        return saved
 
     def _on_delete_clicked(self) -> None:
         index = self.savedCombo.currentIndex()
         if index < 0:
             return
         name = self.savedCombo.itemText(index)
+        if name.upper() in BUILTIN_INDEX_FORMULAS:
+            return
         if not self._confirm("Delete saved formula?", f"Remove “{name}” from your saved formulas?"):
             return
         self._store.delete_entry(name)
@@ -607,8 +675,16 @@ class CustomIndexDialog(QtWidgets.QDialog):
     def _apply(self) -> None:
         if not self._validate():
             return
-        self._formula = self.formulaEdit.text().strip()
-        if self._store is not None and self.savedCombo.currentIndex() >= 0:
-            entry = self._store.save_entry(self.savedCombo.currentText(), self._formula)
-            self._formula_name = entry.name
+        text = self.formulaEdit.text().strip()
+        if self._store is not None and self.savedCombo.currentData():
+            name = self.savedCombo.currentText()
+            if name.upper() not in BUILTIN_INDEX_FORMULAS:
+                self._store.save_entry(name, text)
+            elif text != self.savedCombo.currentData():
+                copy = self._on_save_as_clicked()
+                if copy is None:
+                    return
+                name = copy.name
+            self._formula_name = name
+        self._formula = text
         self.accept()

@@ -59,6 +59,26 @@ def test_choosing_custom_without_a_formula_opens_the_editor(loaded_window):
     assert "R800 → 800.0 nm" in caption.text()
 
 
+def test_custom_defaults_to_last_save_but_dropdown_can_choose_older(loaded_window):
+    window = loaded_window
+    store = window._custom_index_store
+    store.save_entry("Green", "R550")
+    store.save_entry("Red", "R670")
+    store.save_entry("Green", "2 * R550")
+    window._custom_index_dialog_factory = lambda *a, **kw: pytest.fail("Unexpected editor")
+    window.modeCustom.click()
+    assert window.savedIndexCombo.currentText() == "Green"
+    assert window._custom_formula == "2 * R550"
+    window.modeRGB.click()
+    combo = window.savedIndexCombo
+    combo.setCurrentIndex(combo.findText("Red"))
+    combo.activated.emit(combo.currentIndex())
+    assert window.modeCustom.isChecked() and window._custom_formula == "R670"
+    window.modeRGB.click()
+    window.modeCustom.click()
+    assert window._custom_formula_name == "Green"
+
+
 def test_cancelling_the_editor_returns_to_the_previous_mode(loaded_window):
     loaded_window.modeNDVI.click()
     loaded_window._custom_index_dialog_factory = fake_dialog_factory(None)
@@ -223,6 +243,31 @@ def test_dialog_palette_inserts_at_the_cursor(qtbot):
     assert dialog.result() == QtWidgets.QDialog.DialogCode.Accepted
 
 
+def test_switching_saved_formulas_keeps_editor_geometry_stable(qtbot, isolated_settings):
+    store = CustomIndexStore()
+    store.save_entry("Long sum", " + ".join(f"R{nm}" for nm in range(500, 701, 10)))
+    dialog = CustomIndexDialog(np.arange(400., 901.), NDVI_FORMULA, store=store)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    def geometry():
+        return (dialog.frameGeometry(), dialog.savedCombo.mapToGlobal(dialog.savedCombo.rect().center()),
+                dialog.formulaEdit.geometry(), dialog.buttonBox.geometry())
+
+    initial = geometry()
+    for name in ("MCARI", "Long sum", "NDVI"):
+        dialog.select_index(name)
+        qtbot.waitUntil(lambda: not dialog._validate_timer.isActive())
+        QtWidgets.QApplication.processEvents()
+        assert geometry() == initial
+        if name == "Long sum":
+            preview_area = dialog.previewLabel.parentWidget().parentWidget()
+            mapping_area = dialog.statusLabel.parentWidget().parentWidget()
+            assert preview_area.horizontalScrollBar().maximum() > 0
+            assert mapping_area.verticalScrollBar().maximum() > 0
+
+
 def test_store_keeps_a_named_library(isolated_settings):
     store = CustomIndexStore()
     assert store.library() == ()
@@ -232,8 +277,8 @@ def test_store_keeps_a_named_library(isolated_settings):
     store.save_entry("ndre", "R790 / R720")  # Same name, any case: replaced in place.
 
     assert [(e.name, e.formula) for e in CustomIndexStore().library()] == [
-        ("ndre", "R790 / R720"),
         ("Ratio", "R800 / R670"),
+        ("ndre", "R790 / R720"),
     ]
     assert store.name_for("R800 / R670") == "Ratio"
 
@@ -263,7 +308,9 @@ def test_dialog_saves_loads_and_deletes_formulas(qtbot, isolated_settings, monke
     monkeypatch.setattr(dialog, "_confirm", lambda *_args: True)
 
     assert dialog.savedCombo.currentIndex() == -1  # Empty editor: unsaved.
-    dialog.savedCombo.setCurrentIndex(0)
+    labels = [dialog.savedCombo.itemText(i) for i in range(dialog.savedCombo.count())]
+    assert labels.index("Custom formulas") < labels.index("Ratio") < labels.index("Default formulas") < labels.index("NDVI")
+    dialog.select_index("Ratio")
     assert dialog.formulaEdit.text() == "R800 / R670"
     assert dialog.deleteSavedButton.isEnabled()
 
@@ -276,7 +323,7 @@ def test_dialog_saves_loads_and_deletes_formulas(qtbot, isolated_settings, monke
     dialog._apply()
     assert dialog.formula_name == "Normalized"
 
-    dialog.savedCombo.setCurrentIndex(0)
+    dialog.select_index("Ratio")
     dialog._on_delete_clicked()
     assert [e.name for e in store.library()] == ["Normalized"]
 
@@ -310,15 +357,17 @@ def test_manage_indices_updates_visualization_and_survives_restart(
     def edit_ndvi(dialog):
         assert dialog.savedCombo.currentText() == "NDVI"
         assert dialog.formulaEdit.text() == NDVI_FORMULA
+        assert not dialog.deleteSavedButton.isEnabled()
         dialog.formulaEdit.setText("2 * R550")
         dialog._apply()
         return dialog.result()
 
+    monkeypatch.setattr(CustomIndexDialog, "_ask_name", lambda *_: "Green copy")
     monkeypatch.setattr(CustomIndexDialog, "exec", edit_ndvi)
     window.editCustomIndexButton.click()
-    assert window.modeNDVI.isChecked()
+    assert window.modeCustom.isChecked()
     green = window._hsi_data.read_bands([2])[:, :, 0]
-    np.testing.assert_allclose(window._visualization_results[VisualizationMode.NDVI].values, 2 * green)
+    np.testing.assert_allclose(window._visualization_results[VisualizationMode.CUSTOM].values, 2 * green)
 
     def add_index(dialog):
         dialog.formulaEdit.setText("3 * R550")
@@ -330,7 +379,8 @@ def test_manage_indices_updates_visualization_and_survives_restart(
     monkeypatch.setattr(CustomIndexDialog, "exec", add_index)
     window.editCustomIndexButton.click()
     assert window.modeCustom.isChecked()
-    assert store.find("NDVI").formula == "2 * R550"
+    assert store.find("NDVI").formula == NDVI_FORMULA
+    assert store.find("Green copy").formula == "2 * R550"
     window.close()
 
     reopened = MainWindowController()
@@ -339,7 +389,7 @@ def test_manage_indices_updates_visualization_and_survives_restart(
     choices = reopened.savedIndexCombo
     assert choices.findText(store.MIGRATED_NAME) >= 0
     assert store.find(store.MIGRATED_NAME).formula == "R470 / R800"
-    np.testing.assert_allclose(reopened._visualization_results[VisualizationMode.NDVI].values, 2 * green)
+    assert not np.allclose(reopened._visualization_results[VisualizationMode.NDVI].values, 2 * green)
     choices.activated.emit(choices.findText("Triple green"))
     np.testing.assert_allclose(reopened._visualization_results[VisualizationMode.CUSTOM].values, 3 * green)
 
@@ -355,6 +405,22 @@ def test_manage_indices_updates_visualization_and_survives_restart(
     assert VisualizationMode.CUSTOM not in reopened._visualization_results
     reopened.modeNDVI.click()
     reopened.editCustomIndexButton.click()
-    assert reopened.modeRGB.isChecked() and reopened.modeNDVI.isHidden()
-    assert VisualizationMode.NDVI not in reopened._visualization_results
-    assert CustomIndexStore().find("NDVI") is None
+    assert reopened.modeNDVI.isChecked() and not reopened.modeNDVI.isHidden()
+    assert VisualizationMode.NDVI in reopened._visualization_results
+    assert CustomIndexStore().find("NDVI").formula == NDVI_FORMULA
+
+
+def test_old_default_override_becomes_a_custom_copy(isolated_settings):
+    store = CustomIndexStore()
+    store._settings.setValue(store.LIBRARY_KEY, '[{"name":"NDVI","formula":"R550"},{"name":"NDVI (custom)","formula":"R800"}]')
+    store._settings.setValue("visualization/deletedIndices", ["EVI"])
+    store.save("R550", "NDVI")
+
+    reopened = CustomIndexStore()
+    assert reopened.find("NDVI").formula == NDVI_FORMULA
+    assert reopened.find("EVI") is not None
+    assert reopened.active_name() == "NDVI (custom) 2"
+    assert reopened.find(reopened.active_name()).formula == "R550"
+    with pytest.raises(ValueError):
+        reopened.save_entry(" ndvi ", "R670")
+    assert CustomIndexStore().library() == reopened.library()

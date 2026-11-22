@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFontDatabase
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QComboBox, QFrame, QListView, QProxyStyle, QStyle
 
 
 APP_QSS = """
@@ -47,9 +47,9 @@ QPushButton:disabled {
 }
 
 QPushButton[primaryButton="true"] {
-    background: #168b7b;
+    background: #107566;
     color: #ffffff;
-    border-color: #168b7b;
+    border-color: #107566;
 }
 
 QPushButton[primaryButton="true"]:hover {
@@ -60,6 +60,7 @@ QPushButton[primaryButton="true"]:hover {
 QPushButton#unsupervisedClassifyButton:disabled,
 QPushButton#pushButton_2:disabled,
 QPushButton#runSuperResButton:disabled,
+QPushButton#calibrateButton:disabled,
 QPushButton#batchRunButton:disabled,
 QPushButton#spectrumSimilarityButton:disabled {
     color: #9ba9a6;
@@ -82,10 +83,10 @@ QFrame[toolWindowFlyout="true"] {
 }
 
 QLabel[toolSettingsHeading="true"] {
-    color: #526662;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 8px 0 0 0;
+    color: #324d45;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 0 2px;
 }
 
 QLabel[toolSettingsField="true"] {
@@ -95,7 +96,7 @@ QLabel[toolSettingsField="true"] {
 }
 
 QLabel[toolSettingsHint="true"] {
-    color: #7a8b87;
+    color: #546b63;
     font-size: 12px;
     padding: 2px 0;
 }
@@ -119,8 +120,10 @@ QStackedWidget#superResStatusStack {
     border: 0;
 }
 
-QPushButton#runSuperResButton {
-    padding: 5px 12px;
+QPushButton#runSuperResButton,
+QPushButton#calibrateButton {
+    min-height: 28px;
+    padding: 7px 12px;
 }
 
 QLineEdit, QComboBox {
@@ -148,47 +151,13 @@ QComboBox::down-arrow {
     height: 6px;
 }
 
-QComboBox#comboBox {
-    color: #173532;
-    border-radius: 7px;
-    padding: 7px 40px 7px 12px;
-    font-weight: 600;
-    selection-background-color: #e1f2ee;
-    selection-color: #124a40;
+QComboBox {
+    combobox-popup: 0;
 }
 
-QComboBox#comboBox:hover {
-    background: #f7fbfa;
-}
-
-QComboBox#comboBox:focus,
-QComboBox#comboBox:on {
-    background: #ffffff;
-}
-
-QComboBox#comboBox:disabled {
-    color: #9ba9a6;
-    background: #f0f3f2;
-}
-
-QComboBox#comboBox::drop-down {
-    width: 34px;
-    border: 0;
-    border-left: 1px solid #dce8e4;
-    border-top-right-radius: 6px;
-    border-bottom-right-radius: 6px;
-    background: #f2f8f6;
-}
-
-QComboBox#comboBox::drop-down:hover,
-QComboBox#comboBox:on::drop-down {
-    background: #e3f2ee;
-    border-left-color: #b6d7d0;
-}
-
-QComboBox#comboBox:disabled::drop-down {
-    background: #edf1f0;
-    border-left-color: #dde5e2;
+QComboBox:on {
+    border-color: #168b7b;
+    background: #fbfefd;
 }
 
 QRadioButton {
@@ -371,8 +340,8 @@ QFrame#toolWindowTitleBar {
 }
 
 QLabel#toolWindowTitle {
-    color: #2d4437;
-    font-size: 12px;
+    color: #233e34;
+    font-size: 15px;
     font-weight: 600;
     background: transparent;
 }
@@ -427,7 +396,7 @@ QMenu {
 }
 
 QMenu::item {
-    padding: 6px 28px 6px 12px;
+    padding: 10px 28px 10px 12px;
     border-radius: 4px;
 }
 
@@ -445,8 +414,8 @@ QMenu#fileMenu {
 
 QMenu#fileMenu::item {
     min-height: 20px;
-    padding: 9px 38px 9px 36px;
-    margin: 1px 0;
+    padding: 11px 38px 11px 38px;
+    margin: 0;
     border: 1px solid transparent;
     border-radius: 5px;
     font-weight: 550;
@@ -471,6 +440,7 @@ QMenu#fileMenu::icon {
 }
 
 QMenu#viewerContextMenu,
+QMenu#viewerSpectrumMenu,
 QMenu#viewerIndexMenu {
     background: #fbfdfc;
     color: #263735;
@@ -480,10 +450,11 @@ QMenu#viewerIndexMenu {
 }
 
 QMenu#viewerContextMenu::item,
+QMenu#viewerSpectrumMenu::item,
 QMenu#viewerIndexMenu::item {
     min-height: 22px;
-    padding: 8px 38px 8px 38px;
-    margin: 1px 0;
+    padding: 10px 38px;
+    margin: 0;
     border: 1px solid transparent;
     border-radius: 6px;
     font-size: 13px;
@@ -491,6 +462,7 @@ QMenu#viewerIndexMenu::item {
 }
 
 QMenu#viewerContextMenu::item:selected,
+QMenu#viewerSpectrumMenu::item:selected,
 QMenu#viewerIndexMenu::item:selected {
     background: #e3f1ee;
     color: #173f39;
@@ -498,6 +470,7 @@ QMenu#viewerIndexMenu::item:selected {
 }
 
 QMenu#viewerContextMenu::item:pressed,
+QMenu#viewerSpectrumMenu::item:pressed,
 QMenu#viewerIndexMenu::item:pressed {
     background: #d5eae5;
     color: #123e37;
@@ -505,6 +478,7 @@ QMenu#viewerIndexMenu::item:pressed {
 }
 
 QMenu#viewerContextMenu::item:checked,
+QMenu#viewerSpectrumMenu::item:checked,
 QMenu#viewerIndexMenu::item:checked {
     background: #edf7f4;
     color: #126f62;
@@ -512,6 +486,7 @@ QMenu#viewerIndexMenu::item:checked {
 }
 
 QMenu#viewerContextMenu::item:checked:selected,
+QMenu#viewerSpectrumMenu::item:checked:selected,
 QMenu#viewerIndexMenu::item:checked:selected {
     background: #d9ede8;
     color: #105f55;
@@ -519,6 +494,7 @@ QMenu#viewerIndexMenu::item:checked:selected {
 }
 
 QMenu#viewerContextMenu::item:disabled,
+QMenu#viewerSpectrumMenu::item:disabled,
 QMenu#viewerIndexMenu::item:disabled {
     background: transparent;
     color: #9ba9a6;
@@ -526,6 +502,7 @@ QMenu#viewerIndexMenu::item:disabled {
 }
 
 QMenu#viewerContextMenu::separator,
+QMenu#viewerSpectrumMenu::separator,
 QMenu#viewerIndexMenu::separator {
     height: 1px;
     background: #dbe5e2;
@@ -533,6 +510,7 @@ QMenu#viewerIndexMenu::separator {
 }
 
 QMenu#viewerContextMenu::icon,
+QMenu#viewerSpectrumMenu::icon,
 QMenu#viewerIndexMenu::icon {
     left: 11px;
     width: 18px;
@@ -540,6 +518,7 @@ QMenu#viewerIndexMenu::icon {
 }
 
 QMenu#viewerContextMenu::indicator,
+QMenu#viewerSpectrumMenu::indicator,
 QMenu#viewerIndexMenu::indicator {
     left: 12px;
     width: 16px;
@@ -547,11 +526,13 @@ QMenu#viewerIndexMenu::indicator {
 }
 
 QMenu#viewerContextMenu::indicator:checked,
+QMenu#viewerSpectrumMenu::indicator:checked,
 QMenu#viewerIndexMenu::indicator:checked {
     image: url(__MENU_CHECK__);
 }
 
 QMenu#viewerContextMenu::right-arrow,
+QMenu#viewerSpectrumMenu::right-arrow,
 QMenu#viewerIndexMenu::right-arrow {
     image: url(__MENU_CHEVRON__);
     width: 6px;
@@ -1390,11 +1371,6 @@ QWidget#spectrumInspector QCheckBox:focus {
     color: #105f55;
 }
 
-QWidget#spectrumInspector QComboBox {
-    padding: 5px 9px;
-    font-size: 12px;
-}
-
 QPushButton#spectrumSimilarityButton {
     padding: 5px 12px;
 }
@@ -1476,37 +1452,42 @@ QSplitter#spectrumPlotSplitter::handle {
 """
 
 
-CLASSIFIER_BORDER_QSS = """
-QComboBox#comboBox { border: 1px solid #b9d0ca; }
-QComboBox#comboBox:hover { border: 1px solid #83b8ad; }
-QComboBox#comboBox:focus,
-QComboBox#comboBox:on { border: 1px solid #168b7b; }
-QComboBox#comboBox:disabled { border: 1px solid #dde5e2; }
-"""
-
-
-CLASSIFIER_POPUP_QSS = """
+_COMBO_POPUP_QSS = """
 QListView {
-    background: #ffffff;
-    color: #263735;
-    border: 1px solid #cbdad6;
+    background: #fbfefd;
+    color: #223331;
+    border: 1px solid #168b7b;
     border-radius: 6px;
-    padding: 4px;
+    padding: 3px;
     outline: 0;
-    selection-background-color: #e1f2ee;
     selection-color: #124a40;
+    selection-background-color: #e1f2ee;
 }
 
 QListView::item {
-    padding: 5px 10px;
+    padding: 7px 6px;
     border-radius: 4px;
 }
 
 QListView::item:hover {
     background: #edf7f4;
+}
+
+QListView::item:selected {
+    background: #e1f2ee;
     color: #124a40;
 }
 """
+
+
+def style_combo_popup(combo: QComboBox) -> None:
+    """Use a list delegate so popup rows follow the application's combo theme."""
+    view = QListView(combo)
+    combo.setView(view)
+    view.setStyleSheet(_COMBO_POPUP_QSS)
+    popup = view.window()
+    popup.setFrameShape(QFrame.Shape.NoFrame)
+    popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
 
 # --- HSIViewer scene styling -------------------------------------------- #
@@ -1541,8 +1522,20 @@ TOOL_STRIPE_HOVER_COLOR          = "#e8efec"
 TOOL_STRIPE_DISABLED_COLOR       = "#b8c2bd"
 
 
+class _ViewerMenuStyle(QProxyStyle):
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if widget is not None and widget.objectName() == "viewerContextMenu":
+            # Let Qt track the pointer trajectory to the open submenu's corners.
+            if hint in (QStyle.StyleHint.SH_Menu_SloppySubMenus,
+                        QStyle.StyleHint.SH_Menu_SubMenuUniDirection):
+                return 1
+            if hint == QStyle.StyleHint.SH_Menu_SubMenuSloppySelectOtherActions:
+                return 0
+        return super().styleHint(hint, option, widget, returnData)
+
+
 def apply_theme(app: QApplication) -> None:
-    app.setStyle("Fusion")
+    app.setStyle(_ViewerMenuStyle("Fusion"))
     app.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
     assets_dir = Path(__file__).parent / "assets"
     combo_box_arrow = assets_dir / "chevron_down.svg"

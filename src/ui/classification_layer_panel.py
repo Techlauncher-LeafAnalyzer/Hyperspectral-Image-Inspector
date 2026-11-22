@@ -16,7 +16,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from core import ClassificationLayer
 from ui.annotation_panel import AnnotationToolsPage
 from ui.classification_colors import RGBColor, classification_palette
-from ui.theme import INSPECTOR_PANEL_WIDTH
+from ui.theme import INSPECTOR_PANEL_WIDTH, style_combo_popup
 from ui.viewer import PixelValueEntry, format_pixel_values_html
 
 
@@ -145,7 +145,7 @@ class _LayerRowWidget(QtWidgets.QWidget):
 
         count_text = f"{layer.pixel_count:,} pixels"
         if vectorized:
-            count_text += " · vector mask"
+            count_text += " · editable boundary"
         self._count_label = QtWidgets.QLabel(count_text, self)
         self._count_label.setObjectName("layerPixelCountLabel")
         if vectorized:
@@ -517,15 +517,14 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         self.separate_leaves_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.separate_leaves_button.setEnabled(False)
 
-        self._vectorize_button = QtWidgets.QPushButton("Vector mask…", self)
+        self._vectorize_button = QtWidgets.QPushButton("Edit class boundary…", self)
         self._vectorize_button.setObjectName("vectorizeButton")
         self._vectorize_button.setIcon(
             QtGui.QIcon(str(Path(__file__).parent / "assets" / "vector_mask.svg"))
         )
         self._vectorize_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._vectorize_button.setToolTip(
-            "Convert class regions into vector masks with editable Bézier "
-            "outlines, then reshape them with the Pen on the Annotations tab"
+            "Choose a class and edit its boundary on the image with the Pen"
         )
         self._vectorize_button.setEnabled(False)
         self._vectorize_button.clicked.connect(self.vectorizeRequested)
@@ -567,6 +566,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
         background_label = QtWidgets.QLabel("Visualization", self)
         background_label.setObjectName("layerBackgroundLabel")
         self._background_combo = QtWidgets.QComboBox(self)
+        style_combo_popup(self._background_combo)
         self._background_combo.setObjectName("layerBackgroundCombo")
         self._background_combo.setToolTip(
             "Choose the visualization shown beneath the class layers"
