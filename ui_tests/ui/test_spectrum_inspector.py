@@ -48,10 +48,12 @@ def _send_ctrl(viewer, kind):
     ))
 
 
-def test_holding_ctrl_follows_the_cursor_while_the_panel_is_open(loaded_window):
+def test_holding_ctrl_follows_the_cursor_while_the_panel_is_open(loaded_window, qtbot):
     controller = loaded_window._spectrum_controller
     inspector = controller.inspector
     viewer = loaded_window.viewer
+    # Hover skips reads while the background hypercube build runs.
+    qtbot.waitUntil(lambda: not loaded_window._hypercube_controller.is_building(), timeout=10000)
     controller.show()
     _send_ctrl(viewer, QtCore.QEvent.Type.KeyPress)
     assert inspector.is_following() and not inspector._follow_check.isChecked()
@@ -207,7 +209,7 @@ def test_transform_and_export(loaded_window, inspector, tmp_path, monkeypatch):
         QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(output), ""))
     )
     inspector._export_button.click()
-    lines = (tmp_path / "spectra.csv").read_text().splitlines()
+    lines = (tmp_path / "spectra.csv").read_text(encoding="utf-8").splitlines()
     assert lines[0] == 'wavelength_nm,"#1 · Pixel (3, 5)",Cursor'
     assert len(lines) == loaded_window._display_data().bands + 1
 

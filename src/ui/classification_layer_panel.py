@@ -268,6 +268,7 @@ class _LayerRowWidget(_LayerRow):
 
     visibilityChanged = pyqtSignal(int, bool)
     opacityChanged = pyqtSignal(int, float)
+    bordersOnlyChanged = pyqtSignal(int, bool)
     renameRequested = pyqtSignal(int, str)
 
     def __init__(
@@ -310,11 +311,21 @@ class _LayerRowWidget(_LayerRow):
         self._opacity_value_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
+        self._borders_check = QtWidgets.QCheckBox("Borders only", self)
+        self._borders_check.setObjectName("layerSpectraCheck")
+        self._borders_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._borders_check.setChecked(layer.borders_only)
+        self._borders_check.setToolTip(f"Draw only the border of {layer.name}")
+        self._borders_check.setAccessibleName(f"Draw {layer.name} as borders only")
+        self._borders_check.toggled.connect(
+            lambda checked: self.bordersOnlyChanged.emit(self.class_id, checked)
+        )
         opacity_header = QtWidgets.QHBoxLayout()
         opacity_header.setContentsMargins(0, 0, 0, 0)
         opacity_header.setSpacing(6)
         opacity_header.addWidget(self._opacity_caption)
         opacity_header.addStretch(1)
+        opacity_header.addWidget(self._borders_check)
         opacity_header.addWidget(self._opacity_value_label)
         self._layout.addLayout(opacity_header)
         self._layout.addWidget(self._opacity_slider)
@@ -398,6 +409,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
 
     visibilityChanged = pyqtSignal(int, bool)
     opacityChanged = pyqtSignal(int, float)
+    bordersOnlyChanged = pyqtSignal(int, bool)
     renameRequested = pyqtSignal(int, str)
     setAllVisibleRequested = pyqtSignal(bool)
     globalOpacityChanged = pyqtSignal(float)
@@ -722,6 +734,7 @@ class ClassificationLayerPanel(QtWidgets.QWidget):
             row.visibilityChanged.connect(self.visibilityChanged)
             row.visibilityChanged.connect(lambda *_: self._update_layer_summary())
             row.opacityChanged.connect(self.opacityChanged)
+            row.bordersOnlyChanged.connect(self.bordersOnlyChanged)
             row.renameRequested.connect(self.renameRequested)
             self._adopt(row)
             self._rows[layer.class_id] = row

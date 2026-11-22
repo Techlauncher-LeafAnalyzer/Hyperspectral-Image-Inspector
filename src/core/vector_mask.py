@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Iterable, Mapping, Optional
+from typing import Callable, Iterable, Mapping, Optional
 
 import numpy as np
 
@@ -567,6 +567,9 @@ class VectorMaskModel:
         self._undo: list[dict[int, VectorMask]] = []
         self._redo: list[dict[int, VectorMask]] = []
         self._coalesce_key: Optional[object] = None
+        # Called when a change starts a new undo step, so an owner can keep
+        # one history across several models.
+        self.on_record: Optional[Callable[[], None]] = None
 
     @property
     def masks(self) -> Mapping[int, VectorMask]:
@@ -643,6 +646,8 @@ class VectorMaskModel:
             return
         self._coalesce_key = coalesce_key
         self._undo.append(dict(self._masks))
+        if self.on_record is not None:
+            self.on_record()
 
 
 # ---------------------------------------------------------------------- #

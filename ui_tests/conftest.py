@@ -5,6 +5,10 @@ import os
 # Force, not setdefault: a desktop session exports QT_QPA_PLATFORM (e.g.
 # "wayland;xcb"), which would otherwise open a real window for every show().
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+# Offscreen Qt looks for fonts only in its own lib/fonts folder, which wheels
+# for Windows leave empty: text would measure as wide boxes, or not draw at all.
+if os.name == "nt" and "QT_QPA_FONTDIR" not in os.environ:
+    os.environ["QT_QPA_FONTDIR"] = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 
 from pathlib import Path
 from types import SimpleNamespace

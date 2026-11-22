@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace
 from enum import Enum
-from typing import Optional
+from typing import Callable, Optional
 
 from .errors import AnnotationError
 
@@ -115,6 +115,9 @@ class AnnotationLayerModel:
         self._undo: list[tuple[AnnotationLayer, ...]] = []
         self._redo: list[tuple[AnnotationLayer, ...]] = []
         self._coalesce_key: Optional[tuple[str, int]] = None
+        # Called when a change starts a new undo step, so an owner can keep
+        # one history across several models.
+        self.on_record: Optional[Callable[[], None]] = None
 
     @property
     def can_undo(self) -> bool:
@@ -159,6 +162,8 @@ class AnnotationLayerModel:
             return
         self._coalesce_key = coalesce_key
         self._undo.append(tuple(self._layers))
+        if self.on_record is not None:
+            self.on_record()
 
     @property
     def layers(self) -> tuple[AnnotationLayer, ...]:

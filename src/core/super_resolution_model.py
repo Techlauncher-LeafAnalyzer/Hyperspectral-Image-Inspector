@@ -175,7 +175,7 @@ class SuperResolutionService:
                 f"Insufficient temporary disk space: SR output needs {required / 2**30:.2f} GiB."
             )
         storage = tempfile.TemporaryDirectory(prefix="hsi-sr-")
-        output = None
+        image = output = None
         try:
             metadata = {
                 "lines": shape[0], "samples": shape[1], "bands": bands,
@@ -236,6 +236,7 @@ class SuperResolutionService:
                                    f"{device}: tile {completed}/{count}")
             output.flush()
             output = None
+            self._close(image)
             result_data = HSIReader().open(header)
             self._check_cancelled(is_cancelled)
             self._emit(progress, 100, f"SR ready: {shape[1]} × {shape[0]}, {bands} bands")
@@ -243,10 +244,23 @@ class SuperResolutionService:
                                          count > 1, _storage=storage)
         except Exception as exc:
             output = None
+            # Windows cannot delete the folder while a file in it is open.
+            self._close(image)
             storage.cleanup()
             if isinstance(exc, (CancelledError, SuperResolutionError)):
                 raise
             raise SuperResolutionError(f"Super-Resolution failed: {exc}") from exc
+
+    @staticmethod
+    def _close(image) -> None:
+        """Release the handle and memmap a spectral image keeps on its data file."""
+
+        if image is None:
+            return
+        image._memmap = None
+        fid = getattr(image, "fid", None)
+        if fid is not None:
+            fid.close()
 
     @staticmethod
     def _check_cancelled(check: CancellationCheck | None) -> None:

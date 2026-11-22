@@ -486,6 +486,10 @@ class ToolWindowStripe(QtWidgets.QToolBar):
         self._buttons: list[ToolStripeButton] = []
         self._dividers: list[QtWidgets.QFrame] = []
         self._layout.addStretch(1)
+        # Widgets pinned to the bottom, below the stretch.
+        self._footer = QtWidgets.QVBoxLayout()
+        self._footer.setSpacing(STRIPE_GAP)
+        self._layout.addLayout(self._footer)
         self.addWidget(self._body)
         self._inner_inset = 0
         self._apply_geometry()
@@ -523,17 +527,29 @@ class ToolWindowStripe(QtWidgets.QToolBar):
         button.marker_edge = (
             Qt.Edge.LeftEdge if self.edge == Qt.Edge.RightEdge else Qt.Edge.RightEdge
         )
-        self._layout.insertWidget(self._layout.count() - 1, button, 0, Qt.AlignmentFlag.AlignHCenter)
+        # Before the stretch and the footer.
+        self._layout.insertWidget(self._layout.count() - 2, button, 0, Qt.AlignmentFlag.AlignHCenter)
         self._buttons.append(button)
         self._apply_geometry()
 
     def add_divider(self) -> None:
+        self._layout.insertWidget(self._layout.count() - 2, self._new_divider())
+
+    def add_footer(self, widget: QtWidgets.QWidget) -> None:
+        """Pin ``widget`` to the bottom of the stripe, after a divider."""
+
+        widget.setParent(self._body)
+        self._footer.addWidget(self._new_divider())
+        self._footer.addWidget(widget, 0, Qt.AlignmentFlag.AlignHCenter)
+        widget.show()
+
+    def _new_divider(self) -> QtWidgets.QFrame:
         divider = QtWidgets.QFrame(self._body)
         divider.setObjectName("toolWindowStripeDivider")
         divider.setFixedHeight(1)
-        self._layout.insertWidget(self._layout.count() - 1, divider)
         self._dividers.append(divider)
         self._apply_geometry()
+        return divider
 
     def set_inner_inset(self, inset: int) -> None:
         """Account for ``inset`` px between the stripe and the image area."""

@@ -135,6 +135,9 @@ class _ClassificationSlot:
     # Names of classes drawn from scratch with the pen. Kept so that redoing
     # an undone drawing brings the class back under the same name.
     drawn_names: dict[int, str] = field(default_factory=dict)
+    # Snapshots of the class layer stack (order, deleted) for undo/redo.
+    stack_undo: list = field(default_factory=list)
+    stack_redo: list = field(default_factory=list)
 
 
 @dataclass
@@ -388,6 +391,11 @@ class ClassificationController(QObject):
 
         self._slot = _ClassificationSlot()
         self._annotations = _AnnotationSlot()
+        # One undo history across annotations, class outlines and the class
+        # stack: which kind of change each step was, newest last.
+        self._history: list[str] = []
+        self._redo_history: list[str] = []
+        self._hook_history()
         self._opacity_refresh_timer = QtCore.QTimer(self)
         self._opacity_refresh_timer.setSingleShot(True)
         self._opacity_refresh_timer.setInterval(_OPACITY_REFRESH_INTERVAL_MS)
@@ -537,6 +545,9 @@ class ClassificationController(QObject):
 
         self._slot = _ClassificationSlot()
         self._annotations = _AnnotationSlot()
+        self._history.clear()
+        self._redo_history.clear()
+        self._hook_history()
         self._layer_panel.clear()
         self._sync_annotations()
         self._update_separate_leaves_button()
@@ -618,6 +629,7 @@ class ClassificationController(QObject):
             )
         self._layer_panel.visibilityChanged.connect(self._on_layer_visibility_changed)
         self._layer_panel.opacityChanged.connect(self._on_layer_opacity_changed)
+        self._layer_panel.bordersOnlyChanged.connect(self._on_layer_borders_only_changed)
         self._layer_panel.renameRequested.connect(self._on_layer_rename_requested)
         self._layer_panel.regionRenameRequested.connect(
             self._on_annotation_rename_requested
@@ -1106,19 +1118,23 @@ class ClassificationController(QObject):
     @QtCore.pyqtSlot(int, int)
     def _on_class_move_requested(self, class_id: int, delta: int) -> None:
         slot = self._current_slot
-        if slot.layers is None or not slot.layers.move_class(class_id, delta):
+        if slot.layers is None:
             return
+        snapshot = slot.layers.stack
+        if not slot.layers.move_class(class_id, delta):
+            return
+        self._push_stack(slot, snapshot)
         self._populate_layer_panel(slot)
         self._show_result()
         self.regionsChanged.emit()
 
     @QtCore.pyqtSlot(int)
     def _on_class_delete_requested(self, class_id: int) -> None:
-        """Delete a class layer.
+        """Delete a class layer; Ctrl+Z brings it back.
 
-        A class drawn with the Pen is removed with its outline, which Ctrl+Z
-        undoes. A classified class's pixels can only come back by
-        classifying again, so that asks first.
+        A class drawn with the Pen is removed with its outline. A classified
+        class leaves the layer stack, keeping its pixels (and any outline)
+        so undoing restores it exactly.
         """
 
         slot = self._current_slot
@@ -1129,24 +1145,18 @@ class ClassificationController(QObject):
             self._layer_panel.set_selected_layer(None)
             return
         name = next(layer.name for layer in slot.layers.layers if layer.class_id == class_id)
-        answer = QMessageBox.question(
-            self._parent,
-            "Delete class layer",
-            f"Delete {name}? Its pixels become unclassified; classify again "
-            "to get it back.",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
+        snapshot = slot.layers.stack
         slot.layers.remove_class(class_id)
-        if class_id in slot.vectors:
-            slot.vectors.remove(class_id)
+        self._push_stack(slot, snapshot)
         if slot.vector_class == class_id:
             slot.vector_class = None
             slot.vector_selection = None
         self._layer_panel.set_selected_layer(None)
-        self._apply_vectors(slot)
+        self._populate_layer_panel(slot)
+        self._show_result()
         self.regionsChanged.emit()
-        self._statusbar.showMessage(f"Deleted {name}", 5000)
+        self.segmentationChanged.emit()
+        self._statusbar.showMessage(f"Deleted {name} · Ctrl+Z to undo", 5000)
 
     @QtCore.pyqtSlot(bool)
     def _on_set_all_visible_requested(self, visible: bool) -> None:
@@ -1236,6 +1246,18 @@ class ClassificationController(QObject):
         if layers is None:
             return
         layers.set_outline_mode(enabled)
+        self._show_result()
+
+    @QtCore.pyqtSlot(int, bool)
+    def _on_layer_borders_only_changed(self, class_id: int, enabled: bool) -> None:
+        layers = self._current_slot.layers
+        if layers is None:
+            return
+        try:
+            layers.set_class_borders_only(class_id, enabled)
+        except ClassificationError as exc:
+            self._statusbar.showMessage(str(exc), 8000)
+            return
         self._show_result()
 
     # ------------------------------------------------------------------ #
@@ -1515,10 +1537,43 @@ class ClassificationController(QObject):
     def redo_annotation(self) -> bool:
         return self._step_annotation_history(redo=True)
 
+    def _hook_history(self) -> None:
+        """Log every new undo step of the current annotation and outline models."""
+
+        self._annotations.layers.on_record = lambda: self._log("annotation")
+        self._slot.vectors.on_record = lambda: self._log("outline")
+
+    def _log(self, kind: str) -> None:
+        self._history.append(kind)
+        self._redo_history.clear()
+
+    def _push_stack(self, slot: _ClassificationSlot, snapshot) -> None:
+        """Record the class stack as it was before a reorder or delete."""
+
+        slot.stack_undo.append(snapshot)
+        slot.stack_redo.clear()
+        self._log("stack")
+
     def _step_annotation_history(self, *, redo: bool) -> bool:
-        if self._viewer.pen_active:
-            # The pen edits vector masks, so its history is the one to step.
+        """Undo (or redo) the newest change to annotations, class outlines or
+        the class stack, whichever it was."""
+
+        source, target = (
+            (self._redo_history, self._history) if redo
+            else (self._history, self._redo_history)
+        )
+        while source:
+            kind = source.pop()
+            if self._step_history(kind, redo=redo):
+                target.append(kind)
+                return True
+        return False
+
+    def _step_history(self, kind: str, *, redo: bool) -> bool:
+        if kind == "outline":
             return self._step_vector_history(redo=redo)
+        if kind == "stack":
+            return self._step_stack_history(redo=redo)
         slot = self._annotation_slot
         changed = slot.layers.redo() if redo else slot.layers.undo()
         if not changed:
@@ -1581,15 +1636,20 @@ class ClassificationController(QObject):
     # Private: vector masks                                               #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _reset_vectors(slot: _ClassificationSlot, base: _ClassificationResult) -> None:
-        """Start a fresh, unedited vector-mask history over ``base``."""
+    def _reset_vectors(self, slot: _ClassificationSlot, base: _ClassificationResult) -> None:
+        """Start a fresh, unedited vector-mask and class-stack history over ``base``."""
 
         slot.base_result = base
         slot.vectors = VectorMaskModel()
         slot.vector_class = None
         slot.vector_selection = None
         slot.drawn_names = {}
+        slot.stack_undo.clear()
+        slot.stack_redo.clear()
+        # Steps of the replaced classification can no longer be undone.
+        for log in (self._history, self._redo_history):
+            log[:] = [kind for kind in log if kind == "annotation"]
+        self._hook_history()
 
     def _rebuild(self, slot: _ClassificationSlot) -> bool:
         """Derive the displayed classes from the stored result and outlines.
@@ -1810,7 +1870,13 @@ class ClassificationController(QObject):
         slot.vectors.set_mask(class_id, mask)
         slot.vector_class = class_id
         slot.vector_selection = (class_id, 0, -1)
-        self._apply_vectors(slot)
+        if not self._rebuild(slot):
+            return
+        # A drawn class starts as borders only, so the image shows through.
+        slot.layers.set_class_borders_only(class_id, True)
+        self._populate_layer_panel(slot)
+        self._show_result()
+        self.segmentationChanged.emit()
         self._statusbar.showMessage(
             f"Added {slot.drawn_names[class_id]}; keep drawing to add more paths "
             "to it, or press Esc to start another class",
@@ -1910,6 +1976,24 @@ class ClassificationController(QObject):
             self._statusbar.showMessage("Vector mask removed; segmented pixels restored", 5000)
         else:
             self._statusbar.showMessage("Drawn class removed", 5000)
+
+    def _step_stack_history(self, *, redo: bool) -> bool:
+        slot = self._current_slot
+        source, target = (
+            (slot.stack_redo, slot.stack_undo) if redo else (slot.stack_undo, slot.stack_redo)
+        )
+        if not source or slot.layers is None:
+            return False
+        target.append(slot.layers.stack)
+        slot.layers.set_stack(source.pop())
+        self._populate_layer_panel(slot)
+        self._show_result()
+        self.regionsChanged.emit()
+        self.segmentationChanged.emit()
+        self._statusbar.showMessage(
+            "Class layer change redone" if redo else "Class layer change undone", 4000
+        )
+        return True
 
     def _step_vector_history(self, *, redo: bool) -> bool:
         slot = self._current_slot

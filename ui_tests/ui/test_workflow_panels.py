@@ -78,7 +78,7 @@ def test_nothing_open_at_start(shown_window):
     assert not any(tool.is_open() or tool.is_peeking() for tool in tools.values())
     # No pill is bound to a view, so none carries the current-view marker.
     assert not any(tool.button.is_current() for tool in tools.values())
-    assert window.classificationLayerPanel.isHidden() and window.toolPalette.isHidden()
+    assert window.classificationLayerPanel.isHidden()
 
 
 @pytest.mark.parametrize("name", ["visualization", "superResolution", "calibration"])
@@ -126,14 +126,11 @@ def test_bottom_bars_moved_into_their_panels(shown_window):
     for widget in (window.classificationModeTabs, window.comboBox,
                    window.unsupervisedClassifyButton, window.pushButton_2):
         assert window.classificationLayerPanel.isAncestorOf(widget)
-    # The canvas holds the toolbox, the image (and its mode caption) and the
-    # inspector.
+    # The canvas holds the image (and its mode caption) and the inspector.
     layout = window.canvas.layout()
     items = [layout.itemAt(i) for i in range(layout.count())]
-    assert [item.widget() for item in items] == [
-        window.toolPalette, None, window.classificationLayerPanel,
-    ]
-    image = items[1].layout()
+    assert [item.widget() for item in items] == [None, window.classificationLayerPanel]
+    image = items[0].layout()
     assert [image.itemAt(i).widget() for i in range(image.count())] == [
         window.visualizationStack, window.visualizationModeCaption,
     ]
@@ -322,21 +319,19 @@ def test_flyouts_clear_the_class_layer_inspector(shown_window):
 def test_segment_pill_toggles_the_inspector_and_keeps_results(shown_window):
     window = shown_window
     pill, inspector = window.segmentationPill, window.classificationLayerPanel
-    palette = window.toolPalette
-    assert not pill.isChecked() and inspector.isHidden() and palette.isHidden()
+    assert not pill.isChecked() and inspector.isHidden()
     # Not a hover pill: hovering shows nothing.
     assert not pill.receivers(pill.hoverChanged)
     pill.click()
-    assert inspector.isVisible() and palette.isVisible() and pill.isChecked()
-    # The toolbox sits at the image's left edge, the inspector at its right.
+    assert inspector.isVisible() and pill.isChecked()
+    # The inspector sits at the image's right.
     left = window.viewer.mapTo(window, QtCore.QPoint()).x()
-    assert palette.mapTo(window, QtCore.QPoint(palette.width(), 0)).x() <= left
     assert inspector.mapTo(window, QtCore.QPoint()).x() >= left + window.viewer.width()
     inspector.set_panel_width(360)
     window.classificationModeTabs.setCurrentWidget(window.unsupervisedClassificationTab)
-    # Second click: toolbox and inspector gone, the results stay on the canvas.
+    # Second click: inspector gone, the results stay on the canvas.
     pill.click()
-    assert inspector.isHidden() and palette.isHidden() and not pill.isChecked()
+    assert inspector.isHidden() and not pill.isChecked()
     # Third click: back exactly as it was.
     pill.click()
     assert inspector.isVisible() and pill.isChecked()
@@ -345,6 +340,32 @@ def test_segment_pill_toggles_the_inspector_and_keeps_results(shown_window):
     # Other panels open over the canvas without hiding the inspector.
     _tools(window)["calibration"].show()
     assert pill.isChecked() and inspector.isVisible()
+
+
+def test_toolbox_is_always_at_the_bottom_of_the_left_stripe(shown_window):
+    window = shown_window
+    stripe, palette = window.toolWindowStripe, window.toolPalette
+    assert stripe.isAncestorOf(palette) and palette.isVisible()
+    dividers = stripe.findChildren(QtWidgets.QFrame, "toolWindowStripeDivider")
+    top = lambda widget: widget.mapTo(window, QtCore.QPoint()).y()  # noqa: E731
+    assert top(window.spectrumTool.button) < top(max(dividers, key=top)) < top(palette)
+    window.segmentationPill.click()
+    window.segmentationPill.click()
+    assert palette.isVisible()
+
+
+def test_arming_a_tool_selects_segmentation(shown_window):
+    from core import AnnotationKind
+
+    window = shown_window
+    page = window.classificationLayerPanel.annotation_page
+    assert not window.segmentationPill.isChecked()
+    page._tool_buttons[AnnotationKind.RECTANGLE].click()
+    assert window.segmentationPill.isChecked()
+    assert window.classificationLayerPanel.isVisible()
+    # Turning the tool off leaves Segmentation selected.
+    page._tool_buttons[AnnotationKind.RECTANGLE].click()
+    assert window.segmentationPill.isChecked()
 
 
 def test_hiding_the_toolbox_turns_off_the_drawing_tool(shown_window):

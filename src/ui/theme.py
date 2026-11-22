@@ -1065,11 +1065,10 @@ QToolButton#annotationToolButton:focus {
     border: 1px solid #168b7b;
 }
 
-/* Drawing toolbox at the Segmentation image's left edge. */
+/* Drawing toolbox at the bottom of the left stripe. */
 QFrame#annotationToolPalette {
-    background: #f9fbfa;
-    border: 1px solid #d8e2df;
-    border-radius: 8px;
+    background: transparent;
+    border: none;
 }
 
 QToolButton#annotationPaletteButton {

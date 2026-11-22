@@ -64,6 +64,7 @@ class ClassificationLayer:
     pixel_count: int
     visible: bool
     opacity: float
+    borders_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +252,9 @@ class ClassificationLayerModel:
         self._opacity = {class_id: 1.0 for class_id in class_ids}
         self._global_opacity = 1.0
         self._outline_mode = False
+        # Classes drawn as borders only even when outline mode is off. IDs
+        # may outlive their class, so an undone drawn class keeps it on redo.
+        self._borders_only: set[int] = set()
         # Layer stack, bottom to top, like Photoshop's; overlapping classes
         # paint in this order. Deleted layers keep their masks but are gone
         # from the stack, the composite and every per-layer listing.
@@ -273,7 +277,8 @@ class ClassificationLayerModel:
                 model._opacity[class_id] = self._opacity[class_id]
         model._global_opacity = self._global_opacity
         model._outline_mode = self._outline_mode
-        kept = [class_id for class_id in self._order if class_id in model._visibility]
+        model._borders_only = set(self._borders_only)
+        kept =[class_id for class_id in self._order if class_id in model._visibility]
         model._order = kept + [class_id for class_id in model._class_ids if class_id not in kept]
         model._removed = self._removed & set(model._class_ids)
         return model
@@ -323,6 +328,21 @@ class ClassificationLayerModel:
         self._order = stack + [class_id for class_id in self._order if class_id in self._removed]
         return True
 
+    @property
+    def stack(self) -> tuple[tuple[int, ...], frozenset[int]]:
+        """The layer stack (order, deleted IDs), to snapshot for undo."""
+
+        return tuple(self._order), frozenset(self._removed)
+
+    def set_stack(self, stack: tuple[tuple[int, ...], frozenset[int]]) -> None:
+        """Restore a :attr:`stack` snapshot; IDs this result lacks are ignored."""
+
+        order, removed = stack
+        known = set(self._class_ids)
+        kept = [class_id for class_id in order if class_id in known]
+        self._order = kept + [class_id for class_id in self._class_ids if class_id not in kept]
+        self._removed = set(removed) & known
+
     def remove_class(self, class_id: int) -> None:
         """Delete a layer: it leaves the stack and no longer paints or lists."""
 
@@ -365,6 +385,7 @@ class ClassificationLayerModel:
                 pixel_count=self._pixel_counts[self._class_index(class_id)],
                 visible=self._visibility[class_id],
                 opacity=self._opacity[class_id],
+                borders_only=class_id in self._borders_only,
             )
             for class_id in self.paint_order
         )
@@ -449,6 +470,17 @@ class ClassificationLayerModel:
             raise ClassificationError("Outline mode must be true or false.")
         self._outline_mode = bool(enabled)
 
+    def set_class_borders_only(self, class_id: int, enabled: bool) -> None:
+        """Draw one layer as borders only, whatever the outline mode."""
+
+        normalized = self._require_class(class_id)
+        if not isinstance(enabled, (bool, np.bool_)):
+            raise ClassificationError("Borders only must be true or false.")
+        if enabled:
+            self._borders_only.add(normalized)
+        else:
+            self._borders_only.discard(normalized)
+
     def visible_mask(self) -> np.ndarray:
         """Return a read-only HxW boolean union of all visible classes."""
 
@@ -465,8 +497,8 @@ class ClassificationLayerModel:
 
         Where classes overlap, the one painted last (see ``paint_order``)
         sets the opacity. The result is additionally scaled by
-        ``global_opacity`` and, in ``outline_mode``, restricted to each class
-        region's boundary pixels.
+        ``global_opacity`` and, in ``outline_mode`` or for a borders-only
+        class, restricted to each class region's boundary pixels.
         """
 
         return self._paint(None, None)[1]
@@ -492,7 +524,7 @@ class ClassificationLayerModel:
             ):
                 continue
             mask = self._one_hot_masks[self._class_index(class_id)].astype(bool, copy=False)
-            if self._outline_mode:
+            if self._outline_mode or class_id in self._borders_only:
                 mask = _boundary_mask(mask)
             alpha[mask] = self._opacity[class_id] * self._global_opacity
             if rgb is not None:

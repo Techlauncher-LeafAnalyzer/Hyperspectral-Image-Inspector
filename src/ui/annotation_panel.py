@@ -1,6 +1,6 @@
 """Drawing tools and their options, shown in the segmentation side panel.
 
-The toolbox (:attr:`AnnotationToolsPage.tool_palette`) sits beside the image;
+The toolbox (:attr:`AnnotationToolsPage.tool_palette`) sits in the left stripe;
 the page itself holds the options: appearance of the selected or next shape,
 and the class vector masks the Pen edits. Annotation layers are listed with
 every other layer in :class:`~ui.classification_layer_panel.ClassificationLayerPanel`.
@@ -49,16 +49,6 @@ _TOOL_ICONS = {
     AnnotationKind.TEXT: "annotation_text.svg",
     PEN_TOOL: "annotation_pen.svg",
 }
-_PEN_HINT = (
-    "Click to place corner points, or drag to pull smooth handles; click the "
-    "first point (or press Enter) to close a new path. A closed path becomes "
-    "a new class, or is added to the class layer you select. Select a class "
-    "layer to edit its outline; press Esc to go back to drawing a new class. "
-    "Click an outline to select it, then click it again to add a point. Drag "
-    "points and handles to reshape; Alt-drag a handle to break it into a "
-    "corner. Alt-click or double-click a point to toggle corner/smooth; "
-    "Delete removes it."
-)
 _ANCHOR_MODE_TIPS = {
     AnchorMode.CORNER: "Corner: handles move independently, for a sharp turn",
     AnchorMode.SMOOTH: "Smooth: handles stay in line so the curve flows through",
@@ -145,16 +135,16 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         self._tool_group.setExclusive(False)
 
         # Photoshop-style toolbox: a column of square icon buttons. The page
-        # owns it, but the window places it at the image's left edge.
+        # owns it, but the window places it at the bottom of the left stripe.
         self.tool_palette = QtWidgets.QFrame(self)
         self.tool_palette.setObjectName("annotationToolPalette")
-        self.tool_palette.hide()  # until the window places it beside the image
+        self.tool_palette.hide()  # until the window places it in the stripe
         self.tool_palette.setAccessibleName("Drawing tools")
         self.tool_palette.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Maximum
         )
         palette_layout = QtWidgets.QVBoxLayout(self.tool_palette)
-        palette_layout.setContentsMargins(4, 4, 4, 4)
+        palette_layout.setContentsMargins(0, 0, 0, 0)
         palette_layout.setSpacing(4)
         for kind, label, tip in _TOOL_LABELS:
             button = QtWidgets.QToolButton(self.tool_palette)
@@ -175,11 +165,6 @@ class AnnotationToolsPage(QtWidgets.QWidget):
             button.clicked.connect(
                 lambda checked, k=kind: self._on_tool_clicked(k, checked)
             )
-
-        self._pen_hint = QtWidgets.QLabel(_PEN_HINT, self)
-        self._pen_hint.setObjectName("annotationHint")
-        self._pen_hint.setWordWrap(True)
-        self._pen_hint.hide()
 
         self._fill_button = _ColorButton(defaults.fill, "Fill colour (also text colour)")
         self._fill_check = QtWidgets.QCheckBox("Fill shapes", self)
@@ -283,7 +268,6 @@ class AnnotationToolsPage(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 2, 0)
         layout.setSpacing(8)
-        layout.addWidget(self._pen_hint)
         layout.addWidget(vector_section)
         layout.addWidget(controls)
         layout.addWidget(self._measure_check)
@@ -457,7 +441,6 @@ class AnnotationToolsPage(QtWidgets.QWidget):
 
         for tool, button in self._tool_buttons.items():
             button.setChecked(tool == kind)
-        self._pen_hint.setVisible(kind == PEN_TOOL)
         self._vector_section.setVisible(kind == PEN_TOOL)
 
     def clear_tool(self) -> None:

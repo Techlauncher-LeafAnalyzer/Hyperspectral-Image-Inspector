@@ -31,17 +31,18 @@ def test_stripe_sits_on_the_left_edge_with_both_tools(shown_window):
     assert window.toolBarArea(stripe) == QtCore.Qt.ToolBarArea.LeftToolBarArea
     assert stripe.mapTo(window, QtCore.QPoint()).x() == 0
     assert [tool.button.text() for tool in stripe.tool_windows] == ["Spectrum"]
-    # Logo, File, a divider, the view toggles, a divider, then tool windows
-    # — top to bottom.
+    # Logo, File, a divider, the view toggles, a divider, tool windows, then
+    # a divider and the drawing toolbox — top to bottom.
     def top(widget):
         return widget.mapTo(window, QtCore.QPoint()).y()
 
-    file_divider, tools_divider = stripe.findChildren(
-        QtWidgets.QFrame, "toolWindowStripeDivider"
+    file_divider, tools_divider, toolbox_divider = sorted(
+        stripe.findChildren(QtWidgets.QFrame, "toolWindowStripeDivider"), key=top
     )
     order = [stripe.logo, window.fileMenuButton, file_divider,
              window.superResolutionSwitch, window.calibrationSwitch,
-             tools_divider, window.spectrumTool.button]
+             tools_divider, window.spectrumTool.button,
+             toolbox_divider, window.toolPalette]
     assert [top(w) for w in order] == sorted(top(w) for w in order)
     assert len({top(w) for w in order}) == len(order)
     assert window.findChild(QtWidgets.QDockWidget, "imageViewDock") is None

@@ -164,6 +164,8 @@ def test_rotated_text_is_exported_rotated(qtbot):
     flat = render_annotations(_canvas(60), model.layers)
     model.set_rotation(layer.layer_id, 90)
     turned = render_annotations(_canvas(60), model.layers)
-    red = lambda img: np.argwhere((img == RED).all(axis=-1))
-    f, t = red(flat), red(turned)
+    # Antialiased glyphs are mostly blends of red and the canvas, so take
+    # every pixel the text touched.
+    inked = lambda img: np.argwhere((img != _canvas(60)).any(axis=-1))
+    f, t = inked(flat), inked(turned)
     assert np.ptp(f[:, 1]) > np.ptp(f[:, 0]) and np.ptp(t[:, 0]) > np.ptp(t[:, 1])

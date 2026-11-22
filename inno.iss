@@ -3,7 +3,7 @@
 ; The bundle is read from dist\HyperView; installers are written to dist\installer.
 ; Change MyAppVersion for each release. Keep AppId unchanged for upgrades.
 #define MyAppName "HyperView"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.2.0"
 #define MyAppExeName "HyperView.exe"
 #ifndef MyAppSource
 #define MyAppSource "dist\HyperView"

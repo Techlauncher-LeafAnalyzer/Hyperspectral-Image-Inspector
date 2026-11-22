@@ -94,7 +94,7 @@ _CACHED_VISUALIZATION_MODES = (
 
 LOGGER = logging.getLogger(__name__)
 
-# Smallest the image area gets beside the toolbox, inspector and docks.
+# Smallest the image area gets beside the inspector and docks.
 _MIN_IMAGE_SIZE = 160
 
 
@@ -431,6 +431,14 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.spectrumTool.set_available(
             False, "Spectrum Inspector: load an image first"
         )
+        # The drawing toolbox is always at the bottom; arming a tool opens
+        # the Segmentation inspector, which holds the tool's options.
+        annotation_page = self.classificationLayerPanel.annotation_page
+        self.toolPalette = annotation_page.tool_palette
+        self.toolWindowStripe.add_footer(self.toolPalette)
+        annotation_page.toolChanged.connect(
+            lambda kind: kind is not None and self._set_segmentation_sidebar_shown(True)
+        )
 
     def _setup_workflow_panels_form(self) -> None:
         """Build the right-sidebar panels from ``qt/WorkflowPanels.ui``.
@@ -456,8 +464,8 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         Calibration need little room, so each pill opens a compact flyout over
         it (shown on hover, pinned by a click) holding a panel from
         ``WorkflowPanels.ui``; their settings apply to the canvas in place.
-        Segment toggles the drawing toolbox and the layer inspector beside
-        the canvas (see :meth:`_on_segmentation_pill_clicked`), and Batch gets
+        Segment toggles the layer inspector beside the canvas (see
+        :meth:`_on_segmentation_pill_clicked`), and Batch gets
         a full-height dock; dividers set those two apart.
         """
         stripe = self.workflowStripe = ToolWindowStripe(
@@ -497,10 +505,6 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.segmentationPill.clicked.connect(self._on_segmentation_pill_clicked)
         # The classifier form joins the inspector beside the image.
         self.classificationLayerPanel.set_classifier_controls(self.segmentationPanel)
-        # The drawing toolbox sits at the image's left edge, like Photoshop's.
-        # Both are shown by the Segment pill.
-        self.toolPalette = self.classificationLayerPanel.annotation_page.tool_palette
-        self.canvasLayout.insertWidget(0, self.toolPalette, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         self.classificationLayerPanel.hide()
         # The image takes whatever room is left; its size hint (the whole
         # picture) must not squeeze the inspector below its own width.
@@ -542,17 +546,18 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         return not self.classificationLayerPanel.isHidden()
 
     def _on_segmentation_pill_clicked(self) -> None:
-        """Show or hide the drawing toolbox and layer inspector.
+        self._set_segmentation_sidebar_shown(not self._segmentation_sidebar_shown())
+
+    def _set_segmentation_sidebar_shown(self, shown: bool) -> None:
+        """Show or hide the layer inspector.
 
         Hiding keeps the classes and annotations on the canvas; showing again
         brings the inspector back exactly as it was (same mode, scroll, width).
         """
-        shown = not self._segmentation_sidebar_shown()
         if not shown:
-            # A hidden toolbox must not leave a drawing tool armed.
+            # A drawing tool is only armed while Segmentation is selected.
             self.classificationLayerPanel.annotation_page.clear_tool()
         self.classificationLayerPanel.setVisible(shown)
-        self.toolPalette.setVisible(shown)
         self._sync_segmentation_pill()
 
     def _fit_classification_mode_tabs(self, *_args) -> None:
