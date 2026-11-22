@@ -83,6 +83,7 @@ class SpectrumController(QtCore.QObject):
         self._parent = parent_widget
         self._similarity: Optional[tuple[HSIData, SimilarityResult]] = None
         self._tool_window = None
+        self._pending_hover: tuple[HSIViewer, object, int, int] | None = None
         # What each plotted class/region spectrum was computed from, so a
         # refresh recomputes only the regions that actually changed.
         self._region_signatures: dict[str, tuple] = {}
@@ -347,6 +348,7 @@ class SpectrumController(QtCore.QObject):
     def image_changed(self) -> None:
         """Drop spectra and maps tied to the previous cube."""
 
+        self._pending_hover = None
         self._similarity = None
         self.inspector.reset_for_new_image()
 
@@ -354,12 +356,14 @@ class SpectrumController(QtCore.QObject):
         """Drop the similarity map after a crop; ``HSIData`` is updated in place,
         so identity alone can't tell the map is stale."""
 
+        self._pending_hover = None
         self._similarity = None
         # HSIData is cropped in place, so a pin's source identity survives a
         # crop while its coordinates no longer match: drop the pins.
         self.inspector.remove_series(list(self.inspector.pin_keys()))
 
     def shutdown(self) -> None:
+        self._pending_hover = None
         if self._tool_window is not None:
             self._tool_window.hide()
 
@@ -404,6 +408,8 @@ class SpectrumController(QtCore.QObject):
         held = held and self.is_open()
         was_following = self._is_following()
         self.inspector.set_held_follow(held)
+        if not self._is_following():
+            self._pending_hover = None
         pixel = viewer.hovered_pixel()
         if held and not was_following and pixel is not None:
             # Show the pixel already under the pointer without waiting for
@@ -413,17 +419,28 @@ class SpectrumController(QtCore.QObject):
     def _is_following(self) -> bool:
         return self.is_open() and self.inspector.is_following()
 
+    def retry_pending_hover(self) -> None:
+        pending, self._pending_hover = self._pending_hover, None
+        if pending is not None:
+            viewer, image, row, column = pending
+            data = self._data_for_viewer(viewer)
+            if data is not None and data.spectral_obj is image:
+                self._on_pixel_hovered(viewer, row, column)
+
     def _on_pixel_hovered(self, viewer: HSIViewer, row: int, column: int) -> None:
+        self._pending_hover = None
         if not self._is_following():
             return
         if self._blocked_reason() is not None:
             return
-        if self._hypercube_busy():
-            # Hover must never stall the cursor waiting on a worker.
-            self.inspector.set_status("Live trace paused while the hypercube preview builds")
-            return
         data = self._data_for_viewer(viewer)
         if data is None or not (0 <= row < data.rows and 0 <= column < data.columns):
+            return
+        if self._hypercube_busy():
+            # Hover is emitted once per pixel. Replay the newest request when
+            # the shared reader is free, even if the mouse has stayed still.
+            self._pending_hover = (viewer, data.spectral_obj, row, column)
+            self.inspector.set_status("Live trace paused while the hypercube preview builds")
             return
         try:
             result = self._visualization.spectrum(data, row, column)

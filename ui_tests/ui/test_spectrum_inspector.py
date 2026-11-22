@@ -23,10 +23,11 @@ def _classify(window, qtbot):
     qtbot.waitUntil(lambda: not window._classification_controller.is_running(), timeout=10000)
 
 
-def test_hover_updates_live_trace_from_any_viewer(loaded_window, inspector):
+def test_hover_updates_live_trace_from_any_viewer(loaded_window, inspector, qtbot):
     data = loaded_window._display_data()
     for viewer in (loaded_window.viewer, loaded_window.classificationViewer):
         viewer.pixelHovered.emit(3, 5)
+        qtbot.waitUntil(lambda: inspector._live is not None and inspector._live.row == 3)
         np.testing.assert_array_equal(inspector._live.values, data.read_pixel(3, 5))
         viewer.pixelHovered.emit(1, 2)
         np.testing.assert_array_equal(inspector._live.values, data.read_pixel(1, 2))
@@ -48,7 +49,7 @@ def _send_ctrl(viewer, kind):
     ))
 
 
-def test_holding_ctrl_follows_the_cursor_while_the_panel_is_open(loaded_window):
+def test_holding_ctrl_follows_the_cursor_while_the_panel_is_open(loaded_window, qtbot):
     controller = loaded_window._spectrum_controller
     inspector = controller.inspector
     viewer = loaded_window.viewer
@@ -56,6 +57,7 @@ def test_holding_ctrl_follows_the_cursor_while_the_panel_is_open(loaded_window):
     _send_ctrl(viewer, QtCore.QEvent.Type.KeyPress)
     assert inspector.is_following() and not inspector._follow_check.isChecked()
     viewer.pixelHovered.emit(3, 5)
+    qtbot.waitUntil(lambda: inspector._live is not None)
     assert (inspector._live.row, inspector._live.column) == (3, 5)
     assert inspector._live_line is not None
 
@@ -114,6 +116,47 @@ def test_hover_skips_reads_while_hypercube_builds(loaded_window, inspector, monk
     loaded_window.viewer.pixelHovered.emit(3, 5)
     assert inspector._live is None
     assert stops == []  # hover must never block on the hypercube worker
+
+
+@pytest.mark.parametrize("release_ctrl", [False, True])
+def test_ctrl_hover_during_build_keeps_only_latest_pixel(
+    loaded_window, monkeypatch, qtbot, release_ctrl
+):
+    from threading import Event
+
+    window = loaded_window
+    build_started, finish_build = Event(), Event()
+    service = window._visualization_service
+    prepare = service.prepare_hypercube_view
+
+    def delayed_preview(*args, **kwargs):
+        build_started.set()
+        assert finish_build.wait(5)
+        return prepare(*args, **kwargs)
+
+    monkeypatch.setattr(service, "prepare_hypercube_view", delayed_preview)
+    window._hypercube_controller.refresh(window._display_data())
+    controller = window._spectrum_controller
+    viewer = window.viewer
+    controller.show()
+    try:
+        assert build_started.wait(2)
+        _send_ctrl(viewer, QtCore.QEvent.Type.KeyPress)
+        viewer.pixelHovered.emit(3, 5)
+        viewer.pixelHovered.emit(1, 2)
+        assert controller.inspector._live is None
+        if release_ctrl:
+            _send_ctrl(viewer, QtCore.QEvent.Type.KeyRelease)
+    finally:
+        finish_build.set()
+    qtbot.waitUntil(lambda: not window._hypercube_controller.is_building())
+    if release_ctrl:
+        assert controller.inspector._live is None
+    else:
+        qtbot.waitUntil(lambda: controller.inspector._live is not None)
+        live = controller.inspector._live
+        assert (live.row, live.column) == (1, 2)
+        np.testing.assert_array_equal(live.values, window._display_data().read_pixel(1, 2))
 
 
 def test_viewer_emits_pixel_hovered_once_per_pixel(loaded_window, qtbot):
@@ -359,9 +402,9 @@ def test_markers_survive_mode_switch_and_clear_on_crop(loaded_window, inspector)
     assert loaded_window.viewer._pin_marker_items == []
 
 
-def test_unfollowing_hides_the_cursor_line_and_following_restores_it(loaded_window, inspector):
+def test_unfollowing_hides_the_cursor_line_and_following_restores_it(loaded_window, inspector, qtbot):
     loaded_window.viewer.pixelHovered.emit(3, 5)
-    assert inspector._live_line is not None
+    qtbot.waitUntil(lambda: inspector._live_line is not None)
     assert "Cursor" in inspector._series()
 
     inspector._follow_check.setChecked(False)

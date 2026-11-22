@@ -292,6 +292,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             statusbar=self.statusbar,
             parent_widget=self,
         )
+        self._hypercube_controller.readerReleased.connect(
+            self._spectrum_controller.retry_pending_hover, QtCore.Qt.ConnectionType.QueuedConnection
+        )
         self._spectrum_controller.similarityReady.connect(self._on_similarity_ready)
         self.classificationLayerPanel.classSpectraRequested.connect(
             self._spectrum_controller.show_class_spectra

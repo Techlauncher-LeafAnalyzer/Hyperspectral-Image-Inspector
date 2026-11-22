@@ -4,7 +4,7 @@ import dataclasses
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QRadioButton, QStackedWidget, QStatusBar
 
 from core import HSIData, HypercubeViewData, VisualizationService
@@ -24,6 +24,8 @@ class HypercubeController(QObject):
     worker lifecycle) lives in one place rather than mixed into the rest of
     the application's wiring.
     """
+
+    readerReleased = pyqtSignal()
 
     def __init__(
         self,
@@ -125,6 +127,7 @@ class HypercubeController(QObject):
             worker._thread.wait()
         except RuntimeError:
             pass  # The worker already finished and deleted itself.
+        self.readerReleased.emit()
 
     def resume(self, hsi_data: HSIData) -> None:
         """Resume an interrupted build after another feature releases the source.
@@ -172,6 +175,7 @@ class HypercubeController(QObject):
             self._view_cache = self._view_cache[-4:]
         if self._mode_button.isChecked():
             self._refresh_display()
+        self.readerReleased.emit()
 
     def _on_failed(self, generation: int, message: str) -> None:
         if generation != self._generation:
@@ -181,6 +185,7 @@ class HypercubeController(QObject):
         LOGGER.info("Hypercube unavailable: %s", message)
         if self._mode_button.isChecked():
             self._refresh_display()
+        self.readerReleased.emit()
 
     def _refresh_display(self) -> None:
         if self._error is not None:
