@@ -226,7 +226,7 @@ payload and must not be reused for scientific calculations.
   as JSON, `visualization/customIndexFormula` and `customIndexName`). A
   formula saved by an older version becomes the first library entry.
 - BRIGHTNESS sums every band (`VisualizationService.band_sum`, read in
-  chunks of `BAND_SUM_CHUNK` bands) and scales it to 0-1 between the
+  chunks of `BAND_SUM_CHUNK` bands) and returns that sum as the pixel value. Display colours scale to 0-1 between the
   request's `stretch` percentiles (2nd/98th by default), clipping beyond them
   so a few very bright pixels saturate rather than darkening everything else.
   Pass `segments`, an integer label raster, to scale each label `>= 0` on its

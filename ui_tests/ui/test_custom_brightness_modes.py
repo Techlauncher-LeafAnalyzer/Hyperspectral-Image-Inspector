@@ -104,8 +104,10 @@ def test_brightness_defaults_to_whole_image(loaded_window):
     loaded_window.modeBrightness.click()
 
     result = loaded_window._visualization_results[VisualizationMode.BRIGHTNESS]
-    assert np.nanmin(result.values) == pytest.approx(0.0)
-    assert np.nanmax(result.values) == pytest.approx(1.0)
+    np.testing.assert_array_equal(result.values, loaded_window._band_sum_for(loaded_window._hsi_data))
+    grid = loaded_window.visualizationSpectralGrid
+    assert grid.itemAtPosition(0, 0).widget() is loaded_window.modeHyperCube
+    assert grid.itemAtPosition(0, 1).widget() is loaded_window.modeBrightness
     caption = loaded_window.visualizationModeCaption.text()
     assert "Whole image" in caption
     assert "sum of all 8 bands" in caption
@@ -154,11 +156,7 @@ def test_supervised_result_switches_brightness_to_per_leaf(loaded_window, qtbot,
 
     brightness = window._visualization_results[VisualizationMode.BRIGHTNESS]
     assert band_reads == []  # The cached band sum is reused.
-    for columns in (slice(0, 3), slice(5, 8)):
-        leaf = brightness.values[:, columns]
-        assert leaf.min() == pytest.approx(0.0)
-        assert leaf.max() == pytest.approx(1.0)
-    assert np.isnan(brightness.values[:, 3:5]).all()
+    np.testing.assert_array_equal(brightness.values, window._band_sum_for(window._hsi_data))
     assert "2 clusters" in window.visualizationModeCaption.text()
     assert "per leaf cluster" in window.modeBrightness.toolTip()
 
@@ -188,7 +186,7 @@ def test_brightness_mean_uses_friendly_label(loaded_window, monkeypatch):
     loaded_window._on_mean_index("BRIGHTNESS")
 
     assert shown and shown[0][0] == "Brightness"
-    assert 0.0 <= shown[0][1] <= 1.0
+    assert shown[0][1] == pytest.approx(loaded_window._band_sum_for(loaded_window._hsi_data).mean())
 
 
 def test_dialog_validates_and_maps_bands(qtbot):

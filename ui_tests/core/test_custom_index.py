@@ -143,9 +143,12 @@ def test_brightness_scales_the_whole_image_to_unit_range(camera_cube_factory):
     total = cube.sum(axis=2)
     low, high = np.percentile(total, (2, 98))
     expected = np.clip((total - low) / (high - low), 0, 1)
-    np.testing.assert_allclose(result.values, expected, rtol=1e-5, atol=1e-6)
-    assert result.value_range == pytest.approx((0.0, 1.0))
-    assert result.display_limits == (0.0, 1.0)
+    np.testing.assert_allclose(result.values, total, rtol=1e-6)
+    np.testing.assert_array_equal(
+        result.display_rgb, VisualizationService._apply_colormap(expected, result.colormap)
+    )
+    assert result.value_range == pytest.approx((total.min(), total.max()))
+    assert result.display_limits == pytest.approx((low, high))
     assert "whole image" in result.title
 
 
@@ -157,12 +160,21 @@ def test_brightness_scales_each_segment_separately(camera_cube_factory):
     result = VisualizationService().render(
         data, VisualizationRequest("BRIGHTNESS", segments=segments)
     )
-    for label in (0, 7):
-        region = result.values[segments == label]
-        assert region.min() == pytest.approx(0.0)
-        assert region.max() == pytest.approx(1.0)
-    assert np.isnan(result.values[segments == -1]).all()
+    expected = VisualizationService.normalize_by_segment(cube.sum(axis=2, dtype=np.float64), segments)
+    np.testing.assert_array_equal(
+        result.display_rgb, VisualizationService._apply_colormap(expected, result.colormap)
+    )
+    np.testing.assert_allclose(result.values, cube.sum(axis=2), rtol=1e-6)
+    assert result.display_limits is None
     assert "per cluster, 2 clusters" in result.title
+
+
+def test_brightness_reports_sum_of_all_reflectances(camera_cube_factory, monkeypatch):
+    data, _ = camera_cube_factory([470, 550, 800])
+    cube = np.broadcast_to([0.1, 0.2, 0.4], (data.rows, data.columns, 3))
+    monkeypatch.setattr(data, "read_bands", lambda bands: cube[:, :, list(bands)])
+    result = VisualizationService().render(data, VisualizationRequest("BRIGHTNESS"))
+    np.testing.assert_allclose(result.values, 0.7)
 
 
 def test_brightness_reuses_a_supplied_band_sum(camera_cube_factory, monkeypatch):
@@ -171,7 +183,7 @@ def test_brightness_reuses_a_supplied_band_sum(camera_cube_factory, monkeypatch)
     total = service.band_sum(data)
     monkeypatch.setattr(data, "read_bands", lambda *_: pytest.fail("must not re-read"))
     result = service.render(data, VisualizationRequest("BRIGHTNESS", band_sum=total))
-    assert np.nanmax(result.values) == pytest.approx(1.0)
+    np.testing.assert_array_equal(result.values, total)
 
 
 def test_a_few_bright_pixels_do_not_darken_their_cluster():

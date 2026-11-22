@@ -740,20 +740,28 @@ class VisualizationService:
         segments = request.segments
         if segments is not None and data.roi_mask is not None:
             segments = np.where(data.roi_mask, segments, -1)
-        values = self.normalize_by_segment(
-            data.masked(total).fill(), segments, request.stretch
-        )
+        values = data.masked(total).fill()
         colormap = request.colormap or self.DEFAULT_COLORMAPS[VisualizationMode.BRIGHTNESS]
         finite = values[np.isfinite(values)]
+        limits = None
         if segments is None:
             scope = "whole image"
+            normalized = np.zeros(values.shape, dtype=np.float32)
+            if finite.size:
+                low, high = np.percentile(
+                    finite, (request.stretch.lower_percentile, request.stretch.upper_percentile)
+                )
+                if high > low:
+                    limits = (float(low), float(high))
+                    normalized = np.clip((values - low) / (high - low), 0, 1).astype(np.float32)
         else:
+            normalized = self.normalize_by_segment(values, segments, request.stretch)
             count = np.unique(segments[segments >= 0]).size
             scope = f"per cluster, {count} cluster{'s' if count != 1 else ''}"
         ends = {"first": 0, "last": data.bands - 1}
         return VisualizationResult(
             mode=VisualizationMode.BRIGHTNESS,
-            display_rgb=self._apply_colormap(values, colormap),
+            display_rgb=self._apply_colormap(normalized, colormap),
             values=values,
             title=f"Brightness (sum of {data.bands} bands, {scope})",
             value_range=(
@@ -762,7 +770,7 @@ class VisualizationService:
             band_indices=MappingProxyType(ends),
             band_wavelengths_nm=MappingProxyType(self._wavelength_map(data, ends)),
             colormap=colormap,
-            display_limits=(0.0, 1.0),
+            display_limits=limits,
         )
 
     @staticmethod
