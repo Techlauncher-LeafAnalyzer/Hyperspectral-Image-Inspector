@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ui.tool_windows import ToolStripeButton
 
@@ -262,6 +262,17 @@ def test_hover_peeks_a_compact_panel_until_the_pointer_leaves(shown_window, qtbo
     assert not tool.is_peeking() and tool.host.isHidden()
 
 
+def test_pointer_in_gap_does_not_keep_unpinned_menu_open(shown_window, qtbot, monkeypatch):
+    tool = _tools(shown_window)["visualization"]
+    tool.peek()
+    button_left = tool.button.mapTo(shown_window, QtCore.QPoint()).x()
+    gap = QtCore.QPoint(button_left - 1, tool.host.geometry().center().y())
+    assert not tool.host.geometry().contains(gap)
+    monkeypatch.setattr(QtGui.QCursor, "pos", lambda: shown_window.mapToGlobal(gap))
+    tool.host.hoverChanged.emit(False)
+    qtbot.waitUntil(tool.host.isHidden, timeout=250)
+
+
 def test_clicking_the_pill_pins_the_flyout(shown_window, qtbot):
     window = shown_window
     tool = _tools(window)["calibration"]
@@ -284,6 +295,8 @@ def test_clicking_inside_a_peeking_flyout_pins_it(shown_window, qtbot):
     assert tools["visualization"].is_open()
     tools["superResolution"].button.hoverChanged.emit(True)
     tools["superResolution"]._on_focus_changed(None, window.runSuperResButton)
+    assert tools["superResolution"].is_peeking()
+    qtbot.mouseClick(tools["superResolution"].title_bar, QtCore.Qt.MouseButton.LeftButton)
     assert tools["superResolution"].is_open()
     assert window.tabWidget.currentWidget() is window.SuperResolution
     _leave(tools["superResolution"], qtbot)
@@ -298,6 +311,24 @@ def test_one_peek_at_a_time(shown_window):
     tools["calibration"].button.hoverChanged.emit(True)
     assert tools["calibration"].is_peeking()
     assert not tools["visualization"].is_peeking() and tools["visualization"].host.isHidden()
+
+
+def test_fast_menu_switch_cancels_old_leave_and_positions_before_show(shown_window, qtbot):
+    tools = _tools(shown_window)
+    pinned, first, last = (tools[name] for name in ("visualization", "superResolution", "calibration"))
+    pinned.show()
+    first.peek()
+    first.host.hoverChanged.emit(False)
+    positions = []
+    last.host.visibilityChanged.connect(
+        lambda visible: positions.append(last.host.geometry()) if visible else None
+    )
+    last.peek()
+    assert positions == [last.host.geometry()]
+    qtbot.wait(FLYOUT_HIDE_DELAY_MS + 50)
+    assert last.is_peeking() and first.host.isHidden() and pinned.host.isHidden()
+    last.hide()
+    assert pinned.host.isVisible() and pinned.is_open()
 
 
 def test_flyouts_clear_the_batch_dock(shown_window, qtbot):

@@ -57,7 +57,7 @@ SETTINGS_PANEL_WIDTH = 330
 SETTINGS_PANEL_MIN_WIDTH = 260
 # A peeking flyout stays this long after the pointer leaves it, so the
 # pointer can cross the gap between the button and the flyout.
-FLYOUT_HIDE_DELAY_MS = 300
+FLYOUT_HIDE_DELAY_MS = 90
 # Width of the accent bar that marks the pill whose view the canvas shows.
 _CURRENT_MARKER_WIDTH = 3
 
@@ -919,7 +919,7 @@ class ToolWindow(QtCore.QObject):
             self._leave_timer.setInterval(FLYOUT_HIDE_DELAY_MS)
             self._leave_timer.timeout.connect(self._end_peek_if_pointer_left)
             self.button.hoverChanged.connect(self._on_hover_changed)
-            self.host.hoverChanged.connect(self._on_hover_changed)
+            self.host.hoverChanged.connect(self._on_host_hover_changed)
             self.host.pressed.connect(self._pin_peek)
             self.host.layoutChanged.connect(self.place_flyout)
 
@@ -946,17 +946,15 @@ class ToolWindow(QtCore.QObject):
     def show(self) -> None:
         if not self.button.isEnabled():
             return
-        self._peeking = False
+        self._stop_peeking()
+        self._suspended = False
         if self._floating:
             self.window.show()
             self.window.raise_()
             self.window.activateWindow()
         else:
             self._hide_docked_siblings()
-            self.host.show()
-            self.host.raise_()
-            if self.compact:
-                self.place_flyout()
+            self._show_host()
         # visibilityChanged doesn't fire while the main window is hidden.
         self._sync_button()
         self.activated.emit()
@@ -969,7 +967,7 @@ class ToolWindow(QtCore.QObject):
         if self._floating:
             self._remember_popped_size()
             self.window.hide()
-        self._peeking = False
+        self._stop_peeking()
         self._suspended = False
         self.host.hide()
         self._sync_button()
@@ -997,9 +995,30 @@ class ToolWindow(QtCore.QObject):
             if other is not self:
                 other._suspend()
         self._peeking = True
+        QtWidgets.QApplication.instance().installEventFilter(self)
+        self._show_host()
+
+    def _stop_peeking(self) -> None:
+        if self.compact:
+            self._leave_timer.stop()
+        if self._peeking:
+            self._peeking = False
+            QtWidgets.QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if (self._peeking and event.type() == QtCore.QEvent.Type.MouseButtonPress
+                and isinstance(watched, QtWidgets.QWidget)
+                and self.host.isAncestorOf(watched)):
+            self._pin_peek()
+        return super().eventFilter(watched, event)
+
+    def _show_host(self) -> None:
+        if self.compact:
+            self.host.ensurePolished()
+            self.host.layout().activate()
+            self._position_flyout()
         self.host.show()
         self.host.raise_()
-        self.place_flyout()
 
     def _suspend(self) -> None:
         """Hide a pinned flyout while a sibling peeks, without unpinning it."""
@@ -1011,9 +1030,7 @@ class ToolWindow(QtCore.QObject):
     def _resume(self) -> None:
         if self._suspended:
             self._suspended = False
-            self.host.show()
-            self.host.raise_()
-            self.place_flyout()
+            self._show_host()
 
     def place_flyout(self) -> None:
         """Put a compact tool's flyout beside its button, sized to its content.
@@ -1024,6 +1041,9 @@ class ToolWindow(QtCore.QObject):
 
         if not self.compact or self.host.isHidden():
             return
+        self._position_flyout()
+
+    def _position_flyout(self) -> None:
         window = self._main_window
         right = self._stripe.mapTo(window, QtCore.QPoint()).x() - STRIPE_GAP
         blockers = [other.host for other in self._stripe.tool_windows
@@ -1051,7 +1071,7 @@ class ToolWindow(QtCore.QObject):
         if floating == self._floating:
             return
         if floating:
-            self.host.hide()
+            self.hide()
             self.host.setWidget(None)
             self.window.host(self.panel)
             self.panel.show()
@@ -1078,9 +1098,7 @@ class ToolWindow(QtCore.QObject):
     def _on_focus_changed(self, _old, now) -> None:
         if now is None or sip.isdeleted(self.panel):
             return
-        if self.panel.isAncestorOf(now):
-            # Working in a peeking flyout keeps it on screen.
-            self._pin_peek()
+        if self.panel.isAncestorOf(now) and self.is_open() and not self._suspended:
             self.activated.emit()
 
     def _pin_peek(self) -> None:
@@ -1091,6 +1109,12 @@ class ToolWindow(QtCore.QObject):
         if inside:
             self._leave_timer.stop()
             self.peek()
+        else:
+            self._on_host_hover_changed(False)
+
+    def _on_host_hover_changed(self, inside: bool) -> None:
+        if inside:
+            self._leave_timer.stop()
         elif self.is_peeking():
             self._leave_timer.start()
 
@@ -1101,11 +1125,6 @@ class ToolWindow(QtCore.QObject):
         cursor = window.mapFromGlobal(QtGui.QCursor.pos())
         button = QtCore.QRect(self.button.mapTo(window, QtCore.QPoint()), self.button.size())
         if button.contains(cursor) or self.host.geometry().contains(cursor):
-            return
-        # Crossing from the button to the flyout (perhaps over a dock or an
-        # inspector between them): keep it a while longer.
-        if button.united(self.host.geometry()).contains(cursor):
-            self._leave_timer.start()
             return
         self.hide()
 
@@ -1121,7 +1140,7 @@ class ToolWindow(QtCore.QObject):
         # One full-height dock and one pinned flyout per side, like an IDE.
         for other in self._stripe.tool_windows:
             if other is not self and not other.floating and other.compact == self.compact:
-                other.hide()
+                other._hide(resume=False)
 
     def _on_window_hidden(self) -> None:
         # The system close button hides the tool; it stays popped out for
