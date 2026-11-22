@@ -475,8 +475,6 @@ class BatchController(QtCore.QObject):
                 )
                 if file_result.csv_output_path is not None:
                     text += f", {file_result.csv_output_path.name}"
-                if file_result.auto_cropped:
-                    text += " (auto-cropped)"
             else:
                 text = f"✗ {file_result.input_path.name}: {file_result.error}"
             item = QtWidgets.QListWidgetItem(text)

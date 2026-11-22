@@ -47,7 +47,6 @@ from .errors import (
 )
 from .hsi_data import HSIData
 from .hsi_reader import HSIReader
-from .marker_crop import find_plus_crop
 from .super_resolution_model import SuperResolutionRequest, SuperResolutionService
 from .visualization_export_model import (
     ImageExportFormat,
@@ -343,7 +342,7 @@ class BatchService:
         progress: ProgressCallback,
         is_cancelled: CancellationCheck | None,
     ) -> BatchFileResult:
-        stages: list[tuple[str, int]] = [("open", 5), ("auto_crop", 10)]
+        stages: list[tuple[str, int]] = [("open", 5), ("preview", 10)]
         if request.super_resolve is not None:
             stages.append(("super_resolve", 30))
         if request.calibrate is not None:
@@ -389,10 +388,8 @@ class BatchService:
         extension =_EXPORT_EXTENSIONS[request.export_format]
         try:
             self._check_cancelled(is_cancelled)
-            crop_progress = stage_progress("auto_crop")
-            crop_progress(0, "Detecting Leaf2QR pattern")
-            auto_cropped = self._auto_crop(data)
-            crop_progress(50, "Saving raw preview")
+            preview_progress = stage_progress("preview")
+            preview_progress(0, "Saving raw preview")
             raw_display = self._visualization_service.render(
                 data, VisualizationRequest(VisualizationMode.RGB)
             ).display_rgb
@@ -402,7 +399,7 @@ class BatchService:
                 request,
                 data.roi_mask,
             )
-            crop_progress(100, "Saved raw preview")
+            preview_progress(100, "Saved raw preview")
 
             current = data
             # Super-Resolution always runs on the uncalibrated source (as in
@@ -465,6 +462,7 @@ class BatchService:
                 classify_progress = stage_progress("classify")
                 if request.classify.mode is BatchClassificationMode.UNSUPERVISED:
                     assert request.classify.unsupervised_request is not None
+                    current.rgb_array = display_rgb
                     classification_result = self._classification_service.classify_unsupervised(
                         current,
                         request.classify.unsupervised_request,
@@ -530,7 +528,6 @@ class BatchService:
                 output_path=saved,
                 raw_output_path=raw_saved,
                 csv_output_path=csv_saved,
-                auto_cropped=auto_cropped,
                 calibrated=calibrated,
                 super_resolved=super_resolved,
                 classified=classified,
@@ -541,17 +538,6 @@ class BatchService:
             if calibration_result is not None:
                 calibration_result.cleanup()
             data.close()
-
-    def _auto_crop(self, data: HSIData) -> bool:
-        """Polygon-crop to the Leaf2QR markers, as the single-image load does."""
-
-        rgb = self._visualization_service.render(
-            data, VisualizationRequest(VisualizationMode.RGB)
-        ).display_rgb
-        data.rgb_array = rgb
-        data.mask_array = np.zeros(rgb.shape[:2], dtype=np.uint8)
-        polygon = find_plus_crop(rgb)
-        return polygon is not None and data.crop_polygon(polygon) is not None
 
     def _export_summary_csv(
         self,
@@ -627,8 +613,7 @@ class BatchService:
         request: BatchRequest,
         roi_mask: np.ndarray | None,
     ) -> Path:
-        # JPEG/BMP have no alpha, so they keep the crop's bounding rectangle
-        # rather than failing every auto-cropped file.
+        # Only PNG and TIFF can carry a spatial mask as an alpha channel.
         alpha = (
             roi_mask
             if request.export_format in (ImageExportFormat.PNG, ImageExportFormat.TIFF)

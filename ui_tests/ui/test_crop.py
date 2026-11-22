@@ -147,7 +147,7 @@ def test_crop_rescales_view_to_fit_the_cropped_image(loaded_window, qtbot, viewe
     assert 0 <= got_center.y() <= 4
 
 
-def test_auto_crop_on_load_keeps_fitting_while_the_viewport_settles(window, qtbot, tmp_path):
+def test_full_marker_image_on_load_keeps_fitting_while_the_viewport_settles(window, qtbot, tmp_path):
     """The load's refreshes re-queue the fitted view; that must stay a fit
     (refit on resize), not pin a scale computed before layout settled."""
     from conftest import write_marker_cube
@@ -159,7 +159,8 @@ def test_auto_crop_on_load_keeps_fitting_while_the_viewport_settles(window, qtbo
     _wait_for_settled_viewport(qtbot, viewer)
 
     window.load_image_from_path(write_marker_cube(tmp_path, "leaf"))
-    assert window._crop_undo_stack, "the marker pattern should auto-crop"
+    assert not window._crop_undo_stack
+    assert window._hsi_data.rgb_array.shape == (120, 120, 3)
     window.resize(900, 600)  # the layout is still settling after the load
     qtbot.wait(350)
 

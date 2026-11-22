@@ -138,25 +138,63 @@ def test_batch_saves_raw_preview_for_every_file(window, tmp_path, monkeypatch, q
     assert (output_dir / "sample_raw.png").exists()
 
 
-def test_batch_service_auto_crops_marker_pattern(tmp_path):
+def test_batch_service_preserves_full_marker_image(tmp_path):
     from PIL import Image
 
-    from core import BatchRequest, BatchService
+    from core import (BatchClassificationMode, BatchClassificationOptions, BatchRequest,
+                      BatchService, UnsupervisedClassificationRequest)
 
     sample = write_marker_cube(tmp_path, "leaf")
     output_dir = tmp_path / "out"
-    result = BatchService().run(BatchRequest((sample,), output_dir))
+    options = BatchClassificationOptions(
+        BatchClassificationMode.UNSUPERVISED,
+        unsupervised_request=UnsupervisedClassificationRequest(n_classes=2),
+    )
+    result = BatchService().run(BatchRequest((sample,), output_dir, classify=options))
 
     file_result = result.file_results[0]
     assert file_result.succeeded, file_result.error
-    assert file_result.auto_cropped
+    assert not file_result.auto_cropped
     for path in (file_result.output_path, file_result.raw_output_path):
         with Image.open(path) as image:
-            assert image.mode == "RGBA"
-            assert image.size[0] < 120 and image.size[1] < 120
-            alpha = np.asarray(image)[:, :, 3]
-            assert alpha[0, 0] == 0
-            assert alpha[alpha.shape[0] // 2, alpha.shape[1] // 2] == 255
+            assert image.size == (120, 120)
+            if path == file_result.output_path:
+                assert image.getpixel((0, 0)) == (0, 0, 0)
+                assert image.getpixel((60, 60)) != (0, 0, 0)
+
+
+def test_marker_segmentation_uses_current_image_coordinates(window, tmp_path):
+    from core import ClassificationService, UnsupervisedClassificationRequest
+
+    window.load_image_from_path(write_marker_cube(tmp_path, "leaf"))
+    window._hypercube_controller.stop_and_wait()  # share the reader as the UI worker does
+    data = window._hsi_data
+    service = ClassificationService()
+    request = UnsupervisedClassificationRequest(n_classes=2)
+    result = service.classify_unsupervised(data, request)
+    assert result.class_map.shape == (120, 120)
+    assert result.class_map[0, 0] == -1
+    assert not result.one_hot_masks[:, 0, 0].any()
+    assert result.class_map[60, 60] >= 0
+    assert data.roi_mask is None
+    # All dark tag pixels are outside the fit, so every populated centre
+    # has the bright interior spectrum.
+    np.testing.assert_allclose(result.cluster_centers[result.class_pixel_counts > 0], 0.9)
+    viewer = window.classificationViewer
+    size = viewer.photo_size()
+    window._classification_controller._on_result(result)
+    assert viewer.photo_size() == size
+
+    data.roi_mask = np.ones((120, 120), dtype=bool)
+    data.roi_mask[60, 60] = False
+    intersected = service.classify_unsupervised(data, request)
+    assert intersected.class_map[60, 60] == -1
+    assert intersected.class_map[0, 0] == -1
+    assert intersected.class_map[60, 61] >= 0
+    data.crop(20, 20, 60, 60)  # only one corner tag remains
+    result = service.classify_unsupervised(data, request)
+    assert result.class_map.shape == (40, 40)
+    assert (result.class_map >= 0).all()
 
 
 def test_batch_csv_checkbox_exports_class_summary(window, tmp_path, monkeypatch, qtbot):
@@ -237,7 +275,11 @@ def _write_two_leaf_cube(directory: Path) -> tuple[Path, Path]:
     return path, mask
 
 
-def test_batch_supervised_separate_leaves_writes_one_row_per_leaf(tmp_path):
+def test_batch_supervised_separate_leaves_writes_one_row_per_leaf(tmp_path, monkeypatch):
+    def unexpected_detection(_rgb):
+        raise AssertionError("supervised classification must skip template detection")
+
+    monkeypatch.setattr("core.classification_model.find_plus_crop", unexpected_detection)
     import csv
 
     from core import (

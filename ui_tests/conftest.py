@@ -45,7 +45,7 @@ def _write_synthetic_envi_pair(directory: Path, *, name: str = "synthetic") -> P
 
 
 def write_marker_cube(directory: Path, name: str) -> Path:
-    """Write a 120x120 cube with four Leaf2QR-style corner tags (auto-crops)."""
+    """Write a 120x120 cube with four Leaf2QR-style corner tags."""
     size, tag = 120, 14
     cube = np.full((size, size, len(SYNTHETIC_WAVELENGTHS_NM)), 0.9, dtype=np.float32)
     for top, left in ((20, 20), (20, 86), (86, 20), (86, 86)):

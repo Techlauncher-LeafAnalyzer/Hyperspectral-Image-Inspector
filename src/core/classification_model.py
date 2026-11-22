@@ -24,6 +24,8 @@ from spectral import (
 
 from .errors import CancelledError, ClassificationError, HSIFileError
 from .hsi_data import HSIData
+from .marker_crop import find_plus_crop
+from .roi import Masked, combine, polygon_mask
 from .hsi_reader import DATA_EXTENSIONS, METADATA_EXTENSIONS, HSIReader
 
 
@@ -434,12 +436,12 @@ class ClassificationService:
         """
 
         band_indices = self._resolve_band_indices(data, request.band_indices)
-        # A polygon crop clusters only its region, so that is the pixel budget.
-        pixels = (
-            int(np.count_nonzero(data.roi_mask))
-            if data.roi_mask is not None
-            else data.rows * data.columns
-        )
+        mask = data.roi_mask
+        if data.rgb_array is not None:
+            polygon = find_plus_crop(data.rgb_array)
+            if polygon is not None:
+                mask = combine(mask, polygon_mask(polygon, (data.rows, data.columns)))
+        pixels = data.rows * data.columns if mask is None else np.count_nonzero(mask)
         if request.n_classes > pixels:
             raise ClassificationError(
                 f"Number of classes ({request.n_classes}) cannot exceed the "
@@ -466,7 +468,7 @@ class ClassificationService:
         # centres and can claim whole classes of their own. Cluster the region
         # of interest alone, as an (N, 1, bands) pseudo-image SPy accepts, and
         # scatter the labels back into the full frame afterwards.
-        region = data.masked(cube)
+        region = Masked(cube, mask)
         cluster_input = (
             region.select()[:, None, :] if region.is_masked else cube
         )

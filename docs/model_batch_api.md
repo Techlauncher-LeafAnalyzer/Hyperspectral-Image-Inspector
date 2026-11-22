@@ -10,11 +10,7 @@ Batch tab's file list, stage options, worker lifecycle, and results list.
 For each input file, in this fixed order:
 
 1. Open the cube (`HSIReader`).
-2. Auto-crop — the same Leaf2QR marker detection the single-image load runs
-   (`core.marker_crop.find_plus_crop` → `HSIData.crop_polygon`). Files
-   without the pattern are left uncropped. Every later stage runs on the
-   cropped cube. An RGB preview of the (cropped) unprocessed cube is then
-   saved as `<stem>_raw.<ext>` for every file, whichever stages are enabled.
+2. Save a full-frame raw RGB preview as `<stem>_raw.<ext>`.
 3. Super-Resolution, if enabled — always runs on the uncalibrated source,
    matching the single-image tab.
 4. Calibration, if enabled — `CalibrationFrameResolver` auto-resolves that
@@ -27,6 +23,9 @@ For each input file, in this fixed order:
    (`UnsupervisedClassificationRequest`), or one supervised classifier trained
    once from a single shared ground-truth mask/cube pair
    (`BatchClassificationOptions.training_pair`) and applied to every file.
+   K-means detects the four Leaf Analyzer tags on the current preview and
+   restricts fitting and assignment to their polygon when all four are present.
+   Its output retains the current image dimensions.
    Supervised training is calibrated once if any batch target is calibrated,
    reusing the single-image Controller's standardize-features fallback when
    no training calibration frames exist. With
@@ -38,9 +37,7 @@ For each input file, in this fixed order:
    `core.leaf_labels` — the same renderer the Classification canvas and its
    Save Image use.
 7. Export the resulting RGB (or colorized class map) as PNG/TIFF/JPEG/BMP,
-   named after the input file's stem, into the selected output directory. The
-   auto-crop polygon is preserved as alpha for PNG/TIFF; JPEG/BMP have no
-   alpha channel and keep the crop's bounding rectangle instead.
+   named after the input file's stem, into the selected output directory.
 8. Summary CSV, if `BatchRequest.export_csv` — `<stem>.csv` in the same
    format as the Classification tab's Export (`export_class_summary_csv`).
    With classification: one row per class with RGB/index means and index
