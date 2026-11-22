@@ -242,8 +242,7 @@ def test_store_keeps_a_named_library(isolated_settings):
     store.save("R800 / R670", "Ratio")
     store.delete_entry("RATIO")
     assert [e.name for e in store.library()] == ["ndre"]
-    # The applied formula survives deletion; it just loses its name.
-    assert store.load() == "R800 / R670"
+    assert store.load() is None
     assert store.active_name() is None
 
 
@@ -266,12 +265,12 @@ def test_dialog_saves_loads_and_deletes_formulas(qtbot, isolated_settings, monke
     monkeypatch.setattr(dialog, "_confirm", lambda *_args: True)
 
     assert dialog.savedCombo.currentIndex() == -1  # Empty editor: unsaved.
-    dialog.savedCombo.activated.emit(0)
+    dialog.savedCombo.setCurrentIndex(0)
     assert dialog.formulaEdit.text() == "R800 / R670"
     assert dialog.deleteSavedButton.isEnabled()
 
     dialog.formulaEdit.setText("(R800 - R670) / (R800 + R670)")
-    assert dialog.savedCombo.currentIndex() == -1  # Edited: no longer "Ratio".
+    assert dialog.savedCombo.currentText() == "Ratio"  # Apply edits this entry in place.
     dialog._on_save_as_clicked()
     assert dialog.savedCombo.currentText() == "Normalized"
     assert [e.name for e in store.library()] == ["Ratio", "Normalized"]
@@ -298,3 +297,66 @@ def test_applied_name_shows_in_caption_and_persists(loaded_window, qtbot, synthe
     reopened = MainWindowController()
     qtbot.addWidget(reopened)
     assert reopened._custom_formula_name == "My NDVI"
+
+
+def test_manage_indices_updates_visualization_and_survives_restart(
+    qtbot, synthetic_cube_path, monkeypatch
+):
+    store = CustomIndexStore()
+    store.save("R470 / R800")  # legacy single-formula settings
+    window = MainWindowController()
+    qtbot.addWidget(window)
+    window.load_image_from_path(synthetic_cube_path)
+    window.modeNDVI.click()
+
+    def edit_ndvi(dialog):
+        assert dialog.savedCombo.currentText() == "NDVI"
+        assert dialog.formulaEdit.text() == NDVI_FORMULA
+        dialog.formulaEdit.setText("2 * R550")
+        dialog._apply()
+        return dialog.result()
+
+    monkeypatch.setattr(CustomIndexDialog, "exec", edit_ndvi)
+    window.editCustomIndexButton.click()
+    assert window.modeNDVI.isChecked()
+    green = window._hsi_data.read_bands([2])[:, :, 0]
+    np.testing.assert_allclose(window._visualization_results[VisualizationMode.NDVI].values, 2 * green)
+
+    def add_index(dialog):
+        dialog.formulaEdit.setText("3 * R550")
+        dialog._on_save_as_clicked()
+        dialog._apply()
+        return dialog.result()
+
+    monkeypatch.setattr(CustomIndexDialog, "_ask_name", lambda *args: "Triple green")
+    monkeypatch.setattr(CustomIndexDialog, "exec", add_index)
+    window.editCustomIndexButton.click()
+    assert window.modeCustom.isChecked()
+    assert store.find("NDVI").formula == "2 * R550"
+    window.close()
+
+    reopened = MainWindowController()
+    qtbot.addWidget(reopened)
+    reopened.load_image_from_path(synthetic_cube_path)
+    choices = reopened.savedIndexCombo
+    assert choices.findText(store.MIGRATED_NAME) >= 0
+    assert store.find(store.MIGRATED_NAME).formula == "R470 / R800"
+    np.testing.assert_allclose(reopened._visualization_results[VisualizationMode.NDVI].values, 2 * green)
+    choices.activated.emit(choices.findText("Triple green"))
+    np.testing.assert_allclose(reopened._visualization_results[VisualizationMode.CUSTOM].values, 3 * green)
+
+    def delete_current(dialog):
+        dialog._on_delete_clicked()
+        return QtWidgets.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(CustomIndexDialog, "_confirm", lambda *args: True)
+    monkeypatch.setattr(CustomIndexDialog, "exec", delete_current)
+    reopened.editCustomIndexButton.click()
+    assert reopened.modeRGB.isChecked()
+    assert choices.findText("Triple green") == -1
+    assert VisualizationMode.CUSTOM not in reopened._visualization_results
+    reopened.modeNDVI.click()
+    reopened.editCustomIndexButton.click()
+    assert reopened.modeRGB.isChecked() and reopened.modeNDVI.isHidden()
+    assert VisualizationMode.NDVI not in reopened._visualization_results
+    assert CustomIndexStore().find("NDVI") is None

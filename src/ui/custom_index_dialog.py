@@ -19,6 +19,8 @@ from PyQt6.QtCore import Qt
 
 from core import CUSTOM_INDEX_FUNCTIONS, CustomIndexError, parse_custom_index
 
+from core.visualization_model import BUILTIN_INDEX_FORMULAS
+
 # Starting points offered in the Examples menu: (label, formula).
 CUSTOM_INDEX_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("NDVI — normalized difference", "(R800 - R670) / (R800 + R670)"),
@@ -93,6 +95,8 @@ class CustomIndexStore:
 
     def save(self, formula: str | None, name: str | None = None) -> None:
         """Record the applied formula and, when it is a saved one, its name."""
+        if not self._settings.contains(self.LIBRARY_KEY) and self.load() and formula != self.load():
+            self._write_library(list(self.library()))
         for key, value in ((self.KEY, formula), (self.NAME_KEY, name)):
             if value:
                 self._settings.setValue(key, value)
@@ -117,9 +121,19 @@ class CustomIndexStore:
         except (ValueError, TypeError, KeyError, AttributeError):
             return ()
 
+    def indices(self) -> tuple[SavedFormula, ...]:
+        saved = self.library()
+        names = {entry.name.upper() for entry in saved}
+        deleted = self._settings.value("visualization/deletedIndices", [], type=list)
+        return saved + tuple(
+            SavedFormula(mode.value, formula)
+            for mode, formula in BUILTIN_INDEX_FORMULAS.items()
+            if mode not in names and mode not in deleted
+        )
+
     def find(self, name: str) -> SavedFormula | None:
         key = name.strip().casefold()
-        return next((entry for entry in self.library() if entry.name.casefold() == key), None)
+        return next((entry for entry in self.indices() if entry.name.casefold() == key), None)
 
     def name_for(self, formula: str) -> str | None:
         """The name of a saved entry with exactly this formula, if any."""
@@ -144,11 +158,12 @@ class CustomIndexStore:
 
     def delete_entry(self, name: str) -> None:
         key = name.strip().casefold()
+        if name.upper() in BUILTIN_INDEX_FORMULAS:
+            deleted = self._settings.value("visualization/deletedIndices", [], type=list)
+            self._settings.setValue("visualization/deletedIndices", sorted(set(deleted) | {name.upper()}))
         self._write_library([e for e in self.library() if e.name.casefold() != key])
         if (self.active_name() or "").casefold() == key:
-            # The applied formula stays applied; it is just no longer named.
-            self._settings.remove(self.NAME_KEY)
-            self._settings.sync()
+            self.save(None)
 
     def _write_library(self, entries: list[SavedFormula]) -> None:
         self._settings.setValue(
@@ -289,10 +304,9 @@ class CustomIndexDialog(QtWidgets.QDialog):
         self.formulaEdit.textChanged.connect(lambda _text: self._validate_timer.start())
         self.formulaEdit.returnPressed.connect(self._apply)
 
-        if store is not None:
-            self.formulaEdit.textChanged.connect(self._sync_library_selection)
-
         self.formulaEdit.setText(formula or "")
+        if store is not None:
+            self._sync_library_selection()
         self._validate()
         self.formulaEdit.setFocus()
 
@@ -332,12 +346,13 @@ class CustomIndexDialog(QtWidgets.QDialog):
         label = QtWidgets.QLabel("Saved formulas", row)
         self.savedCombo = QtWidgets.QComboBox(row)
         self.savedCombo.setObjectName("customIndexSavedCombo")
-        self.savedCombo.setAccessibleName("Saved custom index formulas")
+        self.savedCombo.setAccessibleName("Built-in and saved index formulas")
         self.savedCombo.setPlaceholderText("Unsaved formula")
         self.savedCombo.setSizeAdjustPolicy(
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
         self.savedCombo.setMinimumContentsLength(18)
+        self.savedCombo.currentIndexChanged.connect(self._on_saved_formula_chosen)
         self.savedCombo.activated.connect(self._on_saved_formula_chosen)
         self.saveAsButton = QtWidgets.QPushButton("Save as…", row)
         self.saveAsButton.setObjectName("customIndexSaveAsButton")
@@ -436,7 +451,7 @@ class CustomIndexDialog(QtWidgets.QDialog):
         combo = self.savedCombo
         combo.blockSignals(True)
         combo.clear()
-        for entry in self._store.library():
+        for entry in self._store.indices():
             combo.addItem(entry.name, entry.formula)
             combo.setItemData(combo.count() - 1, entry.formula, Qt.ItemDataRole.ToolTipRole)
         combo.blockSignals(False)
@@ -453,11 +468,18 @@ class CustomIndexDialog(QtWidgets.QDialog):
             (i for i in range(self.savedCombo.count()) if self.savedCombo.itemData(i) == text),
             -1,
         )
-        self.savedCombo.setCurrentIndex(index)
+        with QtCore.QSignalBlocker(self.savedCombo):
+            self.savedCombo.setCurrentIndex(index)
         self.deleteSavedButton.setEnabled(index >= 0)
+
+    def select_index(self, name: str) -> None:
+        index = self.savedCombo.findText(name, Qt.MatchFlag.MatchFixedString)
+        if index >= 0:
+            self.savedCombo.setCurrentIndex(index)
 
     def _on_saved_formula_chosen(self, index: int) -> None:
         if index >= 0:
+            self.deleteSavedButton.setEnabled(True)
             self._set_formula_text(self.savedCombo.itemData(index))
 
     def _on_save_as_clicked(self) -> None:
@@ -491,6 +513,7 @@ class CustomIndexDialog(QtWidgets.QDialog):
         if not self._confirm("Delete saved formula?", f"Remove “{name}” from your saved formulas?"):
             return
         self._store.delete_entry(name)
+        self.formulaEdit.clear()
         self._reload_library()
 
     def _ask_name(self, suggestion: str) -> str | None:
@@ -585,7 +608,7 @@ class CustomIndexDialog(QtWidgets.QDialog):
         if not self._validate():
             return
         self._formula = self.formulaEdit.text().strip()
-        self._formula_name = (
-            self._store.name_for(self._formula) if self._store is not None else None
-        )
+        if self._store is not None and self.savedCombo.currentIndex() >= 0:
+            entry = self._store.save_entry(self.savedCombo.currentText(), self._formula)
+            self._formula_name = entry.name
         self.accept()

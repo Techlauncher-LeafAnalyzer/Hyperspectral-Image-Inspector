@@ -106,7 +106,7 @@ def test_custom_mode_renders_with_nearest_bands(camera_cube_factory):
     data, cube = camera_cube_factory([500.0, 670.0, 720.0, 805.0])
     result = VisualizationService().render(
         data,
-        VisualizationRequest(VisualizationMode.CUSTOM, formula="(R800 - R670) / (R800 + R670)"),
+        VisualizationRequest("custom", formula="(R800 - R670) / (R800 + R670)"),
     )
     nir, red = cube[:, :, 3], cube[:, :, 1]
     np.testing.assert_allclose(result.values, (nir - red) / (nir + red), rtol=1e-5)

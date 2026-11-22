@@ -7,7 +7,7 @@ to choose its own worker, signals, cancellation, and View implementation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Callable, Mapping
@@ -42,6 +42,18 @@ class VisualizationMode(StrEnum):
     NDMI = "NDMI"
     CUSTOM = "CUSTOM"
     BRIGHTNESS = "BRIGHTNESS"
+
+
+BUILTIN_INDEX_FORMULAS = MappingProxyType({
+    VisualizationMode.NDVI: "(R800 - R670) / (R800 + R670)",
+    VisualizationMode.EVI: "2.5 * (R800 - R670) / (R800 + 6 * R670 - 7.5 * R470 + 1)",
+    VisualizationMode.MCARI: "(R700 - R670 - 0.2 * (R700 - R550)) * (R700 / R670)",
+    VisualizationMode.MTVI: "1.2 * (1.2 * (R800 - R550) - 2.5 * (R670 - R550))",
+    VisualizationMode.OSAVI: "1.16 * (R800 - R670) / (R800 + R670 + 0.16)",
+    VisualizationMode.PRI: "(R531 - R570) / (R531 + R570)",
+    VisualizationMode.NDWI: "(R1070 - R1240) / (R1070 + R1240)",
+    VisualizationMode.NDMI: "(R1070 - R1650) / (R1070 + R1650)",
+})
 
 
 # Modes that only make sense for some cameras (e.g. Specim FX17's SWIR-only
@@ -184,7 +196,7 @@ class HypercubeViewData:
 class VisualizationService:
     """View-neutral visualization model backed by Spectral Python.
 
-    Methods are synchronous and stateless. A Controller should run disk-reading
+    Methods are synchronous. A Controller should run disk-reading
     operations in a worker, forward progress through thread-safe signals, and
     deliver the result to the GUI thread. Reuse is safe when reads on the same
     :class:`HSIData` are serialized.
@@ -217,6 +229,9 @@ class VisualizationService:
     # to this many full-frame float32 planes.
     BAND_SUM_CHUNK = 16
 
+    def __init__(self) -> None:
+        self.index_formulas = dict(BUILTIN_INDEX_FORMULAS)
+
     @property
     def supported_modes(self) -> tuple[VisualizationMode, ...]:
         """Return supported 2D modes for populating Controller actions."""
@@ -232,8 +247,14 @@ class VisualizationService:
             return None
         if mode not in (VisualizationMode.RGB, VisualizationMode.BAND):
             try:
-                self._index_band_indices(data, mode)
-            except WavelengthError as exc:
+                formula = self.index_formulas.get(mode)
+                if formula is None:
+                    return f"{mode.value} has been deleted."
+                if formula == BUILTIN_INDEX_FORMULAS[mode]:
+                    self._index_band_indices(data, mode)
+                else:
+                    parse_custom_index(formula).resolve(data.wavelengths_nm)
+            except (VisualizationError, WavelengthError) as exc:
                 return f"{mode.value} unavailable: {exc}"
         return None
 
@@ -271,7 +292,13 @@ class VisualizationService:
         elif mode is VisualizationMode.BRIGHTNESS:
             result = self._render_brightness(data, request, progress, is_cancelled)
         else:
-            result = self._render_index(data, mode, request)
+            formula = self.index_formulas.get(mode)
+            if formula is None:
+                raise VisualizationError(f"{mode.value} has been deleted.")
+            if formula == BUILTIN_INDEX_FORMULAS[mode]:
+                result = self._render_index(data, mode, request)
+            else:
+                result = self._render_custom(data, replace(request, formula=formula))
         self._check_cancelled(is_cancelled)
         self._emit(progress, 100, f"{mode.value} complete")
         return result
@@ -682,12 +709,13 @@ class VisualizationService:
         values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
         values = data.masked(values).fill()
         normalized, value_range, limits = self._percentile_stretch(values, request.stretch)
-        colormap = request.colormap or self.DEFAULT_COLORMAPS[VisualizationMode.CUSTOM]
+        mode = self._coerce_mode(request.mode)
+        colormap = request.colormap or self.DEFAULT_COLORMAPS[mode]
         return VisualizationResult(
-            mode=VisualizationMode.CUSTOM,
+            mode=mode,
             display_rgb=self._apply_colormap(normalized, colormap),
             values=values,
-            title=f"Custom index: {formula.text}",
+            title=f"Custom index: {formula.text}" if mode is VisualizationMode.CUSTOM else mode.value,
             value_range=value_range,
             band_indices=MappingProxyType({band.token: band.band_index for band in resolved}),
             band_wavelengths_nm=MappingProxyType(

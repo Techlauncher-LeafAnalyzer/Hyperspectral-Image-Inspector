@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 import core.hsi_utils as hsi_utils
 from core import (
+    BatchService,
     CalibrationFrameResolver,
     CalibrationService,
     ClassificationService,
@@ -42,6 +43,7 @@ from ui.batch_controller import BatchController
 from ui.calibration_controller import CalibrationController
 from ui.branding import APP_NAME, ICON_PATH
 from ui.classification_controller import ClassificationController
+from core.visualization_model import BUILTIN_INDEX_FORMULAS
 from ui.custom_index_dialog import CustomIndexDialog, CustomIndexStore
 from ui.generated.MainWindow import Ui_MainWindow
 from ui.generated.WorkflowPanels import Ui_WorkflowPanels
@@ -239,6 +241,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             self._on_calibration_references_changed
         )
         self._batch_controller = BatchController(
+            service=BatchService(visualization_service=self._visualization_service),
             file_list=self.batchFileList,
             results_list=self.batchResultsList,
             add_files_button=self.batchAddFilesButton,
@@ -685,6 +688,7 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
                 lambda checked, mode=mode: self._on_visualization_mode_toggled(mode, checked)
             )
         self._visualization_mode_buttons = mode_buttons
+        self._refresh_index_choices()
         self._image_capabilities.refresh_visualizations(self._hsi_data, mode_buttons)
         self.modeHyperCube.toggled.connect(self._on_hypercube_mode_toggled)
         self.modeRGB.setChecked(True)
@@ -712,6 +716,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         stays visible after the panel's flyout closes.
         """
 
+        self.savedIndexCombo = QtWidgets.QComboBox(self.modeSelect)
+        self.savedIndexCombo.setAccessibleName("Saved indices")
+        self.savedIndexCombo.setPlaceholderText("Choose a saved index")
+        self.modeSelectGrid.addWidget(self.savedIndexCombo, 4, 0, 1, 3)
+        self.savedIndexCombo.activated.connect(self._select_saved_index)
         self.editCustomIndexButton.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.editCustomIndexButton.clicked.connect(self._on_edit_custom_index_clicked)
         self._set_custom_formula_name(self._custom_formula_name)
@@ -1244,15 +1253,11 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             return
         previous_button = self._checked_mode_button
         self._checked_mode_button = self.sender()
-        if (
-            mode is VisualizationMode.CUSTOM
-            and self._custom_formula is None
-            and not self._edit_custom_index()
-        ):
-            # Nothing to show without a formula; return to the prior mode.
-            self._checked_mode_button = previous_button
-            (previous_button or self.modeRGB).setChecked(True)
-            return
+        if mode is VisualizationMode.CUSTOM and self._custom_formula is None:
+            target = self._edit_custom_index()
+            if target is not self.modeCustom:
+                (target or previous_button or self.modeRGB).setChecked(True)
+                return
         self.visualizationStack.setCurrentWidget(self.viewer)
         self._active_visualization_mode = mode
         self._similarity_view = False
@@ -1358,35 +1363,82 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
             results.pop(mode, None)
         self._on_demand_errors.pop(mode, None)
 
-    def _edit_custom_index(self) -> bool:
-        """Open the formula editor; apply and persist an accepted formula."""
+    def _refresh_index_choices(self) -> None:
+        entries = self._custom_index_store.indices()
+        self._visualization_service.index_formulas = {
+            VisualizationMode(entry.name.upper()): entry.formula for entry in entries
+            if entry.name.upper() in BUILTIN_INDEX_FORMULAS
+        }
+        combo = self.savedIndexCombo
+        combo.clear()
+        for entry in entries:
+            if entry.name.upper() not in BUILTIN_INDEX_FORMULAS:
+                combo.addItem(entry.name, entry.formula)
+        combo.setCurrentIndex(combo.findText(self._custom_formula_name or ""))
+        combo.setVisible(combo.count() > 0)
+        for button, mode in self._visualization_mode_buttons:
+            if mode in BUILTIN_INDEX_FORMULAS:
+                button.setVisible(mode in self._visualization_service.index_formulas)
 
-        data = self._display_data()
-        dialog = self._custom_index_dialog_factory(
-            data.wavelengths_nm if data.is_loaded() else None,
-            self._custom_formula,
-            parent=self,
-            store=self._custom_index_store,
+    def _select_saved_index(self, index: int) -> None:
+        self._apply_custom_formula(
+            self.savedIndexCombo.itemData(index), self.savedIndexCombo.itemText(index)
         )
-        accepted = dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted and dialog.formula
-        if not accepted:
-            # The library may have been edited even though nothing was applied.
-            self._set_custom_formula_name(
-                self._custom_index_store.name_for(self._custom_formula)
-                if self._custom_formula else None
-            )
-            self._update_mode_caption()
-            return False
-        self._custom_formula = dialog.formula
-        self._set_custom_formula_name(dialog.formula_name)
-        self._custom_index_store.save(self._custom_formula, self._custom_formula_name)
+        self.modeCustom.setChecked(True)
+        if self._hsi_data.is_loaded():
+            self._show_active_mode()
+        self._spectrum_controller.set_visualization(
+            self._visualization_results.get(VisualizationMode.CUSTOM)
+        )
+
+    def _apply_custom_formula(self, formula: str | None, name: str | None) -> None:
+        self._custom_formula = formula
+        self._set_custom_formula_name(name)
+        self._custom_index_store.save(formula, name)
         self._discard_on_demand_results(VisualizationMode.CUSTOM)
-        self._classification_controller.set_visualization_results(
-            self._visualization_results
+
+    def _edit_custom_index(self) -> QtWidgets.QAbstractButton | None:
+        store = self._custom_index_store
+        previous_entries = store.indices()
+        data = self._display_data()
+        active = self._active_visualization_mode
+        entry = store.find(active.value) if active in BUILTIN_INDEX_FORMULAS else None
+        initial = entry.formula if entry is not None else self._custom_formula
+        dialog = self._custom_index_dialog_factory(
+            data.wavelengths_nm if data.is_loaded() else None, initial, parent=self, store=store
         )
-        label = self._custom_formula_name or self._custom_formula
-        self.statusbar.showMessage(f"Custom index set to {label}", 5000)
-        return True
+        if isinstance(dialog, CustomIndexDialog):
+            name = entry.name if entry is not None else self._custom_formula_name
+            if name:
+                dialog.select_index(name)
+        accepted = dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted and dialog.formula
+        if not accepted and previous_entries == store.indices():
+            return None
+        target = None
+        if accepted:
+            name = dialog.formula_name
+            if name and name.upper() in BUILTIN_INDEX_FORMULAS:
+                target = getattr(self, "mode" + name.upper())
+            else:
+                self._apply_custom_formula(dialog.formula, name)
+                target = self.modeCustom
+        if self._custom_formula_name:
+            saved = store.find(self._custom_formula_name)
+            if saved is None:
+                self._apply_custom_formula(None, None)
+                if self.modeCustom.isChecked():
+                    self.modeRGB.setChecked(True)
+            elif saved.formula != self._custom_formula:
+                self._apply_custom_formula(saved.formula, saved.name)
+        self._refresh_index_choices()
+        self._visualization_cache.clear()
+        if self._hsi_data.is_loaded():
+            self._recompute_visualizations()
+            if active in BUILTIN_INDEX_FORMULAS and active not in self._visualization_results:
+                self.modeRGB.setChecked(True)
+            self._show_active_mode()
+            self._hypercube_controller.resume(data)
+        return target
 
     def _saved_formula_name(self) -> str | None:
         """The library name of the applied formula, if it is still saved."""
@@ -1409,13 +1461,9 @@ class MainWindowController(QtWidgets.QMainWindow, Ui_MainWindow):
         self.modeCustom.setToolTip(tooltip)
 
     def _on_edit_custom_index_clicked(self) -> None:
-        if not self._edit_custom_index():
-            return
-        if self.modeCustom.isChecked():
-            if self._hsi_data.is_loaded():
-                self._show_active_mode()
-        else:
-            self.modeCustom.setChecked(True)
+        target = self._edit_custom_index()
+        if target is not None and target.isEnabled():
+            target.setChecked(True)
 
     def _on_segmentation_changed(self) -> None:
         # Brightness switches between whole-image and per-cluster scaling.
